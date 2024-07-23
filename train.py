@@ -11,6 +11,8 @@ from torch.utils.data import Dataset
 import random
 from decord import VideoReader, cpu
 from accelerate import Accelerator
+from torch.utils.data import IterableDataset
+import tqdm
 
 class VideoDataset(Dataset):
     def __init__(self, root_dir, transform=None, frame_skip=1):
@@ -61,6 +63,54 @@ class VideoDataset(Dataset):
             idx -= num_frames
         raise IndexError("Index out of range")
 
+class SingleVideoIterableDataset(IterableDataset):
+    def __init__(self, root_dir, transform=None, frame_skip=1, shuffle=True):
+        self.root_dir = root_dir
+        self.transform = transform
+        self.frame_skip = frame_skip
+        self.shuffle = shuffle
+        self.video_files = [os.path.join(subdir, file)
+                            for subdir, dirs, files in os.walk(root_dir)
+                            for file in files if file.endswith('.mp4')]
+        random.shuffle(self.video_files)  # Shuffle the video files
+
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:  # single-process data loading
+            iter_start = 0
+            iter_end = len(self.video_files)
+        else:  # in a worker process
+            per_worker = int(math.ceil(len(self.video_files) / float(worker_info.num_workers)))
+            worker_id = worker_info.id
+            iter_start = worker_id * per_worker
+            iter_end = min(iter_start + per_worker, len(self.video_files))
+
+        for video_idx in range(iter_start, iter_end):
+            video_path = self.video_files[video_idx]
+            vr = VideoReader(video_path, ctx=cpu(0))
+            frame_indices = list(range(len(vr) - self.frame_skip))
+            if self.shuffle:
+                random.shuffle(frame_indices)
+
+            for frame_idx in frame_indices:
+                current_frame_idx = frame_idx
+                reference_frame_idx = frame_idx + self.frame_skip
+
+                current_frame = vr[current_frame_idx].asnumpy()
+                reference_frame = vr[reference_frame_idx].asnumpy()
+
+                current_frame = torch.from_numpy(current_frame).float().permute(2, 0, 1)
+                reference_frame = torch.from_numpy(reference_frame).float().permute(2, 0, 1)
+
+                if self.transform:
+                    current_frame = self.transform(current_frame)
+                    reference_frame = self.transform(reference_frame)
+
+                yield current_frame, reference_frame
+
+    def __len__(self):
+        # This is an approximation, as we don't know the exact number of frames in each video
+        return len(self.video_files) * 1000  # Assuming an average of 1000 frames per video
 
 
 def sample_recon(model, data, accelerator, output_path, num_samples=8):
@@ -118,7 +168,8 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             start_epoch = checkpoint['epoch'] + 1
             accelerator.print(f"Restored from {checkpoint_path}")
 
-    for epoch in range(start_epoch, config.num_epochs):
+    for epoch in range(num_epochs):
+   
         model.train()
         total_loss = 0
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.num_epochs}", 
@@ -215,7 +266,7 @@ if __name__ == "__main__":
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
     print("Loading VideoDataset...")
-    dataset = VideoDataset(root_dir="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666", transform=transform, frame_skip=1)
+    dataset = SingleVideoIterableDataset(root_dir="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666", transform=transform, frame_skip=1)
 
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
     print("Training...")
