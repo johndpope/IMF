@@ -1,0 +1,35 @@
+# Model parameters
+model:
+  latent_dim: 32
+  base_channels: 64
+  num_layers: 4
+
+# Training parameters
+training:
+  batch_size: 32
+  num_epochs: 100
+  learning_rate: 1e-4
+  ema_decay: 0.999
+  style_mixing_prob: 0.9
+  r1_gamma: 10
+
+# Dataset parameters
+dataset:
+  root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666"
+  frame_skip: 1
+
+# Checkpointing
+checkpoints:
+  dir: "./checkpoints"
+  interval: 10
+
+# Logging and visualization
+logging:
+  sample_interval: 10
+  sample_size: 8
+
+# Accelerator settings
+accelerator:
+  mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
+  cpu: false
+  num_processes: 1  # Set to more than 1 for multi-GPU training

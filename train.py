@@ -13,6 +13,7 @@ from decord import VideoReader, cpu
 from accelerate import Accelerator
 from torch.utils.data import IterableDataset
 import tqdm
+import yaml
 
 class VideoDataset(Dataset):
     def __init__(self, root_dir, transform=None, frame_skip=1):
@@ -113,6 +114,11 @@ class SingleVideoIterableDataset(IterableDataset):
         return len(self.video_files) * 1000  # Assuming an average of 1000 frames per video
 
 
+def load_config(config_path):
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
+
+
 def sample_recon(model, data, accelerator, output_path, num_samples=8):
     model.eval()
     with torch.no_grad():
@@ -153,7 +159,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     mse_loss = nn.MSELoss()
 
     # Create checkpoint directory if it doesn't exist
-    os.makedirs(config.checkpoint_dir, exist_ok=True)
+    os.makedirs('./checkpoints', exist_ok=True)
 
     start_epoch = 0
     # If a checkpoint exists, restore the latest one
@@ -244,20 +250,21 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     return ema_model
 
 if __name__ == "__main__":
+    # Load configuration
+    config = load_config('config.yaml')
 
-    # Hyperparameters
-    latent_dim = 32
-    base_channels = 64
-    num_layers = 4
-    batch_size = 32
-    num_epochs = 100
-    learning_rate = 1e-4
-
-    # Set up device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Set up accelerator
+    accelerator = Accelerator(
+        mixed_precision=config['accelerator']['mixed_precision'],
+        cpu=config['accelerator']['cpu']
+    )
 
     # Create model
-    model = IMFModel(latent_dim, base_channels, num_layers)
+    model = IMFModel(
+        latent_dim=config['model']['latent_dim'],
+        base_channels=config['model']['base_channels'],
+        num_layers=config['model']['num_layers']
+    )
 
     # Set up dataset and dataloader
     transform = transforms.Compose([
@@ -265,10 +272,27 @@ if __name__ == "__main__":
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
+
     print("Loading VideoDataset...")
-    dataset = SingleVideoIterableDataset(root_dir="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666", transform=transform, frame_skip=1)
-    dataloader = DataLoader(dataset, batch_size=32, num_workers=4)
+    dataset = SingleVideoIterableDataset(
+        root_dir=config['dataset']['root_dir'],
+        transform=transform,
+        frame_skip=config['dataset']['frame_skip']
+    )
+    dataloader = DataLoader(
+        dataset,
+        batch_size=config['training']['batch_size'],
+        num_workers=4
+    )
+
     print("Training...")
     # Train the model
-    train(model, dataloader, num_epochs, device, learning_rate, checkpoint_dir='./checkpoints', checkpoint_interval=10)
-
+    train(
+        config,
+        model,
+        dataloader,
+        accelerator,
+        ema_decay=config['training']['ema_decay'],
+        style_mixing_prob=config['training']['style_mixing_prob'],
+        r1_gamma=config['training']['r1_gamma']
+    )
