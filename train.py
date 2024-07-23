@@ -293,7 +293,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     return ema_model
 
 @profile
-if __name__ == "__main__":
+def main():
     # Load configuration
     config = load_config('config.yaml')
 
@@ -340,3 +340,6 @@ if __name__ == "__main__":
         style_mixing_prob=config['training']['style_mixing_prob'],
         r1_gamma=config['training']['r1_gamma']
     )
+    
+if __name__ == "__main__":
+    main()
