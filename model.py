@@ -6,6 +6,31 @@ from torch.utils.data import DataLoader, Dataset
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
 import os
+import torchvision.models as models
+
+class ResNetFeatureExtractor(nn.Module):
+    def __init__(self, pretrained=True):
+        super().__init__()
+        # Load a pre-trained ResNet model
+        resnet = models.resnet50(pretrained=pretrained)
+        
+        # We'll use the first 4 layers of ResNet
+        self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+
+    def forward(self, x):
+        features = []
+        x = self.layer0(x)
+        features.append(x)
+        x = self.layer1(x)
+        features.append(x)
+        x = self.layer2(x)
+        features.append(x)
+        x = self.layer3(x)
+        features.append(x)
+        return features
 
 
 class DenseFeatureEncoder(nn.Module):
@@ -133,6 +158,54 @@ class IMF(nn.Module):
         ])
 
     def forward(self, x_current, x_reference):
+        print(f"Input shapes - Current: {x_current.shape}, Reference: {x_reference.shape}")
+
+        # Encode reference frame
+        f_r = self.dense_feature_encoder(x_reference)
+        t_r = self.latent_token_encoder(x_reference)
+        print(f"Reference encoding - Features: {[f.shape for f in f_r]}, Token: {t_r.shape}")
+
+        # Encode current frame
+        t_c = self.latent_token_encoder(x_current)
+        print(f"Current encoding - Token: {t_c.shape}")
+
+        # Decode motion features
+        m_r = self.latent_token_decoder(t_r)
+        m_c = self.latent_token_decoder(t_c)
+        print(f"Motion features - Reference: {[m.shape for m in m_r]}, Current: {[m.shape for m in m_c]}")
+
+        # Align features
+        aligned_features = []
+        for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
+            print(f"Layer {i} - f_r: {f_r_i.shape}, m_r: {m_r_i.shape}, m_c: {m_c_i.shape}")
+            q = m_c_i.flatten(2).permute(2, 0, 1)
+            k = m_r_i.flatten(2).permute(2, 0, 1)
+            v = f_r_i.flatten(2).permute(2, 0, 1)
+            print(f"Layer {i} - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+            aligned_feature = align_layer(q, k, v)
+            aligned_feature = aligned_feature.permute(1, 2, 0).view_as(f_r_i)
+            aligned_features.append(aligned_feature)
+            print(f"Layer {i} - Aligned feature: {aligned_feature.shape}")
+
+        print(f"Final aligned features: {[f.shape for f in aligned_features]}")
+        return aligned_features
+    
+
+
+class ResNetIMF(nn.Module):
+    def __init__(self, latent_dim=32):
+        super().__init__()
+        self.dense_feature_encoder = ResNetFeatureExtractor()
+        self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
+        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
+        
+        # Adjust the implicit motion alignment for ResNet feature dimensions
+        feature_dims = [64, 256, 512, 1024]  # ResNet50 feature dimensions
+        self.implicit_motion_alignment = nn.ModuleList([
+            ImplicitMotionAlignment(dim) for dim in feature_dims
+        ])
+
+    def forward(self, x_current, x_reference):
         # Encode reference frame
         f_r = self.dense_feature_encoder(x_reference)
         t_r = self.latent_token_encoder(x_reference)
@@ -155,7 +228,6 @@ class IMF(nn.Module):
             aligned_features.append(aligned_feature)
 
         return aligned_features
-
 
 
 
