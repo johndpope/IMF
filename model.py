@@ -197,22 +197,27 @@ class ImplicitMotionAlignment(nn.Module):
     def forward(self, q, k, v):
         print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
-        # Project q, k, v to the correct feature dimension
-        q = self.q_proj(q.transpose(1, 2)).transpose(1, 2)
-        k = self.k_proj(k.transpose(1, 2)).transpose(1, 2)
-        v = self.v_proj(v.transpose(1, 2)).transpose(1, 2)
+        # Reshape inputs
+        batch_size = q.size(0)
+        q = q.view(batch_size, self.motion_dim, -1).permute(2, 0, 1)
+        k = k.view(batch_size, self.motion_dim, -1).permute(2, 0, 1)
+        v = v.view(batch_size, self.feature_dim, -1).permute(2, 0, 1)
         
-        # Reshape for multi-head attention
-        q = q.permute(2, 0, 1)
-        k = k.permute(2, 0, 1)
-        v = v.permute(2, 0, 1)
+        # Project q, k, v to the correct feature dimension
+        q = self.q_proj(q)
+        k = self.k_proj(k)
+        v = self.v_proj(v)
         
         print(f"After projection shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
         attn_output, _ = self.cross_attention(q, k, v)
         x = self.norm1(q + attn_output)
         x = self.norm2(x + self.ffn(x))
-        return x.permute(1, 2, 0)
+        
+        # Reshape output
+        x = x.permute(1, 2, 0).contiguous()
+        
+        return x
 
 class IMF(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
@@ -258,13 +263,8 @@ class IMF(nn.Module):
         aligned_features = []
         for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
             print(f"Layer {i} - f_r: {f_r_i.shape}, m_r: {m_r_i.shape}, m_c: {m_c_i.shape}")
-            q = m_c_i.flatten(2).permute(2, 0, 1)
-            k = m_r_i.flatten(2).permute(2, 0, 1)
-            v = f_r_i.flatten(2).permute(2, 0, 1)
-            print(f"Layer {i} - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-            aligned_feature = align_layer(q, k, v)
-            aligned_feature = aligned_feature.permute(1, 2, 0).view_as(f_r_i)
-            aligned_features.append(aligned_feature)
+            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+            aligned_features.append(aligned_feature.view_as(f_r_i))
             print(f"Layer {i} - Aligned feature: {aligned_feature.shape}")
 
         print(f"Final aligned features: {[f.shape for f in aligned_features]}")
