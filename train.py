@@ -82,6 +82,7 @@ class SingleVideoIterableDataset(IterableDataset):
         # Modify the transform pipeline
         if transform is None:
             self.transform = transforms.Compose([
+                transforms.ToTensor(),
                 transforms.Resize((256, 256)),
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
             ])
@@ -110,14 +111,12 @@ class SingleVideoIterableDataset(IterableDataset):
                 current_frame_idx = frame_idx
                 reference_frame_idx = frame_idx + self.frame_skip
 
-                current_frame = vr[current_frame_idx].as_tensor()
-                reference_frame = vr[reference_frame_idx].as_tensor()
+                current_frame = vr[current_frame_idx].asnumpy()
+                reference_frame = vr[reference_frame_idx].asnumpy()
 
-                # Ensure the tensors are in the correct format (C, H, W)
-                if current_frame.shape[0] != 3:
-                    current_frame = current_frame.permute(2, 0, 1)
-                if reference_frame.shape[0] != 3:
-                    reference_frame = reference_frame.permute(2, 0, 1)
+                # Convert NumPy arrays to PyTorch tensors
+                current_frame = torch.from_numpy(current_frame).float().permute(2, 0, 1)
+                reference_frame = torch.from_numpy(reference_frame).float().permute(2, 0, 1)
 
                 # Apply transforms
                 current_frame = self.transform(current_frame)
