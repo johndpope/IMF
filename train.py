@@ -15,6 +15,8 @@ from torch.utils.data import IterableDataset
 from tqdm.auto import tqdm  # Changed this line
 import yaml
 from PIL import Image
+import decord
+
 #import wandb
 
 class VideoDataset(Dataset):
@@ -26,7 +28,9 @@ class VideoDataset(Dataset):
                             for subdir, dirs, files in os.walk(root_dir)
                             for file in files if file.endswith('.mp4')]
         # self.total_frames = self._count_total_frames()
-    
+        decord.bridge.set_bridge('torch')  # Optional: This line sets decord to directly output PyTorch tensors.
+        self.ctx = decord.cpu()
+
     def _count_total_frames(self):
         total = 0
         for video_path in self.video_files:
@@ -40,7 +44,7 @@ class VideoDataset(Dataset):
     def __getitem__(self, idx):
         video_idx, frame_idx = self._get_video_and_frame(idx)
         video_path = self.video_files[video_idx]
-        vr = VideoReader(video_path, ctx=cpu(0))
+        vr = VideoReader(video_path, ctx=self.ctx)
         
         current_frame_idx = frame_idx
         reference_frame_idx = frame_idx + self.frame_skip
@@ -52,6 +56,7 @@ class VideoDataset(Dataset):
             state = torch.get_rng_state()
             current_frame = self.augmentation(current_frame, self.transform, state)
             reference_frame = self.augmentation(reference_frame, self.transform, state)
+
         
         return current_frame, reference_frame
     
