@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import IterableDataset
 from decord import VideoReader, cpu
 import torchvision.transforms as transforms
+import os
 
 class VideoDataset(Dataset):
     def __init__(self, root_dir, transform=None, frame_skip=1):
