@@ -5,6 +5,36 @@ from torch.utils.data import DataLoader
 import math
 import os
 from model import IMFModel
+from torchvision.utils import save_image
+import torchvision.transforms as transforms
+
+def sample_recon(model, data, device, output_path, num_samples=8):
+    model.eval()
+    with torch.no_grad():
+        current_frames, reference_frames = data
+        current_frames, reference_frames = current_frames[:num_samples].to(device), reference_frames[:num_samples].to(device)
+        
+        # Encode frames
+        tc = model.latent_token_encoder(current_frames)
+        tr = model.latent_token_encoder(reference_frames)
+        fr = model.dense_feature_encoder(reference_frames)
+
+        # Reconstruct frames
+        reconstructed_frames = model.frame_decoder(model.imf(tc, tr, fr))
+
+        # Prepare original and reconstructed frames for saving
+        orig_frames = torch.cat((reference_frames, current_frames), dim=0)
+        recon_frames = torch.cat((reference_frames, reconstructed_frames), dim=0)
+        frames = torch.cat((orig_frames, recon_frames), dim=0)
+        
+        # Unnormalize frames
+        frames = frames * 0.5 + 0.5
+        
+        # Save frames as a grid
+        output_dir = os.path.dirname(output_path)
+        os.makedirs(output_dir, exist_ok=True)
+        save_image(frames, output_path, nrow=num_samples, padding=2, normalize=False)
+        print(f"Saved sample reconstructions to {output_path}")
 
 
 def train(model, dataloader, num_epochs, device, learning_rate=1e-4, ema_decay=0.999, style_mixing_prob=0.9, r1_gamma=10, checkpoint_dir='./checkpoints', checkpoint_interval=10):
@@ -33,29 +63,70 @@ def train(model, dataloader, num_epochs, device, learning_rate=1e-4, ema_decay=0
             start_epoch = checkpoint['epoch'] + 1
             print(f"Restored from {checkpoint_path}")
 
-    for epoch in range(start_epoch, num_epochs):
-        for batch_idx, (current_frames, reference_frames) in enumerate(dataloader):
-            current_frames, reference_frames = current_frames.to(device), reference_frames.to(device)
+    for epoch in range(num_epochs):
+            for batch_idx, (current_frames, reference_frames) in enumerate(dataloader):
+                current_frames, reference_frames = current_frames.to(device), reference_frames.to(device)
 
-            # ... (Training loop remains the same)
+                # Add noise to latent tokens for improved training dynamics
+                noise = torch.randn_like(model.latent_token_encoder(current_frames)) * 0.01
+                tc = model.latent_token_encoder(current_frames) + noise
+                tr = model.latent_token_encoder(reference_frames) + noise
 
-        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
+                # Perform style mixing regularization
+                if torch.rand(()).item() < style_mixing_prob:
+                    rand_tc = tc[torch.randperm(tc.size(0))]
+                    rand_tr = tr[torch.randperm(tr.size(0))]
 
-        # Save checkpoint
-        if (epoch + 1) % checkpoint_interval == 0:
-            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{epoch+1}.pth")
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'ema_state_dict': ema_model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, checkpoint_path)
-            print(f"Saved checkpoint: {checkpoint_path}")
+                    mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.imf.implicit_motion_alignment))]
+                    mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.imf.implicit_motion_alignment))]
+                else:
+                    mix_tc = [tc for _ in range(len(model.imf.implicit_motion_alignment))]
+                    mix_tr = [tr for _ in range(len(model.imf.implicit_motion_alignment))]
 
-        if epoch % 10 == 0:
-            model.eval()
-            ema_model.eval()
-            sample_recon(ema_model, next(iter(dataloader)), device, f"recon_epoch_{epoch+1}.png")
+                fr = model.dense_feature_encoder(reference_frames)
+                reconstructed_frames = model.frame_decoder(model.imf(mix_tc, mix_tr, fr))
+
+                loss = mse_loss(reconstructed_frames, current_frames)
+
+                # R1 regularization for better training stability  
+                if batch_idx % 16 == 0:
+                    current_frames.requires_grad = True
+                    reconstructed_frames = model.frame_decoder(model.imf(tc, tr, fr))
+                    r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True)[0]
+                    r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
+                    loss = loss + r1_gamma * 0.5 * r1_loss * 16
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()  
+
+                # Update exponential moving average of weights
+                ema_model.requires_grad_(False)
+                with torch.no_grad():  
+                    for p_ema, p in zip(ema_model.parameters(), model.parameters()):
+                        p_ema.copy_(p.lerp(p_ema, ema_decay))
+                    for b_ema, b in zip(ema_model.buffers(), model.buffers()):
+                        b_ema.copy_(b)
+                ema_model.requires_grad_(True)  
+
+            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
+
+
+            # Save checkpoint
+            if (epoch + 1) % checkpoint_interval == 0:
+                checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{epoch+1}.pth")
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'ema_state_dict': ema_model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                }, checkpoint_path)
+                print(f"Saved checkpoint: {checkpoint_path}")
+
+            if epoch % 10 == 0:
+                model.eval()
+                ema_model.eval()
+                sample_recon(ema_model, next(iter(dataloader)), device, f"recon_epoch_{epoch+1}.png")
 
     return ema_model
 
