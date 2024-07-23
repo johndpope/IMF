@@ -17,6 +17,7 @@ import yaml
 from PIL import Image
 import decord
 from typing import List, Tuple, Dict, Any
+from memory_profiler import profile
 
 #import wandb
 
@@ -173,6 +174,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
         accelerator.print(f"Saved sample reconstructions to {output_path}")
 
+@profile
 def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_mixing_prob=0.9, r1_gamma=10):
     print("Config:", config)
     print("Training config:", config.get('training', {}))
@@ -289,6 +291,8 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             sample_recon(ema_model, next(iter(train_dataloader)), accelerator, f"recon_epoch_{epoch+1}.png", 
                          num_samples=config['logging']['sample_size'])
     return ema_model
+
+@profile
 if __name__ == "__main__":
     # Load configuration
     config = load_config('config.yaml')

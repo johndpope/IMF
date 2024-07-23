@@ -7,6 +7,7 @@ import torchvision.transforms as transforms
 from torchvision.utils import save_image
 import os
 import torchvision.models as models
+from memory_profiler import profile
 
 class ResNetFeatureExtractor(nn.Module):
     def __init__(self, pretrained=True):
@@ -251,6 +252,7 @@ class IMF(nn.Module):
         print(f"Feature dimensions: {feature_dims}")
         print(f"Motion dimensions: {motion_dims}")
 
+    @profile
     def forward(self, x_current, x_reference):
         print(f"Input shapes - Current: {x_current.shape}, Reference: {x_reference.shape}")
 
