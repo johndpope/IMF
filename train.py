@@ -68,7 +68,6 @@ import torch
 from torch.utils.data import IterableDataset
 from decord import VideoReader, cpu
 import torchvision.transforms as transforms
-
 class SingleVideoIterableDataset(IterableDataset):
     def __init__(self, root_dir, transform=None, frame_skip=1, shuffle=True):
         self.root_dir = root_dir
@@ -82,7 +81,6 @@ class SingleVideoIterableDataset(IterableDataset):
         # Modify the transform pipeline
         if transform is None:
             self.transform = transforms.Compose([
-                transforms.ToTensor(),
                 transforms.Resize((256, 256)),
                 transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
             ])
@@ -111,12 +109,8 @@ class SingleVideoIterableDataset(IterableDataset):
                 current_frame_idx = frame_idx
                 reference_frame_idx = frame_idx + self.frame_skip
 
-                current_frame = vr[current_frame_idx].asnumpy()
-                reference_frame = vr[reference_frame_idx].asnumpy()
-
-                # Convert NumPy arrays to PyTorch tensors
-                current_frame = torch.from_numpy(current_frame).float().permute(2, 0, 1)
-                reference_frame = torch.from_numpy(reference_frame).float().permute(2, 0, 1)
+                current_frame = torch.from_numpy(vr[current_frame_idx].asnumpy()).float().permute(2, 0, 1)
+                reference_frame = torch.from_numpy(vr[reference_frame_idx].asnumpy()).float().permute(2, 0, 1)
 
                 # Apply transforms
                 current_frame = self.transform(current_frame)
