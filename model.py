@@ -197,7 +197,7 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
         # Reshape inputs
-        batch_size = q.size(0)
+        batch_size, _, h, w = q.shape
         q = q.view(batch_size, self.motion_dim, -1).permute(2, 0, 1)
         k = k.view(batch_size, self.motion_dim, -1).permute(2, 0, 1)
         v = v.view(batch_size, self.feature_dim, -1).permute(2, 0, 1)
@@ -220,7 +220,9 @@ class ImplicitMotionAlignment(nn.Module):
         
         # Reshape output
         x = x.permute(1, 2, 0).contiguous()
-        x = x.view(batch_size, self.feature_dim, *q.shape[2:])
+        x = x.view(batch_size, self.feature_dim, h, w)
+        
+        print(f"Output shape: {x.shape}")
         
         return x
 
@@ -269,7 +271,7 @@ class IMF(nn.Module):
         for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
             print(f"Layer {i} - f_r: {f_r_i.shape}, m_r: {m_r_i.shape}, m_c: {m_c_i.shape}")
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            aligned_features.append(aligned_feature.view_as(f_r_i))
+            aligned_features.append(aligned_feature)
             print(f"Layer {i} - Aligned feature: {aligned_feature.shape}")
 
         print(f"Final aligned features: {[f.shape for f in aligned_features]}")
