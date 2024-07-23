@@ -214,11 +214,11 @@ if __name__ == "__main__":
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
-
+    print("Loading VideoDataset...")
     dataset = VideoDataset(root_dir="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666", transform=transform, frame_skip=1)
 
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-
+    print("Training...")
     # Train the model
     train(model, dataloader, num_epochs, device, learning_rate, checkpoint_dir='./checkpoints', checkpoint_interval=10)
 
