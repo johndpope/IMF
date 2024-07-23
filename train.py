@@ -148,7 +148,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         accelerator.print(f"Saved sample reconstructions to {output_path}")
 
 def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_mixing_prob=0.9, r1_gamma=10):
-    optimizer = optim.Adam(model.parameters(), lr=config.learning_rate, betas=(0.9, 0.999))
+    optimizer = optim.Adam(model.parameters(), lr=config['training']['learning_rate'], betas=(0.9, 0.999))
     
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
 
@@ -159,14 +159,14 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     mse_loss = nn.MSELoss()
 
     # Create checkpoint directory if it doesn't exist
-    os.makedirs('./checkpoints', exist_ok=True)
+    os.makedirs(config['checkpoints']['dir'], exist_ok=True)
 
     start_epoch = 0
     # If a checkpoint exists, restore the latest one
-    if os.path.isdir(config.checkpoint_dir):
-        checkpoint_list = sorted([f for f in os.listdir(config.checkpoint_dir) if f.endswith('.pth')], reverse=True)
+    if os.path.isdir(config['checkpoints']['dir']):
+        checkpoint_list = sorted([f for f in os.listdir(config['checkpoints']['dir']) if f.endswith('.pth')], reverse=True)
         if checkpoint_list:
-            checkpoint_path = os.path.join(config.checkpoint_dir, checkpoint_list[0])
+            checkpoint_path = os.path.join(config['checkpoints']['dir'], checkpoint_list[0])
             checkpoint = torch.load(checkpoint_path, map_location=accelerator.device)
             accelerator.unwrap_model(model).load_state_dict(checkpoint['model_state_dict'])
             ema_model.load_state_dict(checkpoint['ema_state_dict'])
@@ -174,11 +174,11 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             start_epoch = checkpoint['epoch'] + 1
             accelerator.print(f"Restored from {checkpoint_path}")
 
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, config['training']['num_epochs']):
    
         model.train()
         total_loss = 0
-        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.num_epochs}", 
+        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config['training']['num_epochs']}", 
                             disable=not accelerator.is_local_main_process)
         
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
@@ -231,11 +231,11 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
 
         progress_bar.close()
         avg_loss = total_loss / len(train_dataloader)
-        accelerator.print(f"Epoch [{epoch+1}/{config.num_epochs}], Average Loss: {avg_loss:.4f}")
+        accelerator.print(f"Epoch [{epoch+1}/{config['training']['num_epochs']}], Average Loss: {avg_loss:.4f}")
 
-        # Save checkpoint
-        if (epoch + 1) % config.checkpoint_interval == 0:
-            checkpoint_path = os.path.join(config.checkpoint_dir, f"checkpoint_{epoch+1}.pth")
+           # Save checkpoint
+        if (epoch + 1) % config['checkpoints']['interval'] == 0:
+            checkpoint_path = os.path.join(config['checkpoints']['dir'], f"checkpoint_{epoch+1}.pth")
             accelerator.save({
                 'epoch': epoch,
                 'model_state_dict': accelerator.unwrap_model(model).state_dict(),
@@ -244,11 +244,10 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             }, checkpoint_path)
             accelerator.print(f"Saved checkpoint: {checkpoint_path}")
 
-        if epoch % 10 == 0:
-            sample_recon(ema_model, next(iter(train_dataloader)), accelerator, f"recon_epoch_{epoch+1}.png")
-
+        if epoch % config['logging']['sample_interval'] == 0:
+            sample_recon(ema_model, next(iter(train_dataloader)), accelerator, f"recon_epoch_{epoch+1}.png", 
+                         num_samples=config['logging']['sample_size'])
     return ema_model
-
 if __name__ == "__main__":
     # Load configuration
     config = load_config('config.yaml')
