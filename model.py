@@ -98,7 +98,6 @@ class LatentTokenEncoder(nn.Module):
         
         return output
 
-
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
@@ -130,7 +129,7 @@ class LatentTokenDecoder(nn.Module):
         
         features = []
         for i, layer in enumerate(self.layers):
-            out = layer(out, style)  # Use style as input to StyleConv2d
+            out = layer(out, style)
             features.append(out)
             print(f"Layer {i} output shape: {out.shape}")
         
@@ -138,7 +137,7 @@ class LatentTokenDecoder(nn.Module):
         return features
     
 class StyleConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, style_dim=32):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, style_dim=64):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
         self.modulation = nn.Linear(style_dim, in_channels)
@@ -155,33 +154,23 @@ class StyleConv2d(nn.Module):
         print(f"Input style shape: {style.shape}")
         
         batch, in_channel, height, width = x.shape
-        style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
+        style = self.modulation(style).view(batch, in_channel, 1, 1)
         print(f"Modulated style shape: {style.shape}")
         
-        weight = self.conv.weight * style
-        print(f"Weighted conv shape: {weight.shape}")
+        x = x * style
+        
+        x = self.conv(x)
+        print(f"After conv shape: {x.shape}")
         
         if self.demodulation:
-            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
-            weight = weight * demod.view(batch, self.conv.out_channels, 1, 1, 1)
-
-        weight = weight.view(
-            batch * self.conv.out_channels, in_channel, self.conv.kernel_size[0], self.conv.kernel_size[1]
-        )
-        print(f"Reshaped weight shape: {weight.shape}")
-
-        x = x.view(1, batch * in_channel, height, width)
-        print(f"Reshaped x shape: {x.shape}")
-        
-        x = F.conv2d(x, weight, groups=batch)
-        x = x.view(batch, self.conv.out_channels, height, width)
-        print(f"After conv shape: {x.shape}")
+            demod = torch.rsqrt(x.pow(2).sum([2, 3], keepdim=True) + 1e-8)
+            x = x * demod
         
         x = self.upsample(x)
         print(f"After upsample shape: {x.shape}")
         
         return x
-
+    
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, num_heads=8):
         super().__init__()
