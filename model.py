@@ -144,11 +144,22 @@ class StyleConv2d(nn.Module):
         self.modulation = nn.Linear(style_dim, in_channels)
         self.demodulation = True
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        
+        print(f"StyleConv2d initialized:")
+        print(f"Conv2d: in_channels={in_channels}, out_channels={out_channels}")
+        print(f"Modulation: in_features={style_dim}, out_features={in_channels}")
 
     def forward(self, x, style):
+        print(f"\nStyleConv2d forward pass:")
+        print(f"Input x shape: {x.shape}")
+        print(f"Input style shape: {style.shape}")
+        
         batch, in_channel, height, width = x.shape
         style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
+        print(f"Modulated style shape: {style.shape}")
+        
         weight = self.conv.weight * style
+        print(f"Weighted conv shape: {weight.shape}")
         
         if self.demodulation:
             demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
@@ -157,12 +168,19 @@ class StyleConv2d(nn.Module):
         weight = weight.view(
             batch * self.conv.out_channels, in_channel, self.conv.kernel_size[0], self.conv.kernel_size[1]
         )
+        print(f"Reshaped weight shape: {weight.shape}")
 
         x = x.view(1, batch * in_channel, height, width)
+        print(f"Reshaped x shape: {x.shape}")
+        
         x = F.conv2d(x, weight, groups=batch)
         x = x.view(batch, self.conv.out_channels, height, width)
+        print(f"After conv shape: {x.shape}")
         
-        return self.upsample(x)
+        x = self.upsample(x)
+        print(f"After upsample shape: {x.shape}")
+        
+        return x
 
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, num_heads=8):
