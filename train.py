@@ -78,14 +78,8 @@ class SingleVideoIterableDataset(IterableDataset):
                             for file in files if file.endswith('.mp4')]
         random.shuffle(self.video_files)
 
-        # Modify the transform pipeline
-        if transform is None:
-            self.transform = transforms.Compose([
-                transforms.Resize((256, 256)),
-                transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-            ])
-        else:
-            self.transform = transform
+        # Use custom transform for tensors
+        self.transform = transform if transform is not None else TensorTransform((256, 256))
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
