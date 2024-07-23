@@ -152,16 +152,20 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     print("Config:", config)
     print("Training config:", config.get('training', {}))
     
-    # Get learning rate with error checking
+    # Get learning rate with error checking and conversion
     learning_rate = config.get('training', {}).get('learning_rate', None)
     if learning_rate is None:
         raise ValueError("Learning rate not found in config")
-    if not isinstance(learning_rate, (int, float)) or learning_rate <= 0:
-        raise ValueError(f"Invalid learning rate: {learning_rate}")
+    
+    try:
+        learning_rate = float(learning_rate)
+    except ValueError:
+        raise ValueError(f"Invalid learning rate: {learning_rate}. Must be a valid number.")
+    
     
     print(f"Learning rate: {learning_rate}")
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999))  
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999))
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
 
     # Set up exponential moving average of model weights
