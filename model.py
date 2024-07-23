@@ -52,31 +52,57 @@ class LatentTokenEncoder(nn.Module):
         x = x.view(x.size(0), -1)
         return self.fc(x)
 
+
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
         self.num_layers = num_layers
-        self.fc = nn.Linear(latent_dim, base_channels * 4 * 4)
+        self.const = nn.Parameter(torch.randn(1, base_channels, 4, 4))
+        self.fc = nn.Linear(latent_dim, base_channels)
         self.layers = nn.ModuleList()
         in_channels = base_channels
         for i in range(num_layers):
             out_channels = in_channels // 2 if i < num_layers - 1 else in_channels
             self.layers.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1),
-                    nn.BatchNorm2d(out_channels),
-                    nn.ReLU(inplace=True)
-                )
+                StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
             )
             in_channels = out_channels
 
     def forward(self, x):
-        x = self.fc(x).view(x.size(0), -1, 4, 4)
+        x = self.fc(x)
+        out = self.const.repeat(x.shape[0], 1, 1, 1)
         features = []
         for layer in self.layers:
-            x = layer(x)
-            features.append(x)
+            out = layer(out, x)
+            features.append(out)
         return features
+
+class StyleConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        self.modulation = nn.Linear(32, in_channels)
+        self.demodulation = True
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+
+    def forward(self, x, style):
+        batch, in_channel, height, width = x.shape
+        style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
+        weight = self.conv.weight * style
+        
+        if self.demodulation:
+            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
+            weight = weight * demod.view(batch, self.conv.out_channels, 1, 1, 1)
+
+        weight = weight.view(
+            batch * self.conv.out_channels, in_channel, self.conv.kernel_size[0], self.conv.kernel_size[1]
+        )
+
+        x = x.view(1, batch * in_channel, height, width)
+        x = F.conv2d(x, weight, groups=batch)
+        x = x.view(batch, self.conv.out_channels, height, width)
+        
+        return self.upsample(x)
 
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, num_heads=8):
@@ -130,16 +156,6 @@ class IMF(nn.Module):
 
         return aligned_features
 
-# Example usage
-# if __name__ == "__main__":
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     model = IMF().to(device)
-#     x_current = torch.randn(1, 3, 256, 256).to(device)
-#     x_reference = torch.randn(1, 3, 256, 256).to(device)
-#     aligned_features = model(x_current, x_reference)
-#     for i, feature in enumerate(aligned_features):
-#         print(f"Aligned feature {i} shape:", feature.shape)
-
 
 
 
@@ -151,11 +167,7 @@ class FrameDecoder(nn.Module):
         for i in range(num_layers):
             out_channels = in_channels // 2 if i < num_layers - 1 else 3
             self.layers.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1),
-                    nn.BatchNorm2d(out_channels) if i < num_layers - 1 else nn.Identity(),
-                    nn.ReLU(inplace=True) if i < num_layers - 1 else nn.Tanh()
-                )
+                ResBlock(in_channels, out_channels)
             )
             in_channels = out_channels
 
@@ -164,8 +176,34 @@ class FrameDecoder(nn.Module):
         for i, layer in enumerate(self.layers):
             x = layer(x)
             if i < len(self.layers) - 1:
-                x = torch.cat([x, features[-i-2]], dim=1)
-        return x
+                x = x + features[-i-2]
+        return torch.tanh(x)
+
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        
+        if in_channels != out_channels:
+            self.shortcut = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, x):
+        residual = self.shortcut(x)
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += residual
+        out = self.relu(out)
+        return self.upsample(out)
 
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
