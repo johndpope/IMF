@@ -110,7 +110,7 @@ class LatentTokenDecoder(nn.Module):
         for i in range(num_layers):
             out_channels = in_channels // 2 if i < num_layers - 1 else in_channels
             self.layers.append(
-                StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, style_dim=latent_dim)
+                StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, style_dim=base_channels)
             )
             in_channels = out_channels
         
@@ -122,15 +122,15 @@ class LatentTokenDecoder(nn.Module):
         print(f"\nLatentTokenDecoder forward pass:")
         print(f"Input shape: {x.shape}")
         
-        x = self.fc(x)
-        print(f"After FC layer shape: {x.shape}")
+        style = self.fc(x)
+        print(f"After FC layer shape: {style.shape}")
         
         out = self.const.repeat(x.shape[0], 1, 1, 1)
         print(f"Initial out shape: {out.shape}")
         
         features = []
         for i, layer in enumerate(self.layers):
-            out = layer(out, x)
+            out = layer(out, style)  # Use style as input to StyleConv2d
             features.append(out)
             print(f"Layer {i} output shape: {out.shape}")
         
