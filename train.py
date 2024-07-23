@@ -121,6 +121,9 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     for epoch in range(start_epoch, config.num_epochs):
         model.train()
         total_loss = 0
+        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.num_epochs}", 
+                            disable=not accelerator.is_local_main_process)
+        
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
             # Forward pass
             reconstructed_frames = model(current_frames, reference_frames)
@@ -164,7 +167,12 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                     p_ema.copy_(p.lerp(p_ema, ema_decay))
 
             total_loss += loss.item()
+            
+            # Update progress bar
+            progress_bar.update(1)
+            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
 
+        progress_bar.close()
         avg_loss = total_loss / len(train_dataloader)
         accelerator.print(f"Epoch [{epoch+1}/{config.num_epochs}], Average Loss: {avg_loss:.4f}")
 
