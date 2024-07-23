@@ -209,10 +209,11 @@ class ImplicitMotionAlignment(nn.Module):
         
         print(f"After projection shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
-        # Adjust k to match v's sequence length
+        # Adjust q and k to match v's sequence length
+        q = q.repeat(v.size(0) // q.size(0), 1, 1)
         k = k.repeat(v.size(0) // k.size(0), 1, 1)
         
-        print(f"After k adjustment - k: {k.shape}, v: {v.shape}")
+        print(f"After adjustment - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
         attn_output, _ = self.cross_attention(q, k, v)
         x = self.norm1(q + attn_output)
@@ -220,7 +221,8 @@ class ImplicitMotionAlignment(nn.Module):
         
         # Reshape output
         x = x.permute(1, 2, 0).contiguous()
-        x = x.view(batch_size, self.feature_dim, h, w)
+        x = x.view(batch_size, self.feature_dim, v.size(0) // batch_size, -1)
+        x = x.permute(0, 1, 3, 2).contiguous()
         
         print(f"Output shape: {x.shape}")
         
