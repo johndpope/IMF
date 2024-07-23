@@ -16,6 +16,7 @@ from tqdm.auto import tqdm  # Changed this line
 import yaml
 from PIL import Image
 import decord
+from typing import List, Tuple, Dict, Any
 
 #import wandb
 
@@ -40,7 +41,17 @@ class VideoDataset(Dataset):
     
     def __len__(self):
         return 99999999999 #self.total_frames
-    
+        
+    def augmentation(self, images, transform, state=None):
+        if state is not None:
+            torch.set_rng_state(state)
+        if isinstance(images, List):
+            transformed_images = [transform(img) for img in images]
+            ret_tensor = torch.stack(transformed_images, dim=0)  # (f, c, h, w)
+        else:
+            ret_tensor = transform(images)  # (c, h, w)
+        return ret_tensor
+        
     def __getitem__(self, idx):
         video_idx, frame_idx = self._get_video_and_frame(idx)
         video_path = self.video_files[video_idx]
