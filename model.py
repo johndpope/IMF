@@ -89,7 +89,7 @@ class LatentTokenDecoder(nn.Module):
         for i in range(num_layers):
             out_channels = in_channels // 2 if i < num_layers - 1 else in_channels
             self.layers.append(
-                StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+                StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, style_dim=latent_dim)
             )
             in_channels = out_channels
 
@@ -101,12 +101,12 @@ class LatentTokenDecoder(nn.Module):
             out = layer(out, x)
             features.append(out)
         return features
-
+    
 class StyleConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding, style_dim=32):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
-        self.modulation = nn.Linear(32, in_channels)
+        self.modulation = nn.Linear(style_dim, in_channels)
         self.demodulation = True
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
 
