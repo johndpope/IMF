@@ -177,10 +177,9 @@ class ImplicitMotionAlignment(nn.Module):
         self.feature_dim = feature_dim
         self.motion_dim = motion_dim
         self.num_heads = num_heads
-        
-        # Project motion features to match feature_dim
-        self.motion_projection = nn.Linear(motion_dim, feature_dim)
-        
+        self.q_proj = nn.Linear(motion_dim, feature_dim)
+        self.k_proj = nn.Linear(motion_dim, feature_dim)
+        self.v_proj = nn.Linear(feature_dim, feature_dim)
         self.cross_attention = nn.MultiheadAttention(feature_dim, num_heads)
         self.norm1 = nn.LayerNorm(feature_dim)
         self.norm2 = nn.LayerNorm(feature_dim)
@@ -189,15 +188,21 @@ class ImplicitMotionAlignment(nn.Module):
             nn.ReLU(),
             nn.Linear(feature_dim * 4, feature_dim)
         )
+        
+        print(f"ImplicitMotionAlignment initialized:")
+        print(f"Feature dimension: {feature_dim}")
+        print(f"Motion dimension: {motion_dim}")
+        print(f"Number of heads: {num_heads}")
 
     def forward(self, q, k, v):
-        print(f"ImplicitMotionAlignment input shapes: q={q.shape}, k={k.shape}, v={v.shape}")
+        print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
-        # Project motion features (q and k) to match feature_dim
-        q = self.motion_projection(q)
-        k = self.motion_projection(k)
+        # Project q, k, v to the correct feature dimension
+        q = self.q_proj(q)
+        k = self.k_proj(k)
+        v = self.v_proj(v)
         
-        print(f"After projection: q={q.shape}, k={k.shape}, v={v.shape}")
+        print(f"After projection shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
         attn_output, _ = self.cross_attention(q, k, v)
         x = self.norm1(q + attn_output)
@@ -210,9 +215,22 @@ class IMF(nn.Module):
         self.dense_feature_encoder = DenseFeatureEncoder(base_channels=base_channels, num_layers=num_layers)
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, base_channels=base_channels, num_layers=num_layers)
+        
+        # Calculate feature dimensions for each layer
+        feature_dims = [base_channels * (2 ** i) for i in range(num_layers)]
+        
+        # Calculate motion dimensions for each layer (output of LatentTokenDecoder)
+        motion_dims = [base_channels // (2 ** i) for i in range(num_layers - 1)] + [base_channels // (2 ** (num_layers - 1))]
+        
         self.implicit_motion_alignment = nn.ModuleList([
-            ImplicitMotionAlignment(base_channels * (2 ** i)) for i in range(num_layers)
+            ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim) 
+            for feature_dim, motion_dim in zip(feature_dims, motion_dims)
         ])
+        
+        print(f"IMF initialized:")
+        print(f"Number of layers: {num_layers}")
+        print(f"Feature dimensions: {feature_dims}")
+        print(f"Motion dimensions: {motion_dims}")
 
     def forward(self, x_current, x_reference):
         print(f"Input shapes - Current: {x_current.shape}, Reference: {x_reference.shape}")
