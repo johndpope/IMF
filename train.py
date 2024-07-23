@@ -100,6 +100,7 @@ class SingleVideoIterableDataset(IterableDataset):
 
         for video_idx in range(iter_start, iter_end):
             video_path = self.video_files[video_idx]
+            print(f"Processing video: {video_path}")
             vr = VideoReader(video_path, ctx=cpu(0))
             frame_indices = list(range(len(vr) - self.frame_skip))
             if self.shuffle:
@@ -109,12 +110,21 @@ class SingleVideoIterableDataset(IterableDataset):
                 current_frame_idx = frame_idx
                 reference_frame_idx = frame_idx + self.frame_skip
 
-                current_frame = torch.from_numpy(vr[current_frame_idx].asnumpy()).float().permute(2, 0, 1)
-                reference_frame = torch.from_numpy(vr[reference_frame_idx].asnumpy()).float().permute(2, 0, 1)
+                current_frame = vr[current_frame_idx].asnumpy()
+                reference_frame = vr[reference_frame_idx].asnumpy()
+                
+                print(f"Raw frame shapes - Current: {current_frame.shape}, Reference: {reference_frame.shape}")
+
+                current_frame = torch.from_numpy(current_frame).float().permute(2, 0, 1)
+                reference_frame = torch.from_numpy(reference_frame).float().permute(2, 0, 1)
+
+                print(f"Tensor shapes after permute - Current: {current_frame.shape}, Reference: {reference_frame.shape}")
 
                 # Apply transforms
                 current_frame = self.transform(current_frame)
                 reference_frame = self.transform(reference_frame)
+
+                print(f"Final tensor shapes - Current: {current_frame.shape}, Reference: {reference_frame.shape}")
 
                 yield current_frame, reference_frame
 
