@@ -170,7 +170,6 @@ class StyleConv2d(nn.Module):
         print(f"After upsample shape: {x.shape}")
         
         return x
-
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, num_heads=8):
         super().__init__()
@@ -210,12 +209,18 @@ class ImplicitMotionAlignment(nn.Module):
         
         print(f"After projection shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
+        # Adjust k to match v's sequence length
+        k = k.repeat(v.size(0) // k.size(0), 1, 1)
+        
+        print(f"After k adjustment - k: {k.shape}, v: {v.shape}")
+        
         attn_output, _ = self.cross_attention(q, k, v)
         x = self.norm1(q + attn_output)
         x = self.norm2(x + self.ffn(x))
         
         # Reshape output
         x = x.permute(1, 2, 0).contiguous()
+        x = x.view(batch_size, self.feature_dim, *q.shape[2:])
         
         return x
 
