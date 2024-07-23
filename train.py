@@ -14,6 +14,7 @@ from accelerate import Accelerator
 from torch.utils.data import IterableDataset
 from tqdm.auto import tqdm  # Changed this line
 import yaml
+from PIL import Image
 #import wandb
 
 class VideoDataset(Dataset):
@@ -44,15 +45,13 @@ class VideoDataset(Dataset):
         current_frame_idx = frame_idx
         reference_frame_idx = frame_idx + self.frame_skip
         
-        current_frame = vr[current_frame_idx].asnumpy()
-        reference_frame = vr[reference_frame_idx].asnumpy()
-        
-        current_frame = torch.from_numpy(current_frame).float().permute(2, 0, 1)
-        reference_frame = torch.from_numpy(reference_frame).float().permute(2, 0, 1)
-        
+        current_frame = Image.fromarray(vr[current_frame_idx].numpy())  
+        reference_frame = Image.fromarray(vr[reference_frame_idx].numpy())  
+
         if self.transform:
-            current_frame = self.transform(current_frame)
-            reference_frame = self.transform(reference_frame)
+            state = torch.get_rng_state()
+            current_frame = self.augmentation(current_frame, self.transform, state)
+            reference_frame = self.augmentation(reference_frame, self.transform, state)
         
         return current_frame, reference_frame
     
