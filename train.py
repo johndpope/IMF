@@ -14,7 +14,7 @@ from accelerate import Accelerator
 from torch.utils.data import IterableDataset
 import tqdm
 import yaml
-import wandb
+#import wandb
 
 class VideoDataset(Dataset):
     def __init__(self, root_dir, transform=None, frame_skip=1):
