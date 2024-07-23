@@ -24,7 +24,7 @@ class VideoDataset(Dataset):
         self.video_files = [os.path.join(subdir, file)
                             for subdir, dirs, files in os.walk(root_dir)
                             for file in files if file.endswith('.mp4')]
-        self.total_frames = self._count_total_frames()
+        # self.total_frames = self._count_total_frames()
     
     def _count_total_frames(self):
         total = 0
