@@ -71,11 +71,32 @@ class LatentTokenEncoder(nn.Module):
             nn.AdaptiveAvgPool2d((1, 1))
         )
         self.fc = nn.Linear(256, latent_dim)
+        
+        print(f"LatentTokenEncoder initialized:")
+        print(f"Input channels: {in_channels}")
+        print(f"Latent dimension: {latent_dim}")
+        print("Convolutional layers:")
+        for i, layer in enumerate(self.conv):
+            if isinstance(layer, nn.Conv2d):
+                print(f"  Conv2d {i}: in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size={layer.kernel_size}")
+        print(f"Final FC layer: in_features={self.fc.in_features}, out_features={self.fc.out_features}")
 
     def forward(self, x):
-        x = self.conv(x)
+        print(f"\nLatentTokenEncoder forward pass:")
+        print(f"Input shape: {x.shape}")
+        
+        for i, layer in enumerate(self.conv):
+            x = layer(x)
+            if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.AdaptiveAvgPool2d):
+                print(f"After layer {i} ({type(layer).__name__}) shape: {x.shape}")
+        
         x = x.view(x.size(0), -1)
-        return self.fc(x)
+        print(f"After flattening shape: {x.shape}")
+        
+        output = self.fc(x)
+        print(f"Final output shape: {output.shape}")
+        
+        return output
 
 
 class LatentTokenDecoder(nn.Module):
@@ -92,14 +113,28 @@ class LatentTokenDecoder(nn.Module):
                 StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, style_dim=latent_dim)
             )
             in_channels = out_channels
+        
+        print(f"LatentTokenDecoder initialized with {num_layers} layers")
+        print(f"Constant tensor shape: {self.const.shape}")
+        print(f"FC layer: in_features={latent_dim}, out_features={base_channels}")
 
     def forward(self, x):
+        print(f"\nLatentTokenDecoder forward pass:")
+        print(f"Input shape: {x.shape}")
+        
         x = self.fc(x)
+        print(f"After FC layer shape: {x.shape}")
+        
         out = self.const.repeat(x.shape[0], 1, 1, 1)
+        print(f"Initial out shape: {out.shape}")
+        
         features = []
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             out = layer(out, x)
             features.append(out)
+            print(f"Layer {i} output shape: {out.shape}")
+        
+        print(f"Final features shapes: {[f.shape for f in features]}")
         return features
     
 class StyleConv2d(nn.Module):
