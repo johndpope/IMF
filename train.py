@@ -20,23 +20,25 @@ class VideoDataset(Dataset):
         self.video_files = [os.path.join(subdir, file)
                             for subdir, dirs, files in os.walk(root_dir)
                             for file in files if file.endswith('.mp4')]
-        self.frame_pairs = self._generate_frame_pairs()
+        self.total_frames = self._count_total_frames()
     
-    def _generate_frame_pairs(self):
-        frame_pairs = []
+    def _count_total_frames(self):
+        total = 0
         for video_path in self.video_files:
             vr = VideoReader(video_path, ctx=cpu(0))
-            total_frames = len(vr)
-            for i in range(0, total_frames - self.frame_skip):
-                frame_pairs.append((video_path, i, i + self.frame_skip))
-        return frame_pairs
+            total += max(0, len(vr) - self.frame_skip)
+        return total
     
     def __len__(self):
-        return len(self.frame_pairs)
+        return self.total_frames
     
     def __getitem__(self, idx):
-        video_path, current_frame_idx, reference_frame_idx = self.frame_pairs[idx]
+        video_idx, frame_idx = self._get_video_and_frame(idx)
+        video_path = self.video_files[video_idx]
         vr = VideoReader(video_path, ctx=cpu(0))
+        
+        current_frame_idx = frame_idx
+        reference_frame_idx = frame_idx + self.frame_skip
         
         current_frame = vr[current_frame_idx].asnumpy()
         reference_frame = vr[reference_frame_idx].asnumpy()
@@ -49,6 +51,17 @@ class VideoDataset(Dataset):
             reference_frame = self.transform(reference_frame)
         
         return current_frame, reference_frame
+    
+    def _get_video_and_frame(self, idx):
+        for video_idx, video_path in enumerate(self.video_files):
+            vr = VideoReader(video_path, ctx=cpu(0))
+            num_frames = max(0, len(vr) - self.frame_skip)
+            if idx < num_frames:
+                return video_idx, idx
+            idx -= num_frames
+        raise IndexError("Index out of range")
+
+
 
 def sample_recon(model, data, accelerator, output_path, num_samples=8):
     model.eval()
