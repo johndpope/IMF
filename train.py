@@ -34,7 +34,7 @@ class VideoDataset(Dataset):
         return total
     
     def __len__(self):
-        return self.total_frames
+        return 99999999999 #self.total_frames
     
     def __getitem__(self, idx):
         video_idx, frame_idx = self._get_video_and_frame(idx)
@@ -299,7 +299,7 @@ if __name__ == "__main__":
     ])
 
     print("Loading VideoDataset...")
-    dataset = SingleVideoIterableDataset(
+    dataset = VideoDataset(
         root_dir=config['dataset']['root_dir'],
         transform=transform,
         frame_skip=config['dataset']['frame_skip']
