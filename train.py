@@ -12,7 +12,7 @@ import random
 from decord import VideoReader, cpu
 from accelerate import Accelerator
 from torch.utils.data import IterableDataset
-import tqdm
+from tqdm.auto import tqdm  # Changed this line
 import yaml
 #import wandb
 
