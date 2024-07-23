@@ -14,6 +14,7 @@ from accelerate import Accelerator
 from torch.utils.data import IterableDataset
 import tqdm
 import yaml
+import wandb
 
 class VideoDataset(Dataset):
     def __init__(self, root_dir, transform=None, frame_skip=1):
@@ -148,8 +149,19 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         accelerator.print(f"Saved sample reconstructions to {output_path}")
 
 def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_mixing_prob=0.9, r1_gamma=10):
-    optimizer = optim.Adam(model.parameters(), lr=config['training']['learning_rate'], betas=(0.9, 0.999))
+    print("Config:", config)
+    print("Training config:", config.get('training', {}))
     
+    # Get learning rate with error checking
+    learning_rate = config.get('training', {}).get('learning_rate', None)
+    if learning_rate is None:
+        raise ValueError("Learning rate not found in config")
+    if not isinstance(learning_rate, (int, float)) or learning_rate <= 0:
+        raise ValueError(f"Invalid learning rate: {learning_rate}")
+    
+    print(f"Learning rate: {learning_rate}")
+
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999))  
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
 
     # Set up exponential moving average of model weights
