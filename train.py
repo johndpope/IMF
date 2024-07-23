@@ -194,7 +194,7 @@ if __name__ == "__main__":
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
 
-    dataset = VideoDataset(root_dir="path/to/your/videos", transform=transform, frame_skip=1)
+    dataset = VideoDataset(root_dir="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666", transform=transform, frame_skip=1)
 
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
