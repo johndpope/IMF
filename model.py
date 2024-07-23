@@ -209,61 +209,53 @@ class ImplicitMotionAlignment(nn.Module):
         x = self.norm2(x + self.ffn(x))
         return x
 
-class IMF(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
+class ImplicitMotionAlignment(nn.Module):
+    def __init__(self, feature_dim, motion_dim, num_heads=8):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder(base_channels=base_channels, num_layers=num_layers)
-        self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
-        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, base_channels=base_channels, num_layers=num_layers)
+        self.feature_dim = feature_dim
+        self.motion_dim = motion_dim
+        self.num_heads = num_heads
+        self.q_proj = nn.Linear(motion_dim, feature_dim)
+        self.k_proj = nn.Linear(motion_dim, feature_dim)
+        self.v_proj = nn.Linear(feature_dim, feature_dim)
+        self.cross_attention = nn.MultiheadAttention(feature_dim, num_heads)
+        self.norm1 = nn.LayerNorm(feature_dim)
+        self.norm2 = nn.LayerNorm(feature_dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(feature_dim, feature_dim * 4),
+            nn.ReLU(),
+            nn.Linear(feature_dim * 4, feature_dim)
+        )
         
-        # Calculate feature dimensions for each layer
-        feature_dims = [base_channels * (2 ** i) for i in range(num_layers)]
+        print(f"ImplicitMotionAlignment initialized:")
+        print(f"Feature dimension: {feature_dim}")
+        print(f"Motion dimension: {motion_dim}")
+        print(f"Number of heads: {num_heads}")
+
+    def forward(self, q, k, v):
+        print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
-        # Calculate motion dimensions for each layer (output of LatentTokenDecoder)
-        motion_dims = [base_channels // (2 ** i) for i in range(num_layers - 1)] + [base_channels // (2 ** (num_layers - 1))]
+        # Reshape inputs
+        q = q.view(-1, q.size(-1))
+        k = k.view(-1, k.size(-1))
+        v = v.view(-1, v.size(-1))
         
-        self.implicit_motion_alignment = nn.ModuleList([
-            ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim) 
-            for feature_dim, motion_dim in zip(feature_dims, motion_dims)
-        ])
+        # Project q, k, v to the correct feature dimension
+        q = self.q_proj(q)
+        k = self.k_proj(k)
+        v = self.v_proj(v)
         
-        print(f"IMF initialized:")
-        print(f"Number of layers: {num_layers}")
-        print(f"Feature dimensions: {feature_dims}")
-        print(f"Motion dimensions: {motion_dims}")
-
-    def forward(self, x_current, x_reference):
-        print(f"Input shapes - Current: {x_current.shape}, Reference: {x_reference.shape}")
-
-        # Encode reference frame
-        f_r = self.dense_feature_encoder(x_reference)
-        t_r = self.latent_token_encoder(x_reference)
-        print(f"Reference encoding - Features: {[f.shape for f in f_r]}, Token: {t_r.shape}")
-
-        # Encode current frame
-        t_c = self.latent_token_encoder(x_current)
-        print(f"Current encoding - Token: {t_c.shape}")
-
-        # Decode motion features
-        m_r = self.latent_token_decoder(t_r)
-        m_c = self.latent_token_decoder(t_c)
-        print(f"Motion features - Reference: {[m.shape for m in m_r]}, Current: {[m.shape for m in m_c]}")
-
-        # Align features
-        aligned_features = []
-        for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
-            print(f"Layer {i} - f_r: {f_r_i.shape}, m_r: {m_r_i.shape}, m_c: {m_c_i.shape}")
-            q = m_c_i.flatten(2).permute(2, 0, 1)
-            k = m_r_i.flatten(2).permute(2, 0, 1)
-            v = f_r_i.flatten(2).permute(2, 0, 1)
-            print(f"Layer {i} - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-            aligned_feature = align_layer(q, k, v)
-            aligned_feature = aligned_feature.permute(1, 2, 0).view_as(f_r_i)
-            aligned_features.append(aligned_feature)
-            print(f"Layer {i} - Aligned feature: {aligned_feature.shape}")
-
-        print(f"Final aligned features: {[f.shape for f in aligned_features]}")
-        return aligned_features
+        # Reshape for multi-head attention
+        q = q.view(-1, self.feature_dim, 1).permute(2, 0, 1)
+        k = k.view(-1, self.feature_dim, 1).permute(2, 0, 1)
+        v = v.view(-1, self.feature_dim, 1).permute(2, 0, 1)
+        
+        print(f"After projection shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        
+        attn_output, _ = self.cross_attention(q, k, v)
+        x = self.norm1(q + attn_output)
+        x = self.norm2(x + self.ffn(x))
+        return x.permute(1, 2, 0)
     
 
 
