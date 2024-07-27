@@ -27,6 +27,54 @@ def load_config(config_path):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
 
+import numpy as np
+from collections import defaultdict
+
+def monitor_gradients(model, epoch, batch_idx, log_interval=10):
+    """
+    Monitor gradients of the model parameters.
+    
+    :param model: The neural network model
+    :param epoch: Current epoch number
+    :param batch_idx: Current batch index
+    :param log_interval: How often to log gradient statistics
+    """
+    if batch_idx % log_interval == 0:
+        grad_stats = defaultdict(list)
+        
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                grad_norm = param.grad.norm().item()
+                grad_stats['norm'].append(grad_norm)
+                
+                if torch.isnan(param.grad).any():
+                    print(f"NaN gradient detected in {name}")
+                
+                if torch.isinf(param.grad).any():
+                    print(f"Inf gradient detected in {name}")
+                
+                grad_stats['names'].append(name)
+        
+        if grad_stats['norm']:
+            avg_norm = np.mean(grad_stats['norm'])
+            max_norm = np.max(grad_stats['norm'])
+            min_norm = np.min(grad_stats['norm'])
+            
+            print(f"Epoch {epoch}, Batch {batch_idx}")
+            print(f"Gradient norms - Avg: {avg_norm:.4f}, Max: {max_norm:.4f}, Min: {min_norm:.4f}")
+            
+            # Identify layers with unusually high or low gradients
+            threshold_high = avg_norm * 10  # Adjust this multiplier as needed
+            threshold_low = avg_norm * 0.1  # Adjust this multiplier as needed
+            
+            for name, norm in zip(grad_stats['names'], grad_stats['norm']):
+                if norm > threshold_high:
+                    print(f"High gradient in {name}: {norm:.4f}")
+                elif norm < threshold_low:
+                    print(f"Low gradient in {name}: {norm:.4f}")
+        else:
+            print("No gradients to monitor")
+
 def sample_recon(model, data, accelerator, output_path, num_samples=8):
     model.eval()
     with torch.no_grad():
@@ -199,6 +247,8 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                     debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
 
             accelerator.backward(loss)
+             # Monitor gradients before optimizer step
+            monitor_gradients(model, epoch, batch_idx)
             optimizer.step()
             optimizer.zero_grad()
 
