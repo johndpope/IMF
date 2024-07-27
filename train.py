@@ -4,7 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import math
 import os
-from model import IMFModel
+from model import IMFModel,debug_print
 from torchvision.utils import save_image
 import torchvision.transforms as transforms
 
@@ -20,6 +20,8 @@ from typing import List, Tuple, Dict, Any
 from memory_profiler import profile
 
 #import wandb
+
+
 
 def load_config(config_path):
     with open(config_path, 'r') as file:
@@ -52,13 +54,13 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         output_dir = os.path.dirname(output_path)
         os.makedirs(output_dir, exist_ok=True)
         save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
-        accelerator.print(f"Saved sample reconstructions to {output_path}")
+        accelerator.debug_print(f"Saved sample reconstructions to {output_path}")
+
 
 @profile
-@profile
 def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_mixing_prob=0.9, r1_gamma=10):
-    print("Config:", config)
-    print("Training config:", config.get('training', {}))
+    debug_print("Config:", config)
+    debug_print("Training config:", config.get('training', {}))
     
     learning_rate = config.get('training', {}).get('learning_rate', None)
     if learning_rate is None:
@@ -69,7 +71,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     except ValueError:
         raise ValueError(f"Invalid learning rate: {learning_rate}. Must be a valid number.")
     
-    print(f"Learning rate: {learning_rate}")
+    debug_print(f"Learning rate: {learning_rate}")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999))
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
@@ -94,7 +96,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             ema_model.load_state_dict(checkpoint['ema_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             start_epoch = checkpoint['epoch'] + 1
-            accelerator.print(f"Restored from {checkpoint_path}")
+            accelerator.debug_print(f"Restored from {checkpoint_path}")
 
     for epoch in range(start_epoch, config['training']['num_epochs']):
         model.train()
@@ -103,18 +105,18 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                             disable=not accelerator.is_local_main_process)
         
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-            print(f"Current frames shape: {current_frames.shape}")
-            print(f"Reference frames shape: {reference_frames.shape}")
+            debug_print(f"Current frames shape: {current_frames.shape}")
+            debug_print(f"Reference frames shape: {reference_frames.shape}")
 
             # Forward pass
             reconstructed_frames = model(current_frames, reference_frames)
-            print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
+            debug_print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
 
             # Add noise to latent tokens for improved training dynamics
             tc = model.latent_token_encoder(current_frames)
             tr = model.latent_token_encoder(reference_frames)
-            print(f"tc shape: {tc.shape}")
-            print(f"tr shape: {tr.shape}")
+            debug_print(f"tc shape: {tc.shape}")
+            debug_print(f"tr shape: {tr.shape}")
 
             noise = torch.randn_like(tc) * 0.01
             tc = tc + noise
@@ -131,29 +133,29 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 mix_tc = [tc] * len(model.imf.implicit_motion_alignment)
                 mix_tr = [tr] * len(model.imf.implicit_motion_alignment)
 
-            print(f"mix_tc length: {len(mix_tc)}, mix_tr length: {len(mix_tr)}")
+            debug_print(f"mix_tc length: {len(mix_tc)}, mix_tr length: {len(mix_tr)}")
             m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
-            print(f"m_c length: {len(m_c)}, m_r length: {len(m_r)}")
+            debug_print(f"m_c length: {len(m_c)}, m_r length: {len(m_r)}")
 
             fr = model.dense_feature_encoder(reference_frames)
-            print(f"fr length: {len(fr)}")
+            debug_print(f"fr length: {len(fr)}")
 
             aligned_features = []
             for i in range(len(model.imf.implicit_motion_alignment)):
-                print(f"Processing layer {i}")
+                debug_print(f"Processing layer {i}")
                 f_r_i = fr[i]
                 align_layer = model.imf.implicit_motion_alignment[i]
                 m_c_i = m_c[i][i]  # Access the i-th element of the i-th sublist
                 m_r_i = m_r[i][i]  # Access the i-th element of the i-th sublist
-                print(f"f_r_i shape: {f_r_i.shape}")
-                print(f"m_c_i shape: {m_c_i.shape}")
-                print(f"m_r_i shape: {m_r_i.shape}")
+                debug_print(f"f_r_i shape: {f_r_i.shape}")
+                debug_print(f"m_c_i shape: {m_c_i.shape}")
+                debug_print(f"m_r_i shape: {m_r_i.shape}")
                 aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                print(f"aligned_feature shape: {aligned_feature.shape}")
+                debug_print(f"aligned_feature shape: {aligned_feature.shape}")
                 aligned_features.append(aligned_feature)
 
             reconstructed_frames = model.frame_decoder(aligned_features)
-            print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
+            debug_print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
 
             loss = mse_loss(reconstructed_frames, current_frames)
 
@@ -162,15 +164,15 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             if batch_idx % 16 == 0:
                 current_frames.requires_grad = True
                 reconstructed_frames = model(current_frames, reference_frames)
-                print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
-                print(f"Current frames shape before R1: {current_frames.shape}")
+                debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
+                debug_print(f"Current frames shape before R1: {current_frames.shape}")
                 r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True, allow_unused=True)[0]
                 if r1_loss is not None:
-                    print(f"r1_loss shape: {r1_loss.shape}")
+                    debug_print(f"r1_loss shape: {r1_loss.shape}")
                     r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
                     loss = loss + r1_gamma * 0.5 * r1_loss * 16
                 else:
-                    print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
+                    debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
 
             accelerator.backward(loss)
             optimizer.step()
@@ -188,7 +190,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
 
         progress_bar.close()
         avg_loss = total_loss / len(train_dataloader)
-        accelerator.print(f"Epoch [{epoch+1}/{config['training']['num_epochs']}], Average Loss: {avg_loss:.4f}")
+        accelerator.debug_print(f"Epoch [{epoch+1}/{config['training']['num_epochs']}], Average Loss: {avg_loss:.4f}")
 
         # Save checkpoint
         if (epoch + 1) % config['checkpoints']['interval'] == 0:
@@ -199,7 +201,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 'ema_state_dict': ema_model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
             }, checkpoint_path)
-            accelerator.print(f"Saved checkpoint: {checkpoint_path}")
+            accelerator.debug_print(f"Saved checkpoint: {checkpoint_path}")
 
         if epoch % config['logging']['sample_interval'] == 0:
             sample_recon(ema_model, next(iter(train_dataloader)), accelerator, f"recon_epoch_{epoch+1}.png", 
@@ -232,7 +234,7 @@ def main():
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
 
-    print("Loading VideoDataset...")
+    debug_print("Loading VideoDataset...")
     dataset = VideoDataset(
         root_dir=config['dataset']['root_dir'],
         transform=transform,
@@ -244,7 +246,7 @@ def main():
         num_workers=4
     )
 
-    print("Training...")
+    debug_print("Training...")
     # Train the model
     train(
         config,
