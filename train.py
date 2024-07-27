@@ -19,14 +19,13 @@ import decord
 from typing import List, Tuple, Dict, Any
 from memory_profiler import profile
 
-#import wandb
+import wandb
 
 
 
 def load_config(config_path):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
-
 
 def sample_recon(model, data, accelerator, output_path, num_samples=8):
     model.eval()
@@ -54,14 +53,16 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         output_dir = os.path.dirname(output_path)
         os.makedirs(output_dir, exist_ok=True)
         save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
-        accelerator.debug_print(f"Saved sample reconstructions to {output_path}")
+        accelerator.print(f"Saved sample reconstructions to {output_path}")
+
+        return frames
 
 
 @profile
 def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_mixing_prob=0.9, r1_gamma=10):
     debug_print("Config:", config)
     debug_print("Training config:", config.get('training', {}))
-    
+
     learning_rate = config.get('training', {}).get('learning_rate', None)
     if learning_rate is None:
         raise ValueError("Learning rate not found in config")
@@ -96,7 +97,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             ema_model.load_state_dict(checkpoint['ema_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             start_epoch = checkpoint['epoch'] + 1
-            accelerator.debug_print(f"Restored from {checkpoint_path}")
+            accelerator.print(f"Restored from {checkpoint_path}")
 
     for epoch in range(start_epoch, config['training']['num_epochs']):
         model.train()
@@ -160,7 +161,6 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             loss = mse_loss(reconstructed_frames, current_frames)
 
             # R1 regularization for better training stability  
-            # R1 regularization for better training stability  
             if batch_idx % 16 == 0:
                 current_frames.requires_grad = True
                 reconstructed_frames = model(current_frames, reference_frames)
@@ -177,6 +177,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             accelerator.backward(loss)
             optimizer.step()
             optimizer.zero_grad()
+
             # Update exponential moving average of weights
             with torch.no_grad():
                 for p_ema, p in zip(ema_model.parameters(), accelerator.unwrap_model(model).parameters()):
@@ -188,9 +189,18 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             progress_bar.update(1)
             progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
 
+            # Log batch loss to wandb
+            wandb.log({"batch_loss": loss.item(), "batch": batch_idx + epoch * len(train_dataloader)})
+
         progress_bar.close()
         avg_loss = total_loss / len(train_dataloader)
-        accelerator.debug_print(f"Epoch [{epoch+1}/{config['training']['num_epochs']}], Average Loss: {avg_loss:.4f}")
+        accelerator.print(f"Epoch [{epoch+1}/{config['training']['num_epochs']}], Average Loss: {avg_loss:.4f}")
+
+        # Log epoch metrics to wandb
+        wandb.log({
+            "epoch": epoch + 1,
+            "avg_loss": avg_loss,
+        })
 
         # Save checkpoint
         if (epoch + 1) % config['checkpoints']['interval'] == 0:
@@ -201,18 +211,27 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 'ema_state_dict': ema_model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
             }, checkpoint_path)
-            accelerator.debug_print(f"Saved checkpoint: {checkpoint_path}")
+            accelerator.print(f"Saved checkpoint: {checkpoint_path}")
+
+            # Log model checkpoint to wandb
+            wandb.save(checkpoint_path)
 
         if epoch % config['logging']['sample_interval'] == 0:
-            sample_recon(ema_model, next(iter(train_dataloader)), accelerator, f"recon_epoch_{epoch+1}.png", 
-                         num_samples=config['logging']['sample_size'])
-    
+            sample_path = f"recon_epoch_{epoch+1}.png"
+            sample_frames = sample_recon(ema_model, next(iter(train_dataloader)), accelerator, sample_path, 
+                                         num_samples=config['logging']['sample_size'])
+            
+            # Log sample image to wandb
+            wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
+
     return ema_model
 
 @profile
 def main():
     # Load configuration
     config = load_config('config.yaml')
+
+    wandb.init(project='IMF', config=config,resume="allow")
 
     # Set up accelerator
     accelerator = Accelerator(
@@ -257,6 +276,7 @@ def main():
         style_mixing_prob=config['training']['style_mixing_prob'],
         r1_gamma=config['training']['r1_gamma']
     )
-    
+    # Close wandb run
+    wandb.finish()
 if __name__ == "__main__":
     main()
