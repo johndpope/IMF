@@ -55,6 +55,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         accelerator.print(f"Saved sample reconstructions to {output_path}")
 
 @profile
+@profile
 def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_mixing_prob=0.9, r1_gamma=10):
     print("Config:", config)
     print("Training config:", config.get('training', {}))
@@ -102,13 +103,22 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                             disable=not accelerator.is_local_main_process)
         
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
+            print(f"Current frames shape: {current_frames.shape}")
+            print(f"Reference frames shape: {reference_frames.shape}")
+
             # Forward pass
             reconstructed_frames = model(current_frames, reference_frames)
-            
+            print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
+
             # Add noise to latent tokens for improved training dynamics
-            noise = torch.randn_like(model.latent_token_encoder(current_frames)) * 0.01
-            tc = model.latent_token_encoder(current_frames) + noise
-            tr = model.latent_token_encoder(reference_frames) + noise
+            tc = model.latent_token_encoder(current_frames)
+            tr = model.latent_token_encoder(reference_frames)
+            print(f"tc shape: {tc.shape}")
+            print(f"tr shape: {tr.shape}")
+
+            noise = torch.randn_like(tc) * 0.01
+            tc = tc + noise
+            tr = tr + noise
 
             # Perform style mixing regularization
             if torch.rand(()).item() < style_mixing_prob:
@@ -118,33 +128,53 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.imf.implicit_motion_alignment))]
                 mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.imf.implicit_motion_alignment))]
             else:
-                mix_tc = tc
-                mix_tr = tr
+                mix_tc = [tc] * len(model.imf.implicit_motion_alignment)
+                mix_tr = [tr] * len(model.imf.implicit_motion_alignment)
 
+            print(f"mix_tc length: {len(mix_tc)}, mix_tr length: {len(mix_tr)}")
             m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
+            print(f"m_c length: {len(m_c)}, m_r length: {len(m_r)}")
+
             fr = model.dense_feature_encoder(reference_frames)
-            
+            print(f"fr length: {len(fr)}")
+
             aligned_features = []
-            for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(fr, m_r, m_c, model.imf.implicit_motion_alignment)):
+            for i in range(len(model.imf.implicit_motion_alignment)):
+                print(f"Processing layer {i}")
+                f_r_i = fr[i]
+                align_layer = model.imf.implicit_motion_alignment[i]
+                m_c_i = m_c[i][i]  # Access the i-th element of the i-th sublist
+                m_r_i = m_r[i][i]  # Access the i-th element of the i-th sublist
+                print(f"f_r_i shape: {f_r_i.shape}")
+                print(f"m_c_i shape: {m_c_i.shape}")
+                print(f"m_r_i shape: {m_r_i.shape}")
                 aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                print(f"aligned_feature shape: {aligned_feature.shape}")
                 aligned_features.append(aligned_feature)
 
             reconstructed_frames = model.frame_decoder(aligned_features)
+            print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
 
             loss = mse_loss(reconstructed_frames, current_frames)
 
             # R1 regularization for better training stability  
+            # R1 regularization for better training stability  
             if batch_idx % 16 == 0:
                 current_frames.requires_grad = True
-                reconstructed_frames = model.frame_decoder(aligned_features)
-                r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True)[0]
-                r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
-                loss = loss + r1_gamma * 0.5 * r1_loss * 16
+                reconstructed_frames = model(current_frames, reference_frames)
+                print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
+                print(f"Current frames shape before R1: {current_frames.shape}")
+                r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True, allow_unused=True)[0]
+                if r1_loss is not None:
+                    print(f"r1_loss shape: {r1_loss.shape}")
+                    r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
+                    loss = loss + r1_gamma * 0.5 * r1_loss * 16
+                else:
+                    print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
 
             accelerator.backward(loss)
             optimizer.step()
             optimizer.zero_grad()
-
             # Update exponential moving average of weights
             with torch.no_grad():
                 for p_ema, p in zip(ema_model.parameters(), accelerator.unwrap_model(model).parameters()):

@@ -72,33 +72,23 @@ class LatentTokenEncoder(nn.Module):
             nn.AdaptiveAvgPool2d((1, 1))
         )
         self.fc = nn.Linear(256, latent_dim)
-        
-        print(f"LatentTokenEncoder initialized:")
-        print(f"Input channels: {in_channels}")
-        print(f"Latent dimension: {latent_dim}")
-        print("Convolutional layers:")
-        for i, layer in enumerate(self.conv):
-            if isinstance(layer, nn.Conv2d):
-                print(f"  Conv2d {i}: in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size={layer.kernel_size}")
-        print(f"Final FC layer: in_features={self.fc.in_features}, out_features={self.fc.out_features}")
+        print(f"LatentTokenEncoder initialized: in_channels={in_channels}, latent_dim={latent_dim}")
 
     def forward(self, x):
-        print(f"\nLatentTokenEncoder forward pass:")
-        print(f"Input shape: {x.shape}")
-        
-        for i, layer in enumerate(self.conv):
-            x = layer(x)
-            if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.AdaptiveAvgPool2d):
-                print(f"After layer {i} ({type(layer).__name__}) shape: {x.shape}")
-        
-        x = x.view(x.size(0), -1)
-        print(f"After flattening shape: {x.shape}")
-        
-        output = self.fc(x)
-        print(f"Final output shape: {output.shape}")
-        
-        return output
+        print(f"LatentTokenEncoder input shape: {x.shape}")
+        if isinstance(x, list):
+            return [self._forward_single(xi) for xi in x]
+        else:
+            return self._forward_single(x)
 
+    def _forward_single(self, x):
+        x = self.conv(x)
+        print(f"After conv shape: {x.shape}")
+        x = x.view(x.size(0), -1)
+        print(f"After flatten shape: {x.shape}")
+        output = self.fc(x)
+        print(f"LatentTokenEncoder output shape: {output.shape}")
+        return output
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
@@ -182,7 +172,6 @@ class ImplicitMotionAlignment(nn.Module):
         self.k_proj = nn.Linear(motion_dim, feature_dim)
         self.v_proj = nn.Linear(feature_dim, feature_dim)
 
-        self.downsample = nn.AdaptiveAvgPool2d((32, 32))
         self.cross_attention = nn.MultiheadAttention(feature_dim, num_heads)
         self.norm1 = nn.LayerNorm(feature_dim)
         self.norm2 = nn.LayerNorm(feature_dim)
@@ -191,28 +180,20 @@ class ImplicitMotionAlignment(nn.Module):
             nn.ReLU(),
             nn.Linear(feature_dim * 4, feature_dim)
         )
-        
-        print(f"ImplicitMotionAlignment initialized:")
-        print(f"Feature dimension: {feature_dim}")
-        print(f"Motion dimension: {motion_dim}")
-        print(f"Number of heads: {num_heads}")
+
+        print(f"ImplicitMotionAlignment initialized: feature_dim={feature_dim}, motion_dim={motion_dim}")
 
     def forward(self, q, k, v):
         print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
-        batch_size, _, h_q, w_q = q.shape
-        _, _, h_v, w_v = v.shape
-
-        # Downsample inputs
-        q = self.downsample(q)
-        k = self.downsample(k)
-        v = self.downsample(v)
-        print(f"After downsampling - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        batch_size, c, h, w = v.shape
 
         # Reshape and project inputs
         q = self.q_proj(q.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         k = self.k_proj(k.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         v = self.v_proj(v.view(batch_size, self.feature_dim, -1).permute(0, 2, 1))
+
+        print(f"After projection - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # Ensure q, k, and v have the same sequence length
         seq_len = min(q.size(1), k.size(1), v.size(1))
@@ -220,25 +201,30 @@ class ImplicitMotionAlignment(nn.Module):
         k = k[:, :seq_len, :]
         v = v[:, :seq_len, :]
 
-        print(f"Shape of q after reshaping and projection: {q.shape}")
-        print(f"Shape of k after reshaping and projection: {k.shape}")
-        print(f"Shape of v after reshaping and projection: {v.shape}")
+        print(f"After sequence length adjustment - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # Perform cross-attention
         attn_output, _ = self.cross_attention(q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1))
         attn_output = attn_output.transpose(0, 1)
-        print(f"Shape after cross-attention: {attn_output.shape}")
+        print(f"After cross-attention: {attn_output.shape}")
         
         x = self.norm1(q + attn_output)
         x = self.norm2(x + self.ffn(x))
-        print(f"Shape after FFN: {x.shape}")
+        print(f"After FFN: {x.shape}")
 
-        # Reshape output to match downsampled dimensions
-        x = x.transpose(1, 2).view(batch_size, self.feature_dim, 32, 32)
-        print(f"Shape after reshaping: {x.shape}")
+        # Reshape output to match original dimensions
+        x = x.transpose(1, 2).contiguous()
+        print(f"After transpose: {x.shape}")
+        print(f"Attempting to reshape to: {(batch_size, self.feature_dim, h, w)}")
         
-        # Upsample back to original size
-        x = F.interpolate(x, size=(h_v, w_v), mode='bilinear', align_corners=False)
+        # Check if the reshape is valid
+        if x.numel() != batch_size * self.feature_dim * h * w:
+            print(f"WARNING: Cannot reshape tensor of size {x.numel()} into shape {(batch_size, self.feature_dim, h, w)}")
+            # Adjust the output size to match the input size
+            x = F.adaptive_avg_pool2d(x.view(batch_size, self.feature_dim, -1, 1), (h, w))
+        else:
+            x = x.view(batch_size, self.feature_dim, h, w)
+        
         print(f"Final output shape: {x.shape}")
 
         return x
@@ -251,67 +237,63 @@ class IMF(nn.Module):
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, base_channels=base_channels, num_layers=num_layers)
         
-        # Calculate feature dimensions for each layer
         self.feature_dims = [base_channels * (2 ** i) for i in range(num_layers)]
-        
-        # Calculate motion dimensions for each layer
         self.motion_dims = [base_channels // (2 ** i) for i in range(num_layers)]
         
-        # Create ImplicitMotionAlignment modules
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
             motion_dim = self.motion_dims[i]
-            print(f"Creating ImplicitMotionAlignment for layer {i} with feature_dim={feature_dim} and motion_dim={motion_dim}")
             alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim)
             self.implicit_motion_alignment.append(alignment_module)
 
-        
-        print("IMF initialized:")
-        print(f"Number of layers: {num_layers}")
-        print(f"Feature dimensions: {self.feature_dims}")
-        print(f"Motion dimensions: {self.motion_dims}")
-
+        print(f"IMF initialized: num_layers={num_layers}, feature_dims={self.feature_dims}, motion_dims={self.motion_dims}")
 
     def forward(self, x_current, x_reference):
-        # Encode reference frame
+        print(f"IMF forward - x_current shape: {x_current.shape}")
+        print(f"IMF forward - x_reference shape: {x_reference.shape}")
+        
         f_r = self.dense_feature_encoder(x_reference)
+        print(f"IMF forward - f_r shapes: {[f.shape for f in f_r]}")
+        
         t_r = self.latent_token_encoder(x_reference)
-        print(f"Shape of f_r (encoded reference frame): {[f.shape for f in f_r]}")
-        print(f"Shape of t_r (latent tokens from reference frame): {t_r.shape}")
-
-        # Encode current frame
         t_c = self.latent_token_encoder(x_current)
-        print(f"Shape of t_c (latent tokens from current frame): {t_c.shape}")
+        print(f"IMF forward - t_r shape: {t_r.shape}, t_c shape: {t_c.shape}")
 
-        # Decode motion features
         m_r = self.latent_token_decoder(t_r)
-        print(f"Shape of m_r (motion features from reference frame): {[m.shape for m in m_r]}")
         m_c = self.latent_token_decoder(t_c)
-        print(f"Shape of m_c (motion features from current frame): {[m.shape for m in m_c]}")
+        print(f"IMF forward - m_r shapes: {[m.shape for m in m_r]}")
+        print(f"IMF forward - m_c shapes: {[m.shape for m in m_c]}")
 
-        # Align features
         aligned_features = []
-        for i in range(len(self.implicit_motion_alignment)):
-            f_r_i = f_r[i]
-            m_r_i = m_r[i]
-            m_c_i = m_c[i]
-            align_layer = self.implicit_motion_alignment[i]
-            
-            print(f"Aligning features at layer {i}:")
-            print(f"  Shape of f_r_i: {f_r_i.shape}")
-            print(f"  Shape of m_r_i: {m_r_i.shape}")
-            print(f"  Shape of m_c_i: {m_c_i.shape}")
-            
+        for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
+            print(f"IMF forward - Alignment layer {i}")
+            print(f"  f_r_i shape: {f_r_i.shape}")
+            print(f"  m_r_i shape: {m_r_i.shape}")
+            print(f"  m_c_i shape: {m_c_i.shape}")
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            print(f"  Shape of aligned_feature: {aligned_feature.shape}")
+            print(f"  aligned_feature shape: {aligned_feature.shape}")
             aligned_features.append(aligned_feature)
 
         return aligned_features
-    
+
     def process_tokens(self, t_c, t_r):
-        m_r = self.latent_token_decoder(t_r)
-        m_c = self.latent_token_decoder(t_c)
+        print(f"process_tokens input types - t_c: {type(t_c)}, t_r: {type(t_r)}")
+        
+        if isinstance(t_c, list) and isinstance(t_r, list):
+            print(f"process_tokens input shapes - t_c: {[tc.shape for tc in t_c]}, t_r: {[tr.shape for tr in t_r]}")
+            m_c = [self.latent_token_decoder(tc) for tc in t_c]
+            m_r = [self.latent_token_decoder(tr) for tr in t_r]
+        else:
+            print(f"process_tokens input shapes - t_c: {t_c.shape}, t_r: {t_r.shape}")
+            m_c = self.latent_token_decoder(t_c)
+            m_r = self.latent_token_decoder(t_r)
+        
+        if isinstance(m_c[0], list):
+            print(f"process_tokens output shapes - m_c: {[[mc_i.shape for mc_i in mc] for mc in m_c]}, m_r: {[[mr_i.shape for mr_i in mr] for mr in m_r]}")
+        else:
+            print(f"process_tokens output shapes - m_c: {[m.shape for m in m_c]}, m_r: {[m.shape for m in m_r]}")
+        
         return m_c, m_r
 
 
@@ -407,8 +389,15 @@ class IMFModel(nn.Module):
         self.frame_decoder = FrameDecoder(base_channels, num_layers)
 
     def forward(self, x_current, x_reference):
+        print(f"IMFModel forward - x_current shape: {x_current.shape}")
+        print(f"IMFModel forward - x_reference shape: {x_reference.shape}")
+        
         aligned_features = self.imf(x_current, x_reference)
+        print(f"IMFModel forward - aligned_features shapes: {[f.shape for f in aligned_features]}")
+        
         reconstructed_frame = self.frame_decoder(aligned_features)
+        print(f"IMFModel forward - reconstructed_frame shape: {reconstructed_frame.shape}")
+        
         return reconstructed_frame
 
     @property
