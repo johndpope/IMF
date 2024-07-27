@@ -21,7 +21,7 @@ dataset:
 # Checkpointing
 checkpoints:
   dir: "./checkpoints"
-  interval: 1
+  interval: 10
 
 # Logging and visualization
 logging:
