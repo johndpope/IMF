@@ -6,7 +6,7 @@ model:
 
 # Training parameters
 training:
-  batch_size: 4
+  batch_size: 8
   num_epochs: 100
   learning_rate: 1.0e-4
   ema_decay: 0.999
@@ -27,9 +27,10 @@ checkpoints:
 logging:
   sample_interval: 10
   sample_size: 8
-
+  output_dir: "samples"
 # Accelerator settings
 accelerator:
   mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
   cpu: false
   num_processes: 1  # Set to more than 1 for multi-GPU training
+

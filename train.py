@@ -31,6 +31,8 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
     model.eval()
     with torch.no_grad():
         current_frames, reference_frames = data
+        batch_size = current_frames.size(0)
+        num_samples = min(num_samples, batch_size)  # Ensure we don't exceed the batch size
         current_frames, reference_frames = current_frames[:num_samples], reference_frames[:num_samples]
         
         # Encode frames
@@ -64,6 +66,17 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
             accelerator.print(f"Saved sample reconstructions to {output_path}")
         else:
             accelerator.print("Warning: No output path provided. Skipping image save.")
+
+        # Log images to wandb
+        wandb_images = []
+        for i in range(num_samples):
+            wandb_images.extend([
+                wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}"),
+                wandb.Image(current_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Current {i}"),
+                wandb.Image(reconstructed_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}")
+            ])
+
+        wandb.log({"Sample Reconstructions": wandb_images})
 
         return frames
 
@@ -229,7 +242,8 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
         if epoch % config['logging']['sample_interval'] == 0:
             sample_path = f"recon_epoch_{epoch+1}.png"
             sample_frames = sample_recon(ema_model, next(iter(train_dataloader)), accelerator, sample_path, 
-                                         num_samples=config['logging']['sample_size'])
+                                        num_samples=config['logging']['sample_size'])
+    
             
             # Log sample image to wandb
             wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
