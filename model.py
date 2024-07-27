@@ -174,12 +174,14 @@ class StyleConv2d(nn.Module):
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, num_heads=8):
         super().__init__()
-        self.feature_dim = feature_dim
-        self.motion_dim = motion_dim
+        self.feature_dim = feature_dim 
+        self.motion_dim = motion_dim 
         self.num_heads = num_heads
+
         self.q_proj = nn.Linear(motion_dim, feature_dim)
         self.k_proj = nn.Linear(motion_dim, feature_dim)
         self.v_proj = nn.Linear(feature_dim, feature_dim)
+
         self.cross_attention = nn.MultiheadAttention(feature_dim, num_heads)
         self.norm1 = nn.LayerNorm(feature_dim)
         self.norm2 = nn.LayerNorm(feature_dim)
@@ -197,36 +199,37 @@ class ImplicitMotionAlignment(nn.Module):
     def forward(self, q, k, v):
         print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
-        # Reshape inputs
-        batch_size, _, h, w = q.shape
-        q = q.view(batch_size, self.motion_dim, -1).permute(2, 0, 1)
-        k = k.view(batch_size, self.motion_dim, -1).permute(2, 0, 1)
-        v = v.view(batch_size, self.feature_dim, -1).permute(2, 0, 1)
-        
-        # Project q, k, v to the correct feature dimension
-        q = self.q_proj(q)
-        k = self.k_proj(k)
-        v = self.v_proj(v)
-        
-        print(f"After projection shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-        
+        batch_size, _, h_q, w_q = q.shape
+        _, _, h_v, w_v = v.shape
+
+        # Reshape and project inputs
+        q = self.q_proj(q.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
+        k = self.k_proj(k.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
+        v = self.v_proj(v.view(batch_size, self.feature_dim, -1).permute(0, 2, 1))
+
+        print(f"Shape of q after reshaping and projection: {q.shape}")
+        print(f"Shape of k after reshaping and projection: {k.shape}")
+        print(f"Shape of v after reshaping and projection: {v.shape}")
+
         # Adjust q and k to match v's sequence length
-        q = q.repeat(v.size(0) // q.size(0), 1, 1)
-        k = k.repeat(v.size(0) // k.size(0), 1, 1)
-        
-        print(f"After adjustment - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-        
-        attn_output, _ = self.cross_attention(q, k, v)
+        if q.size(1) != v.size(1):
+            q = F.interpolate(q.transpose(1, 2), size=v.size(1), mode='linear').transpose(1, 2)
+        if k.size(1) != v.size(1):
+            k = F.interpolate(k.transpose(1, 2), size=v.size(1), mode='linear').transpose(1, 2)
+
+        print(f"Shape of q after interpolation: {q.shape}")
+        print(f"Shape of k after interpolation: {k.shape}")
+
+        # Perform cross-attention
+        attn_output, _ = self.cross_attention(q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1))
+        attn_output = attn_output.transpose(0, 1)
         x = self.norm1(q + attn_output)
         x = self.norm2(x + self.ffn(x))
+
+        # Reshape output to match input spatial dimensions
+        x = x.transpose(1, 2).view(batch_size, self.feature_dim, h_v, w_v)
         
-        # Reshape output
-        x = x.permute(1, 2, 0).contiguous()
-        x = x.view(batch_size, self.feature_dim, v.size(0) // batch_size, -1)
-        x = x.permute(0, 1, 3, 2).contiguous()
-        
-        print(f"Output shape: {x.shape}")
-        
+        print(f"Final output shape: {x.shape}")
         return x
 
 class IMF(nn.Module):
@@ -237,15 +240,25 @@ class IMF(nn.Module):
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, base_channels=base_channels, num_layers=num_layers)
         
         # Calculate feature dimensions for each layer
-        feature_dims = [base_channels * (2 ** i) for i in range(num_layers)]
+        feature_dims = []
+        for i in range(num_layers):
+            feature_dim = base_channels * (2 ** i)
+            feature_dims.append(feature_dim)
         
-        # Calculate motion dimensions for each layer (output of LatentTokenDecoder)
-        motion_dims = [base_channels // (2 ** i) for i in range(num_layers - 1)] + [base_channels // (2 ** (num_layers - 1))]
+        # Calculate motion dimensions for each layer
+        motion_dims = []
+        for i in range(num_layers - 1):
+            motion_dim = base_channels // (2 ** i)
+            motion_dims.append(motion_dim)
+        motion_dims.append(base_channels // (2 ** (num_layers - 1)))
         
-        self.implicit_motion_alignment = nn.ModuleList([
-            ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim) 
-            for feature_dim, motion_dim in zip(feature_dims, motion_dims)
-        ])
+        # Create ImplicitMotionAlignment modules
+        self.implicit_motion_alignment = nn.ModuleList()
+        for i in range(num_layers):
+            feature_dim = feature_dims[i]
+            motion_dim = motion_dims[i]
+            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim)
+            self.implicit_motion_alignment.append(alignment_module)
         
         print(f"IMF initialized:")
         print(f"Number of layers: {num_layers}")
@@ -254,34 +267,30 @@ class IMF(nn.Module):
 
     @profile
     def forward(self, x_current, x_reference):
-        print(f"Input shapes - Current: {x_current.shape}, Reference: {x_reference.shape}")
-
         # Encode reference frame
         f_r = self.dense_feature_encoder(x_reference)
         t_r = self.latent_token_encoder(x_reference)
-        print(f"Reference encoding - Features: {[f.shape for f in f_r]}, Token: {t_r.shape}")
 
         # Encode current frame
         t_c = self.latent_token_encoder(x_current)
-        print(f"Current encoding - Token: {t_c.shape}")
 
         # Decode motion features
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
-        print(f"Motion features - Reference: {[m.shape for m in m_r]}, Current: {[m.shape for m in m_c]}")
 
         # Align features
         aligned_features = []
         for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
-            print(f"Layer {i} - f_r: {f_r_i.shape}, m_r: {m_r_i.shape}, m_c: {m_c_i.shape}")
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
-            print(f"Layer {i} - Aligned feature: {aligned_feature.shape}")
 
-        print(f"Final aligned features: {[f.shape for f in aligned_features]}")
         return aligned_features
     
 
+    def process_tokens(self, t_c, t_r):
+        m_r = self.latent_token_decoder(t_r)
+        m_c = self.latent_token_decoder(t_c)
+        return m_c, m_r
 
 class ResNetIMF(nn.Module):
     def __init__(self, latent_dim=32):
@@ -379,3 +388,14 @@ class IMFModel(nn.Module):
         reconstructed_frame = self.frame_decoder(aligned_features)
         return reconstructed_frame
 
+    @property
+    def latent_token_encoder(self):
+        return self.imf.latent_token_encoder
+
+    @property
+    def dense_feature_encoder(self):
+        return self.imf.dense_feature_encoder
+
+    @property
+    def latent_token_decoder(self):
+        return self.imf.latent_token_decoder

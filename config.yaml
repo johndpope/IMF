@@ -6,13 +6,13 @@ model:
 
 # Training parameters
 training:
-  batch_size: 32
+  batch_size: 4
   num_epochs: 100
   learning_rate: 1.0e-4
   ema_decay: 0.999
   style_mixing_prob: 0.9
   r1_gamma: 10
-
+  gradient_accumulation_steps: 4  # New parameter
 # Dataset parameters
 dataset:
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666"

@@ -59,7 +59,6 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     print("Config:", config)
     print("Training config:", config.get('training', {}))
     
-    # Get learning rate with error checking and conversion
     learning_rate = config.get('training', {}).get('learning_rate', None)
     if learning_rate is None:
         raise ValueError("Learning rate not found in config")
@@ -68,7 +67,6 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
         learning_rate = float(learning_rate)
     except ValueError:
         raise ValueError(f"Invalid learning rate: {learning_rate}. Must be a valid number.")
-    
     
     print(f"Learning rate: {learning_rate}")
 
@@ -98,7 +96,6 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             accelerator.print(f"Restored from {checkpoint_path}")
 
     for epoch in range(start_epoch, config['training']['num_epochs']):
-   
         model.train()
         total_loss = 0
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config['training']['num_epochs']}", 
@@ -121,18 +118,25 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.imf.implicit_motion_alignment))]
                 mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.imf.implicit_motion_alignment))]
             else:
-                mix_tc = [tc for _ in range(len(model.imf.implicit_motion_alignment))]
-                mix_tr = [tr for _ in range(len(model.imf.implicit_motion_alignment))]
+                mix_tc = tc
+                mix_tr = tr
 
+            m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
             fr = model.dense_feature_encoder(reference_frames)
-            reconstructed_frames = model.frame_decoder(model.imf(mix_tc, mix_tr, fr))
+            
+            aligned_features = []
+            for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(fr, m_r, m_c, model.imf.implicit_motion_alignment)):
+                aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                aligned_features.append(aligned_feature)
+
+            reconstructed_frames = model.frame_decoder(aligned_features)
 
             loss = mse_loss(reconstructed_frames, current_frames)
 
             # R1 regularization for better training stability  
             if batch_idx % 16 == 0:
                 current_frames.requires_grad = True
-                reconstructed_frames = model.frame_decoder(model.imf(tc, tr, fr))
+                reconstructed_frames = model.frame_decoder(aligned_features)
                 r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True)[0]
                 r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
                 loss = loss + r1_gamma * 0.5 * r1_loss * 16
@@ -156,7 +160,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
         avg_loss = total_loss / len(train_dataloader)
         accelerator.print(f"Epoch [{epoch+1}/{config['training']['num_epochs']}], Average Loss: {avg_loss:.4f}")
 
-           # Save checkpoint
+        # Save checkpoint
         if (epoch + 1) % config['checkpoints']['interval'] == 0:
             checkpoint_path = os.path.join(config['checkpoints']['dir'], f"checkpoint_{epoch+1}.pth")
             accelerator.save({
@@ -170,6 +174,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
         if epoch % config['logging']['sample_interval'] == 0:
             sample_recon(ema_model, next(iter(train_dataloader)), accelerator, f"recon_epoch_{epoch+1}.png", 
                          num_samples=config['logging']['sample_size'])
+    
     return ema_model
 
 @profile
