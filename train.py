@@ -142,7 +142,8 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             debug_print(f"tc shape: {tc.shape}")
             debug_print(f"tr shape: {tr.shape}")
 
-            noise = torch.randn_like(tc) * 0.01
+            noise_magnitude = 0.1
+            noise = torch.randn_like(tc) * noise_magnitude
             tc = tc + noise
             tr = tr + noise
 
