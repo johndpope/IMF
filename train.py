@@ -18,7 +18,7 @@ from PIL import Image
 import decord
 from typing import List, Tuple, Dict, Any
 from memory_profiler import profile
-
+from torch.optim import AdamW
 import wandb
 
 
@@ -97,7 +97,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
     
     debug_print(f"Learning rate: {learning_rate}")
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=(0.9, 0.999))
+    optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
 
     # Set up exponential moving average of model weights
