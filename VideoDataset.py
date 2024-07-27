@@ -30,7 +30,7 @@ class VideoDataset(Dataset):
         return total
     
     def __len__(self):
-        return 99999999999 #self.total_frames
+        return 1000 #self.total_frames
         
     def augmentation(self, images, transform, state=None):
         if state is not None:

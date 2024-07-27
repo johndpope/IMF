@@ -38,8 +38,11 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         tr = model.latent_token_encoder(reference_frames)
         fr = model.dense_feature_encoder(reference_frames)
 
+        # Get aligned features from IMF
+        aligned_features = model.imf(current_frames, reference_frames)
+
         # Reconstruct frames
-        reconstructed_frames = model.frame_decoder(model.imf(tc, tr, fr))
+        reconstructed_frames = model.frame_decoder(aligned_features)
 
         # Prepare original and reconstructed frames for saving
         orig_frames = torch.cat((reference_frames, current_frames), dim=0)
@@ -231,8 +234,8 @@ def main():
     # Load configuration
     config = load_config('config.yaml')
 
-    wandb.init(project='portrait_project', config=config,resume="allow")
-    
+    wandb.init(project='IMF', config=config,resume="allow")
+
     # Set up accelerator
     accelerator = Accelerator(
         mixed_precision=config['accelerator']['mixed_precision'],
