@@ -1,3 +1,6 @@
 
 __pycache__/VideoDataset.cpython-311.pyc
 __pycache__/model.cpython-311.pyc
+wandb/run-20240728_081457-ny56b2s7/run-ny56b2s7.wandb
+wandb/*
+*.log

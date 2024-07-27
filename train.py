@@ -31,6 +31,8 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
     model.eval()
     with torch.no_grad():
         current_frames, reference_frames = data
+        batch_size = current_frames.size(0)
+        num_samples = min(num_samples, batch_size)  # Ensure we don't exceed the batch size
         current_frames, reference_frames = current_frames[:num_samples], reference_frames[:num_samples]
         
         # Encode frames
@@ -38,8 +40,11 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         tr = model.latent_token_encoder(reference_frames)
         fr = model.dense_feature_encoder(reference_frames)
 
+        # Get aligned features from IMF
+        aligned_features = model.imf(current_frames, reference_frames)
+
         # Reconstruct frames
-        reconstructed_frames = model.frame_decoder(model.imf(tc, tr, fr))
+        reconstructed_frames = model.frame_decoder(aligned_features)
 
         # Prepare original and reconstructed frames for saving
         orig_frames = torch.cat((reference_frames, current_frames), dim=0)
@@ -49,11 +54,29 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         # Unnormalize frames
         frames = frames * 0.5 + 0.5
         
-        # Save frames as a grid
-        output_dir = os.path.dirname(output_path)
-        os.makedirs(output_dir, exist_ok=True)
-        save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
-        accelerator.print(f"Saved sample reconstructions to {output_path}")
+        # Ensure we have a valid output directory
+        if output_path:
+            output_dir = os.path.dirname(output_path)
+            if not output_dir:
+                output_dir = '.'  # Use current directory if no directory is specified
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save frames as a grid
+            save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
+            accelerator.print(f"Saved sample reconstructions to {output_path}")
+        else:
+            accelerator.print("Warning: No output path provided. Skipping image save.")
+
+        # Log images to wandb
+        wandb_images = []
+        for i in range(num_samples):
+            wandb_images.extend([
+                wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}"),
+                wandb.Image(current_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Current {i}"),
+                wandb.Image(reconstructed_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}")
+            ])
+
+        wandb.log({"Sample Reconstructions": wandb_images})
 
         return frames
 
@@ -219,7 +242,8 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
         if epoch % config['logging']['sample_interval'] == 0:
             sample_path = f"recon_epoch_{epoch+1}.png"
             sample_frames = sample_recon(ema_model, next(iter(train_dataloader)), accelerator, sample_path, 
-                                         num_samples=config['logging']['sample_size'])
+                                        num_samples=config['logging']['sample_size'])
+    
             
             # Log sample image to wandb
             wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
