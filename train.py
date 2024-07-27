@@ -52,11 +52,18 @@ def sample_recon(model, data, accelerator, output_path, num_samples=8):
         # Unnormalize frames
         frames = frames * 0.5 + 0.5
         
-        # Save frames as a grid
-        output_dir = os.path.dirname(output_path)
-        os.makedirs(output_dir, exist_ok=True)
-        save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
-        accelerator.print(f"Saved sample reconstructions to {output_path}")
+        # Ensure we have a valid output directory
+        if output_path:
+            output_dir = os.path.dirname(output_path)
+            if not output_dir:
+                output_dir = '.'  # Use current directory if no directory is specified
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save frames as a grid
+            save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
+            accelerator.print(f"Saved sample reconstructions to {output_path}")
+        else:
+            accelerator.print("Warning: No output path provided. Skipping image save.")
 
         return frames
 
