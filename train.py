@@ -361,7 +361,7 @@ def main():
 
     # Set up dataset and dataloader
     transform = transforms.Compose([
-        transforms.Resize((256, 256)),
+        transforms.Resize((512, 512)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])

@@ -310,7 +310,6 @@ class ResNetIMF(nn.Module):
             aligned_features.append(aligned_feature)
 
         return aligned_features
-
 class FrameDecoder(nn.Module):
     def __init__(self, feature_dims=[64, 256, 512, 1024]):
         super().__init__()
@@ -319,13 +318,12 @@ class FrameDecoder(nn.Module):
             in_channels = feature_dims[-i - 1]
             out_channels = feature_dims[-i - 2]
             self.layers.append(
-                ResBlock(in_channels, out_channels)
+                ResBlock(in_channels, out_channels, upsample=True)
             )
-        # Add an extra upsampling layer to reach 256x256
-        self.extra_upsample = nn.Sequential(
-            ResBlock(feature_dims[0], feature_dims[0] // 2),
-            ResBlock(feature_dims[0] // 2, feature_dims[0] // 2)
-        )
+        
+        # Add one more upsampling layer to reach 512x512
+        self.extra_upsample = ResBlock(feature_dims[0], feature_dims[0] // 2, upsample=True)
+        
         self.final_conv = nn.Conv2d(feature_dims[0] // 2, 3, kernel_size=3, stride=1, padding=1)
         print(f"FrameDecoder initialized with feature_dims: {feature_dims}")
 
@@ -340,10 +338,10 @@ class FrameDecoder(nn.Module):
             print(f"After layer {i}: {x.shape}")
             if i < len(self.layers) - 1:
                 print(f"Adding skip connection from features[-{i+2}]: {features[-i-2].shape}")
-                x = x + features[-i-2]
+                x = x + F.interpolate(features[-i-2], size=x.shape[2:], mode='bilinear', align_corners=False)
                 print(f"After skip connection: {x.shape}")
         
-        print("Processing extra upsample")
+        print("Applying extra upsampling layer")
         x = self.extra_upsample(x)
         print(f"After extra upsample: {x.shape}")
         
@@ -358,30 +356,32 @@ class FrameDecoder(nn.Module):
         return x
 
 class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, upsample=True):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) if upsample else nn.Identity()
         
         self.shortcut = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
             nn.BatchNorm2d(out_channels)
         )
-        print(f"ResBlock initialized with in_channels: {in_channels}, out_channels: {out_channels}")
+        print(f"ResBlock initialized with in_channels: {in_channels}, out_channels: {out_channels}, upsample: {upsample}")
 
     def forward(self, x):
         print(f"ResBlock input shape: {x.shape}")
         residual = self.shortcut(x)
         print(f"ResBlock shortcut shape: {residual.shape}")
+        
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
         out = self.conv2(out)
         out = self.bn2(out)
+        
         print(f"ResBlock before adding residual: {out.shape}")
         out += residual
         out = self.relu(out)
@@ -397,16 +397,12 @@ class IMFModel(nn.Module):
         self.frame_decoder = FrameDecoder(feature_dims=[64, 256, 512, 1024])
 
     def forward(self, x_current, x_reference):
-        # Ensure input tensors require gradients
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
         aligned_features = self.imf(x_current, x_reference)
         reconstructed_frame = self.frame_decoder(aligned_features)
-        # Only compute gradients if in training mode
         if self.training:
             grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
-            # print(f"Gradient of output w.r.t. x_current: {grads[0]}")
-            # print(f"Gradient of output w.r.t. x_reference: {grads[1]}")
         return reconstructed_frame
 
     @property
