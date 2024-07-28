@@ -325,9 +325,9 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
 def hook_fn(name):
     def hook(grad):
         if torch.isnan(grad).any():
-            print(f"NaN gradient detected in {name}")
+            print(f"🔥 NaN gradient detected in {name}")
         elif torch.isinf(grad).any():
-            print(f"Inf gradient detected in {name}")
+            print(f"🔥 Inf gradient detected in {name}")
         else:
             # You can add more conditions or logging here
             grad_norm = grad.norm().item()
