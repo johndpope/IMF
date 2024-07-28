@@ -134,16 +134,16 @@ class StyleConv2d(nn.Module):
         return x
 
 class FrameDecoder(nn.Module):
-    def __init__(self, base_channels=64, num_layers=4):
+    def __init__(self, feature_dims=[64, 256, 512, 1024]):
         super().__init__()
         self.layers = nn.ModuleList()
-        in_channels = base_channels * (2 ** (num_layers - 1))
-        for i in range(num_layers):
-            out_channels = in_channels // 2 if i < num_layers - 1 else 3
+        for i in range(len(feature_dims) - 1):
+            in_channels = feature_dims[-i - 1]
+            out_channels = feature_dims[-i - 2]
             self.layers.append(
                 ResBlock(in_channels, out_channels)
             )
-            in_channels = out_channels
+        self.final_conv = nn.Conv2d(feature_dims[0], 3, kernel_size=3, stride=1, padding=1)
 
     def forward(self, features):
         x = features[-1]
@@ -151,7 +151,10 @@ class FrameDecoder(nn.Module):
             x = layer(x)
             if i < len(self.layers) - 1:
                 x = x + features[-i-2]
+        x = self.final_conv(x)
         return torch.tanh(x)
+
+
 
 
 
@@ -330,7 +333,6 @@ class ResNetIMF(nn.Module):
         return aligned_features
 
 
-
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -341,13 +343,10 @@ class ResBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
         
-        if in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.shortcut = nn.Identity()
+        self.shortcut = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
+            nn.BatchNorm2d(out_channels)
+        )
 
     def forward(self, x):
         residual = self.shortcut(x)
@@ -364,7 +363,7 @@ class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
         self.imf = IMF(latent_dim, base_channels, num_layers)
-        self.frame_decoder = FrameDecoder(base_channels, num_layers)
+        self.frame_decoder = FrameDecoder(feature_dims=[64, 256, 512, 1024])
 
     def forward(self, x_current, x_reference):
         # Ensure input tensors require gradients
