@@ -138,7 +138,7 @@ class StyleConv2d(nn.Module):
 
 
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, num_heads=8):
+    def __init__(self, feature_dim, motion_dim, num_heads=8,max_seq_length=1024):
         super().__init__()
         self.feature_dim = feature_dim 
         self.motion_dim = motion_dim 
@@ -147,6 +147,10 @@ class ImplicitMotionAlignment(nn.Module):
         self.q_proj = nn.Linear(motion_dim, feature_dim)
         self.k_proj = nn.Linear(motion_dim, feature_dim)
         self.v_proj = nn.Linear(feature_dim, feature_dim)
+
+        # Create positional embeddings
+        self.p_q = nn.Parameter(torch.randn(1, max_seq_length, feature_dim))
+        self.p_k = nn.Parameter(torch.randn(1, max_seq_length, feature_dim))
 
         self.cross_attention = nn.MultiheadAttention(feature_dim, num_heads)
         self.norm1 = nn.LayerNorm(feature_dim)
@@ -163,13 +167,23 @@ class ImplicitMotionAlignment(nn.Module):
         debug_print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
         batch_size, c, h, w = v.shape
+        seq_length = h * w
 
         # Reshape and project inputs
+        # This operation flattens the height and width dimensions into a single dimension.
+        # the permute(0, 2, 1) operation then rearranges the dimensions to prepare the tensors for the attention mechanism.
         q = self.q_proj(q.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         k = self.k_proj(k.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         v = self.v_proj(v.view(batch_size, self.feature_dim, -1).permute(0, 2, 1))
 
         debug_print(f"After projection - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+
+        # Add positional embeddings
+        q = q + self.p_q[:, :seq_length, :]
+        k = k + self.p_k[:, :seq_length, :]
+
+        debug_print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
+
 
         # Ensure q, k, and v have the same sequence length
         seq_len = min(q.size(1), k.size(1), v.size(1))
@@ -207,7 +221,7 @@ class ImplicitMotionAlignment(nn.Module):
 
 
 class IMF(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
+    def __init__(self, latent_dim=32, base_channels=64, num_layers=4,input_size=(512, 512)):
         super().__init__()
         self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
@@ -217,12 +231,25 @@ class IMF(nn.Module):
         self.feature_dims = [64, 256, 512, 1024]
         self.motion_dims = [base_channels // (2 ** i) for i in range(num_layers)]
         
+        # Calculate max_seq_length for each level
+        self.max_seq_lengths = self._calculate_max_seq_lengths(input_size, num_layers)
+        
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
             motion_dim = self.motion_dims[i]
-            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim)
+            max_seq_length = self.max_seq_lengths[i]
+            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,max_seq_length=max_seq_length)
             self.implicit_motion_alignment.append(alignment_module)
+
+    def _calculate_max_seq_lengths(self, input_size, num_layers):
+            max_seq_lengths = []
+            h, w = input_size
+            for _ in range(num_layers):
+                h = h // 2
+                w = w // 2
+                max_seq_lengths.append(h * w)
+            return max_seq_lengths
 
     def forward(self, x_current, x_reference):
         debug_print(f"IMF input shapes - x_current: {x_current.shape}, x_reference: {x_reference.shape}")
