@@ -229,7 +229,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")
                 mse = mse_loss(reconstructed_frames, current_frames)
                 perceptual = lpips_loss(reconstructed_frames, current_frames).mean()
-                loss = mse + 0.4 * perceptual
+                loss = mse + 0.1 * perceptual
 
                 if torch.isnan(loss):
                     print("NaN loss detected. Skipping this batch.")
