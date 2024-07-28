@@ -98,11 +98,7 @@ class LatentTokenDecoder(nn.Module):
         for i in range(num_layers):
             out_channels = in_channels // 2 if i < num_layers - 1 else in_channels
             self.layers.append(
-                nn.Sequential(
-                    StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, style_dim=base_channels),
-                    nn.BatchNorm2d(out_channels),
-                    nn.ReLU(inplace=True)
-                )
+                StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, style_dim=base_channels)
             )
             in_channels = out_channels
 
@@ -112,6 +108,7 @@ class LatentTokenDecoder(nn.Module):
         features = []
         for layer in self.layers:
             out = layer(out, style)
+            out = F.relu(out)  # Apply ReLU activation after StyleConv2d
             features.append(out)
         return features
     
@@ -244,32 +241,17 @@ class IMF(nn.Module):
             alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim)
             self.implicit_motion_alignment.append(alignment_module)
 
-        debug_print(f"IMF initialized: num_layers={num_layers}, feature_dims={self.feature_dims}, motion_dims={self.motion_dims}")
-
     def forward(self, x_current, x_reference):
-        debug_print(f"IMF forward - x_current shape: {x_current.shape}")
-        debug_print(f"IMF forward - x_reference shape: {x_reference.shape}")
-        
         f_r = self.dense_feature_encoder(x_reference)
-        debug_print(f"IMF forward - f_r shapes: {[f.shape for f in f_r]}")
-        
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
-        debug_print(f"IMF forward - t_r shape: {t_r.shape}, t_c shape: {t_c.shape}")
 
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
-        debug_print(f"IMF forward - m_r shapes: {[m.shape for m in m_r]}")
-        debug_print(f"IMF forward - m_c shapes: {[m.shape for m in m_c]}")
 
         aligned_features = []
         for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
-            debug_print(f"IMF forward - Alignment layer {i}")
-            debug_print(f"  f_r_i shape: {f_r_i.shape}")
-            debug_print(f"  m_r_i shape: {m_r_i.shape}")
-            debug_print(f"  m_c_i shape: {m_c_i.shape}")
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            debug_print(f"  aligned_feature shape: {aligned_feature.shape}")
             aligned_features.append(aligned_feature)
 
         return aligned_features
@@ -332,26 +314,6 @@ class ResNetIMF(nn.Module):
         return aligned_features
 
 
-
-class FrameDecoder(nn.Module):
-    def __init__(self, base_channels=64, num_layers=4):
-        super().__init__()
-        self.layers = nn.ModuleList()
-        in_channels = base_channels * (2 ** (num_layers - 1))
-        for i in range(num_layers):
-            out_channels = in_channels // 2 if i < num_layers - 1 else 3
-            self.layers.append(
-                ResBlock(in_channels, out_channels)
-            )
-            in_channels = out_channels
-
-    def forward(self, features):
-        x = features[-1]
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-            if i < len(self.layers) - 1:
-                x = x + features[-i-2]
-        return torch.tanh(x)
 
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
