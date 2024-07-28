@@ -250,7 +250,7 @@ class IMF(nn.Module):
         for _ in range(num_layers):
             h = h // 2
             w = w // 2
-            max_seq_lengths.append(min(h * w, 1024))  # Cap at 1024
+            max_seq_lengths.append(min(h * w, 128))  # Cap at 1024
         return max_seq_lengths
 
     def forward(self, x_current, x_reference):
