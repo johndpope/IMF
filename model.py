@@ -8,7 +8,7 @@ from torchvision.utils import save_image
 import os
 import torchvision.models as models
 from memory_profiler import profile
-
+import colored_traceback.auto
 
 
 DEBUG = False
