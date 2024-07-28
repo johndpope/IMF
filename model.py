@@ -96,18 +96,19 @@ class DenseFeatureEncoder(nn.Module):
         ])
 
     def forward(self, x):
+        print(f"DenseFeatureEncoder input shape: {x.shape}")
         features = []
-        
         x = self.initial_conv(x)
-        
+        print(f"After initial conv: {x.shape}")
         for i, block in enumerate(self.down_blocks):
             x = block(x)
-            if i < 4:  # Store intermediate features
+            print(f"After down_block {i+1}: {x.shape}")
+            if i < 4:
                 features.append(x)
-        
-        features.append(x)  # Add final feature
-        
+        features.append(x)
+        print(f"DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
+
 
 
 class LatentTokenEncoder(nn.Module):
@@ -143,22 +144,18 @@ class LatentTokenEncoder(nn.Module):
         )
 
     def forward(self, x):
+        print(f"LatentTokenEncoder input shape: {x.shape}")
         x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        
-        x = self.resblock1(x)
-        x = self.resblock2(x)
-        x = self.resblock3(x)
-        x = self.resblock4(x)
-        
+        print(f"After first conv: {x.shape}")
+        x = self.resblock4(self.resblock3(self.resblock2(self.resblock1(x))))
+        print(f"After resblocks: {x.shape}")
         x = self.equal_conv(x)
         x = self.adaptive_pool(x)
         x = x.view(x.size(0), -1)
-        
         t = self.fc_layers(x)
-        
+        print(f"LatentTokenEncoder output shape: {t.shape}")
         return t
+
     
 class StyleConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=512):
@@ -206,14 +203,16 @@ class LatentTokenDecoder(nn.Module):
         ])
 
     def forward(self, t):
+        print(f"LatentTokenDecoder input shape: {t.shape}")
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        
+        print(f"After const: {x.shape}")
         features = []
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
+            print(f"After style_conv {i+1}: {x.shape}")
             if i in [3, 6, 9, 12]:
                 features.append(x)
-        
+        print(f"LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
 
@@ -243,10 +242,13 @@ class ImplicitMotionAlignment(nn.Module):
         ])
 
     def forward(self, m_c, m_r, f_r):
+        print(f"ImplicitMotionAlignment input shapes: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
+
         # Flatten inputs
         m_c = m_c.flatten(2).transpose(1, 2)
         m_r = m_r.flatten(2).transpose(1, 2)
         f_r = f_r.flatten(2).transpose(1, 2)
+        print(f"After flatten: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
 
         # Project inputs and add positional embeddings
         q = self.q_proj(m_c) + self.p_q
@@ -263,6 +265,7 @@ class ImplicitMotionAlignment(nn.Module):
 
         # Unflatten output
         output = x.transpose(1, 2).reshape_as(f_r)
+        print(f"ImplicitMotionAlignment output shape: {output.shape}")
 
         return output
 
@@ -326,11 +329,16 @@ class FrameDecoder(nn.Module):
         )
 
     def forward(self, features):
+        print(f"FrameDecoder input shapes: {[f.shape for f in features]}")
+
         f4, f3, f2, f1 = features
         
         x = self.upconv_blocks[0](f4)
+        print(f"After first upconv: {x.shape}")
+
         x = torch.cat([x, self.feat_blocks[0](f3)], dim=1)
-        
+        print(f"After first concat: {x.shape}")
+
         x = self.upconv_blocks[1](x)
         x = torch.cat([x, self.feat_blocks[1](f2)], dim=1)
         
@@ -341,7 +349,8 @@ class FrameDecoder(nn.Module):
         x = self.upconv_blocks[4](x)
         
         x_c = self.final_conv(x)
-        
+        print(f"FrameDecoder output shape: {x_c.shape}")
+
         return x_c
 
 
@@ -420,13 +429,16 @@ class IMF(nn.Module):
         ])
 
     def forward(self, x_current, x_reference):
+        print(f"IMF input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
+
         # Encode reference frame
         f_r = self.dense_feature_encoder(x_reference)
         
         # Encode latent tokens
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
-        
+        print(f"Encoded tokens shapes: t_r: {t_r.shape}, t_c: {t_c.shape}")
+
         # Decode motion features
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
@@ -436,7 +448,8 @@ class IMF(nn.Module):
         for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
-        
+            print(f"Aligned feature {i+1} shape: {aligned_feature.shape}")
+
         return aligned_features
 
 
@@ -458,6 +471,8 @@ class IMFModel(nn.Module):
         self.frame_decoder = FrameDecoder()
 
     def forward(self, x_current, x_reference):
+        print(f"IMFModel input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
+
         # Enable gradient computation for input tensors
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
@@ -467,7 +482,8 @@ class IMFModel(nn.Module):
         
         # Reconstruct the current frame using the FrameDecoder
         reconstructed_frame = self.frame_decoder(aligned_features)
-        
+        print(f"IMFModel output shape: {reconstructed_frame.shape}")
+
         # Compute gradients during training
         if self.training:
             grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
