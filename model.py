@@ -133,27 +133,6 @@ class StyleConv2d(nn.Module):
         x = self.bn(x)
         return x
 
-class FrameDecoder(nn.Module):
-    def __init__(self, feature_dims=[64, 256, 512, 1024]):
-        super().__init__()
-        self.layers = nn.ModuleList()
-        for i in range(len(feature_dims) - 1):
-            in_channels = feature_dims[-i - 1]
-            out_channels = feature_dims[-i - 2]
-            self.layers.append(
-                ResBlock(in_channels, out_channels)
-            )
-        self.final_conv = nn.Conv2d(feature_dims[0], 3, kernel_size=3, stride=1, padding=1)
-
-    def forward(self, features):
-        x = features[-1]
-        for i, layer in enumerate(self.layers):
-            x = layer(x)
-            if i < len(self.layers) - 1:
-                x = x + features[-i-2]
-        x = self.final_conv(x)
-        return torch.tanh(x)
-
 
 
 
@@ -332,6 +311,51 @@ class ResNetIMF(nn.Module):
 
         return aligned_features
 
+class FrameDecoder(nn.Module):
+    def __init__(self, feature_dims=[64, 256, 512, 1024]):
+        super().__init__()
+        self.layers = nn.ModuleList()
+        for i in range(len(feature_dims) - 1):
+            in_channels = feature_dims[-i - 1]
+            out_channels = feature_dims[-i - 2]
+            self.layers.append(
+                ResBlock(in_channels, out_channels)
+            )
+        # Add an extra upsampling layer to reach 256x256
+        self.extra_upsample = nn.Sequential(
+            ResBlock(feature_dims[0], feature_dims[0] // 2),
+            ResBlock(feature_dims[0] // 2, feature_dims[0] // 2)
+        )
+        self.final_conv = nn.Conv2d(feature_dims[0] // 2, 3, kernel_size=3, stride=1, padding=1)
+        print(f"FrameDecoder initialized with feature_dims: {feature_dims}")
+
+    def forward(self, features):
+        print(f"FrameDecoder input features: {[f.shape for f in features]}")
+        x = features[-1]
+        print(f"Starting x shape: {x.shape}")
+        
+        for i, layer in enumerate(self.layers):
+            print(f"Processing layer {i}")
+            x = layer(x)
+            print(f"After layer {i}: {x.shape}")
+            if i < len(self.layers) - 1:
+                print(f"Adding skip connection from features[-{i+2}]: {features[-i-2].shape}")
+                x = x + features[-i-2]
+                print(f"After skip connection: {x.shape}")
+        
+        print("Processing extra upsample")
+        x = self.extra_upsample(x)
+        print(f"After extra upsample: {x.shape}")
+        
+        print("Applying final convolution")
+        x = self.final_conv(x)
+        print(f"After final conv: {x.shape}")
+        
+        print("Applying tanh activation")
+        x = torch.tanh(x)
+        print(f"Final output shape: {x.shape}")
+        
+        return x
 
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -347,17 +371,24 @@ class ResBlock(nn.Module):
             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
             nn.BatchNorm2d(out_channels)
         )
+        print(f"ResBlock initialized with in_channels: {in_channels}, out_channels: {out_channels}")
 
     def forward(self, x):
+        print(f"ResBlock input shape: {x.shape}")
         residual = self.shortcut(x)
+        print(f"ResBlock shortcut shape: {residual.shape}")
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
         out = self.conv2(out)
         out = self.bn2(out)
+        print(f"ResBlock before adding residual: {out.shape}")
         out += residual
         out = self.relu(out)
-        return self.upsample(out)
+        out = self.upsample(out)
+        print(f"ResBlock output shape: {out.shape}")
+        return out
+    
 
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
@@ -369,16 +400,13 @@ class IMFModel(nn.Module):
         # Ensure input tensors require gradients
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
-        
         aligned_features = self.imf(x_current, x_reference)
         reconstructed_frame = self.frame_decoder(aligned_features)
-        
         # Only compute gradients if in training mode
         if self.training:
             grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
             # print(f"Gradient of output w.r.t. x_current: {grads[0]}")
             # print(f"Gradient of output w.r.t. x_reference: {grads[1]}")
-        
         return reconstructed_frame
 
     @property
