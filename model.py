@@ -242,14 +242,15 @@ class IMF(nn.Module):
             alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,max_seq_length=max_seq_length)
             self.implicit_motion_alignment.append(alignment_module)
 
+    # for positional embeddings
     def _calculate_max_seq_lengths(self, input_size, num_layers):
-            max_seq_lengths = []
-            h, w = input_size
-            for _ in range(num_layers):
-                h = h // 2
-                w = w // 2
-                max_seq_lengths.append(h * w)
-            return max_seq_lengths
+        max_seq_lengths = []
+        h, w = input_size
+        for _ in range(num_layers):
+            h = h // 2
+            w = w // 2
+            max_seq_lengths.append(min(h * w, 1024))  # Cap at 1024  
+        return max_seq_lengths
 
     def forward(self, x_current, x_reference):
         debug_print(f"IMF input shapes - x_current: {x_current.shape}, x_reference: {x_reference.shape}")
