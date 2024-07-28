@@ -231,7 +231,10 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 debug_print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
 
                 loss = mse_loss(reconstructed_frames, current_frames)
-
+                if torch.isnan(loss):
+                    print("NaN loss detected. Skipping this batch.")
+                    optimizer.zero_grad()
+                    continue
                  # R1 regularization for better training stability  
                 if batch_idx % 16 == 0:
                     current_frames.requires_grad_(True)
