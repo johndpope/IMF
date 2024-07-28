@@ -301,27 +301,6 @@ It uses concatenation (Concat in the image) to combine the upsampled features wi
 The channel dimensions decrease as we go up the network: 512 → 512 → 256 → 128 → 64.
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
-class FeatResBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        residual = x
-        
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        
-        out += residual
-        out = self.relu(out)
-        return out
 
 class FrameDecoder(nn.Module):
     def __init__(self):
@@ -366,38 +345,40 @@ class FrameDecoder(nn.Module):
         return x_c
 
 class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, upsample=True):
+    def __init__(self, channels, downsample=False):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) if upsample else nn.Identity()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.relu2 = nn.ReLU(inplace=True)
         
-        self.shortcut = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
-            nn.BatchNorm2d(out_channels)
-        )
-        debug_print(f"ResBlock initialized with in_channels: {in_channels}, out_channels: {out_channels}, upsample: {upsample}")
+        if downsample:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1),
+                nn.BatchNorm2d(channels)
+            )
+        else:
+            self.shortcut = nn.Identity()
 
     def forward(self, x):
-        debug_print(f"ResBlock input shape: {x.shape}")
         residual = self.shortcut(x)
-        debug_print(f"ResBlock shortcut shape: {residual.shape}")
         
         out = self.conv1(x)
         out = self.bn1(out)
-        out = self.relu(out)
+        out = self.relu1(out)
         out = self.conv2(out)
         out = self.bn2(out)
         
-        debug_print(f"ResBlock before adding residual: {out.shape}")
         out += residual
-        out = self.relu(out)
-        out = self.upsample(out)
-        debug_print(f"ResBlock output shape: {out.shape}")
+        out = self.relu2(out)
+        
         return out
+
+class FeatResBlock(ResBlock):
+    def __init__(self, channels):
+        super().__init__(channels, downsample=False)
     
 '''
 DenseFeatureEncoder (EF): Encodes the reference frame into multi-scale features.
