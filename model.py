@@ -165,9 +165,10 @@ class ImplicitMotionAlignment(nn.Module):
 
     def forward(self, q, k, v):
         debug_print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-        
         batch_size, c, h, w = v.shape
         seq_length = h * w
+        print(f"Input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        print(f"Batch size: {batch_size}, Channels: {c}, Height: {h}, Width: {w}, Sequence length: {seq_length}")
 
         # Reshape and project inputs
         # This operation flattens the height and width dimensions into a single dimension.
@@ -175,56 +176,47 @@ class ImplicitMotionAlignment(nn.Module):
         q = self.q_proj(q.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         k = self.k_proj(k.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         v = self.v_proj(v.view(batch_size, self.feature_dim, -1).permute(0, 2, 1))
+        print(f"Projected shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        debug_print(f"After projection - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-
-   
-       # Add positional embeddings, handling cases where seq_length > max_seq_length
+        # Add positional embeddings, handling cases where seq_length > max_seq_length
         max_seq_length = self.p_q.shape[1]
+        print(f"Max sequence length: {max_seq_length}")
         if seq_length <= max_seq_length:
-            q = q + self.p_q[:, :seq_length, :]
-            k = k + self.p_k[:, :seq_length, :]
+            q = q + self.p_q[:, :seq_length, :].expand(batch_size, -1, -1)
+            k = k + self.p_k[:, :seq_length, :].expand(batch_size, -1, -1)
+            print("Used direct positional embeddings")
         else:
-            q = q + F.interpolate(self.p_q.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
-            k = k + F.interpolate(self.p_k.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
-
-
         debug_print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
+            p_q_interp = F.interpolate(self.p_q.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
+            p_k_interp = F.interpolate(self.p_k.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
+            q = q + p_q_interp.expand(batch_size, -1, -1)
+            k = k + p_k_interp.expand(batch_size, -1, -1)
+            print("Used interpolated positional embeddings")
 
+        print(f"Positional embeddings added - q: {q.shape}, k: {k.shape}")
 
         # Ensure q, k, and v have the same sequence length
         seq_len = min(q.size(1), k.size(1), v.size(1))
         q = q[:, :seq_len, :]
         k = k[:, :seq_len, :]
         v = v[:, :seq_len, :]
-
-        debug_print(f"After sequence length adjustment - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        print(f"Adjusted for sequence length - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # Perform cross-attention
         attn_output, _ = self.cross_attention(q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1))
         attn_output = attn_output.transpose(0, 1)
-        debug_print(f"After cross-attention: {attn_output.shape}")
+        print(f"Attention output shape: {attn_output.shape}")
         
         x = self.norm1(q + attn_output)
         x = self.norm2(x + self.ffn(x))
-        debug_print(f"After FFN: {x.shape}")
+        print(f"Normalized and feed-forward shapes: {x.shape}")
 
         # Reshape output to match original dimensions
-        x = x.transpose(1, 2).contiguous()
-        debug_print(f"After transpose: {x.shape}")
-        debug_print(f"Attempting to reshape to: {(batch_size, self.feature_dim, h, w)}")
+        x = x.transpose(1, 2).contiguous().view(batch_size, self.feature_dim, h, w)
+        print(f"Final output shape: {x.shape}")
         
-        # Check if the reshape is valid
-        if x.numel() != batch_size * self.feature_dim * h * w:
-            debug_print(f"WARNING: Cannot reshape tensor of size {x.numel()} into shape {(batch_size, self.feature_dim, h, w)}")
-            # Adjust the output size to match the input size
-            x = F.adaptive_avg_pool2d(x.view(batch_size, self.feature_dim, -1, 1), (h, w))
-        else:
-            x = x.view(batch_size, self.feature_dim, h, w)
-        
-        debug_print(f"Final output shape: {x.shape}")
-
         return x
+
 
 
 class IMF(nn.Module):
