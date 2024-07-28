@@ -361,8 +361,8 @@ class IMFModel(nn.Module):
         # Only compute gradients if in training mode
         if self.training:
             grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
-            print(f"Gradient of output w.r.t. x_current: {grads[0]}")
-            print(f"Gradient of output w.r.t. x_reference: {grads[1]}")
+            # print(f"Gradient of output w.r.t. x_current: {grads[0]}")
+            # print(f"Gradient of output w.r.t. x_reference: {grads[1]}")
         
         return reconstructed_frame
 
