@@ -195,19 +195,12 @@ class ImplicitMotionAlignment(nn.Module):
 
         print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
 
-        # Ensure q, k, and v have the same sequence length
-        seq_len = min(q.size(1), k.size(1), v.size(1))
-        q = q[:, :seq_len, :]
-        k = k[:, :seq_len, :]
-        v = v[:, :seq_len, :]
-        print(f"Adjusted for sequence length - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-
         # Perform cross-attention
         attn_output, _ = self.cross_attention(q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1))
         attn_output = attn_output.transpose(0, 1)
         print(f"Attention output shape: {attn_output.shape}")
         
-        x = self.norm1(q + attn_output)
+        x = self.norm1(attn_output)
         x = self.norm2(x + self.ffn(x))
         print(f"Normalized and feed-forward shapes: {x.shape}")
 
@@ -237,8 +230,9 @@ class IMF(nn.Module):
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
             motion_dim = self.motion_dims[i]
-            max_seq_length = self.max_seq_lengths[i]
-            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,max_seq_length=max_seq_length)
+            h, w = input_size[0] // (2**(i+2)), input_size[1] // (2**(i+2))  # Adjust for each layer
+            max_seq_length = h * w
+            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim, max_seq_length=max_seq_length)
             self.implicit_motion_alignment.append(alignment_module)
 
 
