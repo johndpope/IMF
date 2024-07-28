@@ -11,7 +11,7 @@ from memory_profiler import profile
 import colored_traceback.auto
 
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -240,6 +240,7 @@ class IMF(nn.Module):
             max_seq_length = self.max_seq_lengths[i]
             alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,max_seq_length=max_seq_length)
             self.implicit_motion_alignment.append(alignment_module)
+
 
     # for positional embeddings
     def _calculate_max_seq_lengths(self, input_size, num_layers):
