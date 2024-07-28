@@ -136,7 +136,7 @@ class StyleConv2d(nn.Module):
 
 
 
-MAXSEQLENGTH = 64 # idk 🤷‍♂️
+MAXSEQLENGTH = 8 # idk 🤷‍♂️
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, num_heads=8,max_seq_length=MAXSEQLENGTH):
         super().__init__()
