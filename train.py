@@ -328,10 +328,10 @@ def hook_fn(name):
             print(f"🔥 NaN gradient detected in {name}")
         elif torch.isinf(grad).any():
             print(f"🔥 Inf gradient detected in {name}")
-        else:
+        #else:
             # You can add more conditions or logging here
-            grad_norm = grad.norm().item()
-            print(f"Gradient norm for {name}: {grad_norm}")
+         #  grad_norm = grad.norm().item()
+         #   print(f"Gradient norm for {name}: {grad_norm}")
         return grad
     return hook
 
