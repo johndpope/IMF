@@ -249,7 +249,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             accelerator.backward(loss)
              # Monitor gradients before optimizer step
             monitor_gradients(model, epoch, batch_idx)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
 
             optimizer.step()
