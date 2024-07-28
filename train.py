@@ -232,20 +232,35 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
 
                 loss = mse_loss(reconstructed_frames, current_frames)
 
-                # R1 regularization for better training stability  
+                 # R1 regularization for better training stability  
                 if batch_idx % 16 == 0:
-                    current_frames.requires_grad = True
-                    reconstructed_frames = model(current_frames, reference_frames)
-                    debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
-                    debug_print(f"Current frames shape before R1: {current_frames.shape}")
-                    r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True, allow_unused=True)[0]
-                    if r1_loss is not None:
-                        debug_print(f"r1_loss shape: {r1_loss.shape}")
-                        r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
-                        loss = loss + r1_gamma * 0.5 * r1_loss * 16
-                    else:
-                        debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
+                    current_frames.requires_grad_(True)
+                    reference_frames.requires_grad_(True)
+                    
+                    with torch.enable_grad():
+                        reconstructed_frames = model(current_frames, reference_frames)
+                        debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
+                        debug_print(f"Current frames shape before R1: {current_frames.shape}")
+                        
+                        r1_loss = torch.autograd.grad(
+                            outputs=reconstructed_frames.sum(), 
+                            inputs=[current_frames, reference_frames], 
+                            create_graph=True, 
+                            allow_unused=True
+                        )
+                        
+                        if r1_loss[0] is not None and r1_loss[1] is not None:
+                            r1_loss_current = r1_loss[0].pow(2).reshape(r1_loss[0].shape[0], -1).sum(1).mean()
+                            r1_loss_reference = r1_loss[1].pow(2).reshape(r1_loss[1].shape[0], -1).sum(1).mean()
+                            r1_loss_total = r1_loss_current + r1_loss_reference
+                            debug_print(f"r1_loss_current shape: {r1_loss_current.shape}")
+                            debug_print(f"r1_loss_reference shape: {r1_loss_reference.shape}")
+                            loss = loss + r1_gamma * 0.5 * r1_loss_total * 16
+                        else:
+                            debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
 
+                    current_frames.requires_grad_(False)
+                    reference_frames.requires_grad_(False)
             accelerator.backward(loss)
              # Monitor gradients before optimizer step
             monitor_gradients(model, epoch, batch_idx)
