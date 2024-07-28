@@ -304,6 +304,24 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
 
     return ema_model
 
+def hook_fn(name):
+    def hook(grad):
+        if torch.isnan(grad).any():
+            print(f"NaN gradient detected in {name}")
+        elif torch.isinf(grad).any():
+            print(f"Inf gradient detected in {name}")
+        else:
+            # You can add more conditions or logging here
+            grad_norm = grad.norm().item()
+            print(f"Gradient norm for {name}: {grad_norm}")
+        return grad
+    return hook
+
+def add_gradient_hooks(model):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            param.register_hook(hook_fn(name))
+
 @profile
 def main():
     # Load configuration
@@ -323,6 +341,10 @@ def main():
         base_channels=config['model']['base_channels'],
         num_layers=config['model']['num_layers']
     )
+
+
+    # hook for gradients
+    add_gradient_hooks(model)
 
     # Set up dataset and dataloader
     transform = transforms.Compose([
