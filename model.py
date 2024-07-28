@@ -136,9 +136,9 @@ class StyleConv2d(nn.Module):
 
 
 
-
+MAXSEQLENGTH = 128 # idk 🤷‍♂️
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, num_heads=8,max_seq_length=1024):
+    def __init__(self, feature_dim, motion_dim, num_heads=8,max_seq_length=MAXSEQLENGTH):
         super().__init__()
         self.feature_dim = feature_dim 
         self.motion_dim = motion_dim 
@@ -148,7 +148,7 @@ class ImplicitMotionAlignment(nn.Module):
         self.k_proj = nn.Linear(motion_dim, feature_dim)
         self.v_proj = nn.Linear(feature_dim, feature_dim)
 
-        # Create positional embeddings
+        # Create positional embeddings - 🤷‍♂️ not sure about this
         self.p_q = nn.Parameter(torch.randn(1, max_seq_length, feature_dim))
         self.p_k = nn.Parameter(torch.randn(1, max_seq_length, feature_dim))
 
@@ -250,7 +250,7 @@ class IMF(nn.Module):
         for _ in range(num_layers):
             h = h // 2
             w = w // 2
-            max_seq_lengths.append(min(h * w, 128))  # Cap at 1024
+            max_seq_lengths.append(min(h * w, MAXSEQLENGTH))  # Cap at 1024
         return max_seq_lengths
 
     def forward(self, x_current, x_reference):
