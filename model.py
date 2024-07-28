@@ -176,24 +176,31 @@ class ImplicitMotionAlignment(nn.Module):
         v = self.v_proj(v.view(batch_size, self.feature_dim, -1).permute(0, 2, 1))
         print(f"Projected shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Add positional embeddings, handling cases where seq_length > max_seq_length
+        # Adjust q and k to match v's sequence length
+        if q.size(1) != v.size(1):
+            q = F.interpolate(q.transpose(1, 2), size=v.size(1), mode='linear', align_corners=False).transpose(1, 2)
+        if k.size(1) != v.size(1):
+            k = F.interpolate(k.transpose(1, 2), size=v.size(1), mode='linear', align_corners=False).transpose(1, 2)
+
+        # Add positional embeddings
         max_seq_length = self.p_q.shape[1]
         print(f"Max sequence length: {max_seq_length}")
         
-        if q.size(1) <= max_seq_length:
-            q = q + self.p_q[:, :q.size(1), :].expand(batch_size, -1, -1)
-            k = k + self.p_k[:, :k.size(1), :].expand(batch_size, -1, -1)
+        if v.size(1) <= max_seq_length:
+            p_q = self.p_q[:, :v.size(1), :].expand(batch_size, -1, -1)
+            p_k = self.p_k[:, :v.size(1), :].expand(batch_size, -1, -1)
             print("Used direct positional embeddings")
         else:
-            # Interpolate positional embeddings to match q and k sizes
-            p_q_interp = F.interpolate(self.p_q.transpose(1, 2), size=(q.size(1),), mode='linear', align_corners=False).transpose(1, 2)
-            p_k_interp = F.interpolate(self.p_k.transpose(1, 2), size=(k.size(1),), mode='linear', align_corners=False).transpose(1, 2)
-            
-            q = q + p_q_interp.expand(batch_size, -1, -1)
-            k = k + p_k_interp.expand(batch_size, -1, -1)
+            p_q = F.interpolate(self.p_q.transpose(1, 2), size=(v.size(1),), mode='linear', align_corners=False).transpose(1, 2)
+            p_k = F.interpolate(self.p_k.transpose(1, 2), size=(v.size(1),), mode='linear', align_corners=False).transpose(1, 2)
+            p_q = p_q.expand(batch_size, -1, -1)
+            p_k = p_k.expand(batch_size, -1, -1)
             print("Used interpolated positional embeddings")
 
-        print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
+        q = q + p_q
+        k = k + p_k
+
+        print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # Perform cross-attention
         attn_output, _ = self.cross_attention(q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1))
