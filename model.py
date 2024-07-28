@@ -398,12 +398,18 @@ class IMFModel(nn.Module):
         self.frame_decoder = FrameDecoder(base_channels, num_layers)
 
     def forward(self, x_current, x_reference):
+        # Ensure input tensors require gradients
+        x_current = x_current.requires_grad_()
+        x_reference = x_reference.requires_grad_()
+        
         aligned_features = self.imf(x_current, x_reference)
         reconstructed_frame = self.frame_decoder(aligned_features)
         
-        grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
-        print(f"Gradient of output w.r.t. x_current: {grads[0]}")
-        print(f"Gradient of output w.r.t. x_reference: {grads[1]}")
+        # Only compute gradients if in training mode
+        if self.training:
+            grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
+            print(f"Gradient of output w.r.t. x_current: {grads[0]}")
+            print(f"Gradient of output w.r.t. x_reference: {grads[1]}")
         
         return reconstructed_frame
 
