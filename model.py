@@ -181,19 +181,25 @@ class ImplicitMotionAlignment(nn.Module):
         # Add positional embeddings, handling cases where seq_length > max_seq_length
         max_seq_length = self.p_q.shape[1]
         print(f"Max sequence length: {max_seq_length}")
+        
         if seq_length <= max_seq_length:
             q = q + self.p_q[:, :seq_length, :].expand(batch_size, -1, -1)
             k = k + self.p_k[:, :seq_length, :].expand(batch_size, -1, -1)
             print("Used direct positional embeddings")
         else:
-            debug_print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
+            # Interpolate positional embeddings
             p_q_interp = F.interpolate(self.p_q.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
             p_k_interp = F.interpolate(self.p_k.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
+            
+            # Ensure q and p_q_interp have the same size
+            q = q[:, :seq_length, :]
+            k = k[:, :seq_length, :]
+            
             q = q + p_q_interp.expand(batch_size, -1, -1)
             k = k + p_k_interp.expand(batch_size, -1, -1)
             print("Used interpolated positional embeddings")
 
-        print(f"Positional embeddings added - q: {q.shape}, k: {k.shape}")
+        print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
 
         # Ensure q, k, and v have the same sequence length
         seq_len = min(q.size(1), k.size(1), v.size(1))
