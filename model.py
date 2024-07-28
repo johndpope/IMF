@@ -101,6 +101,20 @@ class LatentTokenDecoder(nn.Module):
                 StyleConv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, style_dim=base_channels)
             )
             in_channels = out_channels
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        nn.init.kaiming_normal_(self.const, mode='fan_out', nonlinearity='relu')
+        nn.init.kaiming_normal_(self.fc.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.constant_(self.fc.bias, 0)
+        
+        for m in self.layers:
+            if isinstance(m, StyleConv2d):
+                nn.init.kaiming_normal_(m.conv.weight, mode='fan_out', nonlinearity='relu')
+                if m.conv.bias is not None:
+                    nn.init.constant_(m.conv.bias, 0)
+                nn.init.kaiming_normal_(m.modulation.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.constant_(m.modulation.bias, 0)
 
     def forward(self, x):
         style = self.fc(x)
@@ -158,7 +172,26 @@ class ImplicitMotionAlignment(nn.Module):
         )
 
         debug_print(f"ImplicitMotionAlignment initialized: feature_dim={feature_dim}, motion_dim={motion_dim}")
+        self._initialize_weights()
 
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        
+        # Special initialization for attention layers
+        nn.init.normal_(self.cross_attention.in_proj_weight, std=0.02)
+        nn.init.normal_(self.cross_attention.out_proj.weight, std=0.02)
+        nn.init.constant_(self.cross_attention.in_proj_bias, 0)
+        nn.init.constant_(self.cross_attention.out_proj.bias, 0)
+
+        
     def forward(self, q, k, v):
         debug_print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
         
@@ -210,6 +243,7 @@ class IMF(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
         self.dense_feature_encoder = ResNetFeatureExtractor()
+      
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, base_channels=base_channels, num_layers=num_layers)
         
@@ -223,6 +257,10 @@ class IMF(nn.Module):
             motion_dim = self.motion_dims[i]
             alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim)
             self.implicit_motion_alignment.append(alignment_module)
+
+        # freeze resnet
+        for param in self.dense_feature_encoder.parameters():
+            param.requires_grad = False
 
     def forward(self, x_current, x_reference):
         debug_print(f"IMF input shapes - x_current: {x_current.shape}, x_reference: {x_reference.shape}")
@@ -326,7 +364,18 @@ class FrameDecoder(nn.Module):
         
         self.final_conv = nn.Conv2d(feature_dims[0] // 2, 3, kernel_size=3, stride=1, padding=1)
         debug_print(f"FrameDecoder initialized with feature_dims: {feature_dims}")
+        self._initialize_weights()
 
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+                
     def forward(self, features):
         debug_print(f"FrameDecoder input features: {[f.shape for f in features]}")
         x = features[-1]
@@ -349,9 +398,10 @@ class FrameDecoder(nn.Module):
         x = self.final_conv(x)
         debug_print(f"After final conv: {x.shape}")
         
-        debug_print("Applying tanh activation")
-        x = torch.tanh(x)
-        debug_print(f"Final output shape: {x.shape}")
+        debug_print("Applying final activation")
+        x = F.relu(x)
+        debug_print(f"Final output shape after activation: {x.shape}")
+
         
         return x
 
