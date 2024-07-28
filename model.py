@@ -344,6 +344,14 @@ class FrameDecoder(nn.Module):
         
         return x_c
 
+
+'''
+The upsample parameter is replaced with downsample to match the diagram.
+The first convolution now has a stride of 2 when downsampling.
+The shortcut connection now uses a 3x3 convolution with stride 2 when downsampling, instead of a 1x1 convolution.
+ReLU activations are applied both after adding the residual and at the end of the block.
+The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
+'''
 class ResBlock(nn.Module):
     def __init__(self, channels, downsample=False):
         super().__init__()
