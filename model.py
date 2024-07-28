@@ -227,11 +227,12 @@ class ImplicitMotionAlignment(nn.Module):
 class IMF(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder(base_channels=base_channels, num_layers=num_layers)
+        self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, base_channels=base_channels, num_layers=num_layers)
         
-        self.feature_dims = [base_channels * (2 ** i) for i in range(num_layers)]
+        # Adjust feature_dims for ResNet50 output
+        self.feature_dims = [64, 256, 512, 1024]
         self.motion_dims = [base_channels // (2 ** i) for i in range(num_layers)]
         
         self.implicit_motion_alignment = nn.ModuleList()
@@ -242,19 +243,34 @@ class IMF(nn.Module):
             self.implicit_motion_alignment.append(alignment_module)
 
     def forward(self, x_current, x_reference):
+        print(f"IMF input shapes - x_current: {x_current.shape}, x_reference: {x_reference.shape}")
+
         f_r = self.dense_feature_encoder(x_reference)
+        print(f"Dense feature encoder output shapes: {[f.shape for f in f_r]}")
+
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
+        print(f"Latent token shapes - t_r: {t_r.shape}, t_c: {t_c.shape}")
 
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
+        print(f"Latent token decoder output shapes - m_r: {[m.shape for m in m_r]}, m_c: {[m.shape for m in m_c]}")
 
         aligned_features = []
         for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
+            print(f"Layer {i} input shapes - f_r_i: {f_r_i.shape}, m_r_i: {m_r_i.shape}, m_c_i: {m_c_i.shape}")
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+            print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
             aligned_features.append(aligned_feature)
 
         return aligned_features
+
+    # def process_tokens(self, t_c, t_r):
+    #     print(f"process_tokens input shapes - t_c: {[tc.shape for tc in t_c]}, t_r: {[tr.shape for tr in t_r]}")
+    #     m_c = [self.latent_token_decoder(tc) for tc in t_c]
+    #     m_r = [self.latent_token_decoder(tr) for tr in t_r]
+    #     print(f"process_tokens output shapes - m_c: {[[mc_i.shape for mc_i in mc] for mc in m_c]}, m_r: {[[mr_i.shape for mr_i in mr] for mr in m_r]}")
+    #     return m_c, m_r
 
     def process_tokens(self, t_c, t_r):
         debug_print(f"process_tokens input types - t_c: {type(t_c)}, t_r: {type(t_r)}")

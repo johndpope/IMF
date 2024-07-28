@@ -177,8 +177,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                             disable=not accelerator.is_local_main_process)
         
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-            debug_print(f"Current frames shape: {current_frames.shape}")
-            debug_print(f"Reference frames shape: {reference_frames.shape}")
+            debug_print(f"Batch {batch_idx} input shapes - current_frames: {current_frames.shape}, reference_frames: {reference_frames.shape}")
 
             # Forward pass
             reconstructed_frames = model(current_frames, reference_frames)
@@ -187,8 +186,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
             # Add noise to latent tokens for improved training dynamics
             tc = model.latent_token_encoder(current_frames)
             tr = model.latent_token_encoder(reference_frames)
-            debug_print(f"tc shape: {tc.shape}")
-            debug_print(f"tr shape: {tr.shape}")
+            debug_print(f"Latent token shapes - tc: {tc.shape}, tr: {tr.shape}")
 
             noise_magnitude = 0.1
             noise = torch.randn_like(tc) * noise_magnitude
@@ -206,30 +204,27 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 mix_tc = [tc] * len(model.imf.implicit_motion_alignment)
                 mix_tr = [tr] * len(model.imf.implicit_motion_alignment)
 
-            debug_print(f"mix_tc length: {len(mix_tc)}, mix_tr length: {len(mix_tr)}")
-            m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
-            debug_print(f"m_c length: {len(m_c)}, m_r length: {len(m_r)}")
+            debug_print(f"Mixed token shapes - mix_tc: {[t.shape for t in mix_tc]}, mix_tr: {[t.shape for t in mix_tr]}")
 
-            fr = model.dense_feature_encoder(reference_frames)
-            debug_print(f"fr length: {len(fr)}")
+            m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
+
+            fr = model.imf.dense_feature_encoder(reference_frames)
+            debug_print(f"Dense feature encoder output shapes: {[f.shape for f in fr]}")
 
             aligned_features = []
             for i in range(len(model.imf.implicit_motion_alignment)):
-                debug_print(f"Processing layer {i}")
                 f_r_i = fr[i]
                 align_layer = model.imf.implicit_motion_alignment[i]
                 m_c_i = m_c[i][i]  # Access the i-th element of the i-th sublist
                 m_r_i = m_r[i][i]  # Access the i-th element of the i-th sublist
-                debug_print(f"f_r_i shape: {f_r_i.shape}")
-                debug_print(f"m_c_i shape: {m_c_i.shape}")
-                debug_print(f"m_r_i shape: {m_r_i.shape}")
+                debug_print(f"Layer {i} input shapes - f_r_i: {f_r_i.shape}, m_c_i: {m_c_i.shape}, m_r_i: {m_r_i.shape}")
                 aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                debug_print(f"aligned_feature shape: {aligned_feature.shape}")
+                debug_print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
                 aligned_features.append(aligned_feature)
-            with torch.set_grad_enabled(True):
-                reconstructed_frames = model(current_frames, reference_frames)
-                debug_print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
 
+            with torch.set_grad_enabled(True):
+                reconstructed_frames = model.frame_decoder(aligned_features)
+                debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")
                 loss = mse_loss(reconstructed_frames, current_frames)
                 if torch.isnan(loss):
                     print("NaN loss detected. Skipping this batch.")
