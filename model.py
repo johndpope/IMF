@@ -186,7 +186,7 @@ class ImplicitMotionAlignment(nn.Module):
             k = k + self.p_k[:, :seq_length, :].expand(batch_size, -1, -1)
             print("Used direct positional embeddings")
         else:
-        debug_print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
+            debug_print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
             p_q_interp = F.interpolate(self.p_q.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
             p_k_interp = F.interpolate(self.p_k.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
             q = q + p_q_interp.expand(batch_size, -1, -1)
