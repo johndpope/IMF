@@ -171,8 +171,6 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"Batch size: {batch_size}, Channels: {c}, Height: {h}, Width: {w}, Sequence length: {seq_length}")
 
         # Reshape and project inputs
-        # This operation flattens the height and width dimensions into a single dimension.
-        # the permute(0, 2, 1) operation then rearranges the dimensions to prepare the tensors for the attention mechanism.
         q = self.q_proj(q.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         k = self.k_proj(k.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         v = self.v_proj(v.view(batch_size, self.feature_dim, -1).permute(0, 2, 1))
@@ -182,18 +180,14 @@ class ImplicitMotionAlignment(nn.Module):
         max_seq_length = self.p_q.shape[1]
         print(f"Max sequence length: {max_seq_length}")
         
-        if seq_length <= max_seq_length:
-            q = q + self.p_q[:, :seq_length, :].expand(batch_size, -1, -1)
-            k = k + self.p_k[:, :seq_length, :].expand(batch_size, -1, -1)
+        if q.size(1) <= max_seq_length:
+            q = q + self.p_q[:, :q.size(1), :].expand(batch_size, -1, -1)
+            k = k + self.p_k[:, :k.size(1), :].expand(batch_size, -1, -1)
             print("Used direct positional embeddings")
         else:
-            # Interpolate positional embeddings
-            p_q_interp = F.interpolate(self.p_q.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
-            p_k_interp = F.interpolate(self.p_k.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
-            
-            # Ensure q and p_q_interp have the same size
-            q = q[:, :seq_length, :]
-            k = k[:, :seq_length, :]
+            # Interpolate positional embeddings to match q and k sizes
+            p_q_interp = F.interpolate(self.p_q.transpose(1, 2), size=(q.size(1),), mode='linear', align_corners=False).transpose(1, 2)
+            p_k_interp = F.interpolate(self.p_k.transpose(1, 2), size=(k.size(1),), mode='linear', align_corners=False).transpose(1, 2)
             
             q = q + p_q_interp.expand(batch_size, -1, -1)
             k = k + p_k_interp.expand(batch_size, -1, -1)
@@ -255,7 +249,7 @@ class IMF(nn.Module):
         for _ in range(num_layers):
             h = h // 2
             w = w // 2
-            max_seq_lengths.append(min(h * w, 1024))  # Cap at 1024  
+            max_seq_lengths.append(min(h * w, 1024))  # Cap at 1024
         return max_seq_lengths
 
     def forward(self, x_current, x_reference):
