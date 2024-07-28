@@ -178,9 +178,16 @@ class ImplicitMotionAlignment(nn.Module):
 
         debug_print(f"After projection - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Add positional embeddings
-        q = q + self.p_q[:, :seq_length, :]
-        k = k + self.p_k[:, :seq_length, :]
+   
+       # Add positional embeddings, handling cases where seq_length > max_seq_length
+        max_seq_length = self.p_q.shape[1]
+        if seq_length <= max_seq_length:
+            q = q + self.p_q[:, :seq_length, :]
+            k = k + self.p_k[:, :seq_length, :]
+        else:
+            q = q + F.interpolate(self.p_q.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
+            k = k + F.interpolate(self.p_k.transpose(1, 2), size=(seq_length,), mode='linear', align_corners=False).transpose(1, 2)
+
 
         debug_print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}")
 
