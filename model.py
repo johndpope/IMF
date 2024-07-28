@@ -398,14 +398,12 @@ class IMFModel(nn.Module):
         self.frame_decoder = FrameDecoder(base_channels, num_layers)
 
     def forward(self, x_current, x_reference):
-        debug_print(f"IMFModel forward - x_current shape: {x_current.shape}")
-        debug_print(f"IMFModel forward - x_reference shape: {x_reference.shape}")
-        
         aligned_features = self.imf(x_current, x_reference)
-        debug_print(f"IMFModel forward - aligned_features shapes: {[f.shape for f in aligned_features]}")
-        
         reconstructed_frame = self.frame_decoder(aligned_features)
-        debug_print(f"IMFModel forward - reconstructed_frame shape: {reconstructed_frame.shape}")
+        
+        grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
+        print(f"Gradient of output w.r.t. x_current: {grads[0]}")
+        print(f"Gradient of output w.r.t. x_reference: {grads[1]}")
         
         return reconstructed_frame
 
