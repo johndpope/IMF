@@ -225,33 +225,33 @@ class IMF(nn.Module):
             self.implicit_motion_alignment.append(alignment_module)
 
     def forward(self, x_current, x_reference):
-        print(f"IMF input shapes - x_current: {x_current.shape}, x_reference: {x_reference.shape}")
+        debug_print(f"IMF input shapes - x_current: {x_current.shape}, x_reference: {x_reference.shape}")
 
         f_r = self.dense_feature_encoder(x_reference)
-        print(f"Dense feature encoder output shapes: {[f.shape for f in f_r]}")
+        debug_print(f"Dense feature encoder output shapes: {[f.shape for f in f_r]}")
 
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
-        print(f"Latent token shapes - t_r: {t_r.shape}, t_c: {t_c.shape}")
+        debug_print(f"Latent token shapes - t_r: {t_r.shape}, t_c: {t_c.shape}")
 
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
-        print(f"Latent token decoder output shapes - m_r: {[m.shape for m in m_r]}, m_c: {[m.shape for m in m_c]}")
+        debug_print(f"Latent token decoder output shapes - m_r: {[m.shape for m in m_r]}, m_c: {[m.shape for m in m_c]}")
 
         aligned_features = []
         for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
-            print(f"Layer {i} input shapes - f_r_i: {f_r_i.shape}, m_r_i: {m_r_i.shape}, m_c_i: {m_c_i.shape}")
+            debug_print(f"Layer {i} input shapes - f_r_i: {f_r_i.shape}, m_r_i: {m_r_i.shape}, m_c_i: {m_c_i.shape}")
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
+            debug_print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
             aligned_features.append(aligned_feature)
 
         return aligned_features
 
     # def process_tokens(self, t_c, t_r):
-    #     print(f"process_tokens input shapes - t_c: {[tc.shape for tc in t_c]}, t_r: {[tr.shape for tr in t_r]}")
+    #     debug_print(f"process_tokens input shapes - t_c: {[tc.shape for tc in t_c]}, t_r: {[tr.shape for tr in t_r]}")
     #     m_c = [self.latent_token_decoder(tc) for tc in t_c]
     #     m_r = [self.latent_token_decoder(tr) for tr in t_r]
-    #     print(f"process_tokens output shapes - m_c: {[[mc_i.shape for mc_i in mc] for mc in m_c]}, m_r: {[[mr_i.shape for mr_i in mr] for mr in m_r]}")
+    #     debug_print(f"process_tokens output shapes - m_c: {[[mc_i.shape for mc_i in mc] for mc in m_c]}, m_r: {[[mr_i.shape for mr_i in mr] for mr in m_r]}")
     #     return m_c, m_r
 
     def process_tokens(self, t_c, t_r):
@@ -325,33 +325,33 @@ class FrameDecoder(nn.Module):
         self.extra_upsample = ResBlock(feature_dims[0], feature_dims[0] // 2, upsample=True)
         
         self.final_conv = nn.Conv2d(feature_dims[0] // 2, 3, kernel_size=3, stride=1, padding=1)
-        print(f"FrameDecoder initialized with feature_dims: {feature_dims}")
+        debug_print(f"FrameDecoder initialized with feature_dims: {feature_dims}")
 
     def forward(self, features):
-        print(f"FrameDecoder input features: {[f.shape for f in features]}")
+        debug_print(f"FrameDecoder input features: {[f.shape for f in features]}")
         x = features[-1]
-        print(f"Starting x shape: {x.shape}")
+        debug_print(f"Starting x shape: {x.shape}")
         
         for i, layer in enumerate(self.layers):
-            print(f"Processing layer {i}")
+            debug_print(f"Processing layer {i}")
             x = layer(x)
-            print(f"After layer {i}: {x.shape}")
+            debug_print(f"After layer {i}: {x.shape}")
             if i < len(self.layers) - 1:
-                print(f"Adding skip connection from features[-{i+2}]: {features[-i-2].shape}")
+                debug_print(f"Adding skip connection from features[-{i+2}]: {features[-i-2].shape}")
                 x = x + F.interpolate(features[-i-2], size=x.shape[2:], mode='bilinear', align_corners=False)
-                print(f"After skip connection: {x.shape}")
+                debug_print(f"After skip connection: {x.shape}")
         
-        print("Applying extra upsampling layer")
+        debug_print("Applying extra upsampling layer")
         x = self.extra_upsample(x)
-        print(f"After extra upsample: {x.shape}")
+        debug_print(f"After extra upsample: {x.shape}")
         
-        print("Applying final convolution")
+        debug_print("Applying final convolution")
         x = self.final_conv(x)
-        print(f"After final conv: {x.shape}")
+        debug_print(f"After final conv: {x.shape}")
         
-        print("Applying tanh activation")
+        debug_print("Applying tanh activation")
         x = torch.tanh(x)
-        print(f"Final output shape: {x.shape}")
+        debug_print(f"Final output shape: {x.shape}")
         
         return x
 
@@ -369,12 +369,12 @@ class ResBlock(nn.Module):
             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
             nn.BatchNorm2d(out_channels)
         )
-        print(f"ResBlock initialized with in_channels: {in_channels}, out_channels: {out_channels}, upsample: {upsample}")
+        debug_print(f"ResBlock initialized with in_channels: {in_channels}, out_channels: {out_channels}, upsample: {upsample}")
 
     def forward(self, x):
-        print(f"ResBlock input shape: {x.shape}")
+        debug_print(f"ResBlock input shape: {x.shape}")
         residual = self.shortcut(x)
-        print(f"ResBlock shortcut shape: {residual.shape}")
+        debug_print(f"ResBlock shortcut shape: {residual.shape}")
         
         out = self.conv1(x)
         out = self.bn1(out)
@@ -382,11 +382,11 @@ class ResBlock(nn.Module):
         out = self.conv2(out)
         out = self.bn2(out)
         
-        print(f"ResBlock before adding residual: {out.shape}")
+        debug_print(f"ResBlock before adding residual: {out.shape}")
         out += residual
         out = self.relu(out)
         out = self.upsample(out)
-        print(f"ResBlock output shape: {out.shape}")
+        debug_print(f"ResBlock output shape: {out.shape}")
         return out
     
 
