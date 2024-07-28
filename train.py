@@ -226,25 +226,25 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                 aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
                 debug_print(f"aligned_feature shape: {aligned_feature.shape}")
                 aligned_features.append(aligned_feature)
-
-            reconstructed_frames = model.frame_decoder(aligned_features)
-            debug_print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
-
-            loss = mse_loss(reconstructed_frames, current_frames)
-
-            # R1 regularization for better training stability  
-            if batch_idx % 16 == 0:
-                current_frames.requires_grad = True
+            with torch.set_grad_enabled(True):
                 reconstructed_frames = model(current_frames, reference_frames)
-                debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
-                debug_print(f"Current frames shape before R1: {current_frames.shape}")
-                r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True, allow_unused=True)[0]
-                if r1_loss is not None:
-                    debug_print(f"r1_loss shape: {r1_loss.shape}")
-                    r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
-                    loss = loss + r1_gamma * 0.5 * r1_loss * 16
-                else:
-                    debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
+                debug_print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
+
+                loss = mse_loss(reconstructed_frames, current_frames)
+
+                # R1 regularization for better training stability  
+                if batch_idx % 16 == 0:
+                    current_frames.requires_grad = True
+                    reconstructed_frames = model(current_frames, reference_frames)
+                    debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
+                    debug_print(f"Current frames shape before R1: {current_frames.shape}")
+                    r1_loss = torch.autograd.grad(outputs=reconstructed_frames.sum(), inputs=current_frames, create_graph=True, allow_unused=True)[0]
+                    if r1_loss is not None:
+                        debug_print(f"r1_loss shape: {r1_loss.shape}")
+                        r1_loss = r1_loss.pow(2).reshape(r1_loss.shape[0], -1).sum(1).mean()
+                        loss = loss + r1_gamma * 0.5 * r1_loss * 16
+                    else:
+                        debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
 
             accelerator.backward(loss)
              # Monitor gradients before optimizer step
