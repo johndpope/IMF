@@ -12,7 +12,12 @@ training:
   ema_decay: 0.999
   style_mixing_prob: 0.9
   r1_gamma: 10
-  gradient_accumulation_steps: 4  # New parameter
+  r1_interval: 16
+  gradient_accumulation_steps: 4
+  lambda_pixel: 10
+  lambda_perceptual: 10
+  lambda_adv: 1
+
 # Dataset parameters
 dataset:
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666"
@@ -28,9 +33,18 @@ logging:
   sample_interval: 1
   sample_size: 8
   output_dir: "./samples"
+
 # Accelerator settings
 accelerator:
   mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
   cpu: false
   num_processes: 1  # Set to more than 1 for multi-GPU training
 
+# Discriminator parameters
+discriminator:
+  ndf: 64  # Number of filters in the first conv layer
+
+# Optimizer parameters
+optimizer:
+  beta1: 0.5
+  beta2: 0.999

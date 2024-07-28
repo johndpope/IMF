@@ -32,14 +32,21 @@ class UpConvResBlock(nn.Module):
         self.feat_res_block2 = FeatResBlock(channels)
 
     def forward(self, x):
+        print(f"UpConvResBlock input shape: {x.shape}")
         out = self.upsample(x)
+        print(f"After upsample: {out.shape}")
         out = self.conv1(out)
         out = self.bn1(out)
         out = self.relu(out)
+        print(f"After conv1, bn1, relu: {out.shape}")
         out = self.conv2(out)
+        print(f"After conv2: {out.shape}")
         out = self.feat_res_block1(out)
+        print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
+        print(f"UpConvResBlock output shape: {out.shape}")
         return out
+
 
 class DownConvResBlock(nn.Module):
     def __init__(self, channels):
@@ -53,13 +60,19 @@ class DownConvResBlock(nn.Module):
         self.feat_res_block2 = FeatResBlock(channels)
 
     def forward(self, x):
+        print(f"DownConvResBlock input shape: {x.shape}")
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+        print(f"After conv1, bn1, relu: {out.shape}")
         out = self.avgpool(out)
+        print(f"After avgpool: {out.shape}")
         out = self.conv2(out)
+        print(f"After conv2: {out.shape}")
         out = self.feat_res_block1(out)
+        print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
+        print(f"DownConvResBlock output shape: {out.shape}")
         return out
 
 
@@ -166,11 +179,18 @@ class StyleConv(nn.Module):
         self.activation = nn.LeakyReLU(0.2, inplace=True)
 
     def forward(self, x, style):
+        print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
         style = self.style_mod(style).unsqueeze(2).unsqueeze(3)
+        print(f"After style modulation: {style.shape}")
         x = x * style
+        print(f"After multiplication: {x.shape}")
         x = self.conv(x)
+        print(f"After conv: {x.shape}")
         x = self.upsample(x)
-        return self.activation(x)
+        print(f"After upsample: {x.shape}")
+        x = self.activation(x)
+        print(f"StyleConv output shape: {x.shape}")
+        return x
 
 
 '''
@@ -501,3 +521,76 @@ class IMFModel(nn.Module):
     @property
     def latent_token_decoder(self):
         return self.imf.latent_token_decoder
+
+
+class SNConv2d(nn.Conv2d):
+    def __init__(self, *args, **kwargs):
+        super(SNConv2d, self).__init__(*args, **kwargs)
+        self.weight = nn.Parameter(torch.nn.utils.spectral_norm(self.weight))
+
+
+'''
+Certainly! I'll implement the PatchDiscriminator class based on the multi-scale discriminator described in the IMF paper's supplementary material. This discriminator uses two different scales for better performance.
+PatchDiscriminator ClassClick to open code
+This implementation of the PatchDiscriminator class follows the architecture described in the supplementary material of the IMF paper. Here are the key features:
+
+Multi-scale: The discriminator operates on two scales. The first scale (scale1) processes the input at its original resolution, while the second scale (scale2) processes a downsampled version of the input.
+Spectral Normalization: We use spectral normalization on all convolutional layers to stabilize training, as indicated by the "SN" in the paper's diagram.
+Architecture: Each scale follows the structure described in the paper:
+
+4x4 convolutions with stride 2
+LeakyReLU activation (α=0.2)
+Instance Normalization (except for the first and last layers)
+Channel progression: 64 -> 128 -> 256 -> 512 -> 1
+
+
+Output: The forward method returns a list containing the outputs from both scales.
+Weight Initialization: A helper function init_weights is provided to initialize the weights of the network, which can be applied using the apply method.
+'''
+class PatchDiscriminator(nn.Module):
+    def __init__(self, input_nc=3, ndf=64):
+        super(PatchDiscriminator, self).__init__()
+        
+        self.scale1 = nn.Sequential(
+            SNConv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1),
+            nn.InstanceNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
+            nn.InstanceNorm2d(ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
+            nn.InstanceNorm2d(ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+        )
+        
+        self.scale2 = nn.Sequential(
+            SNConv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1),
+            nn.InstanceNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
+            nn.InstanceNorm2d(ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
+            nn.InstanceNorm2d(ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNConv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+        )
+
+    def forward(self, x):
+        output1 = self.scale1(x)
+        output2 = self.scale2(F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False))
+        return [output1, output2]
+
+# Helper function to initialize weights
+def init_weights(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
