@@ -11,7 +11,7 @@ from memory_profiler import profile
 import colored_traceback.auto
 
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -136,9 +136,9 @@ class StyleConv2d(nn.Module):
 
 
 
-
+MAXSEQLENGTH = 8 # idk 🤷‍♂️
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, num_heads=8):
+    def __init__(self, feature_dim, motion_dim, num_heads=8,max_seq_length=MAXSEQLENGTH):
         super().__init__()
         self.feature_dim = feature_dim 
         self.motion_dim = motion_dim 
@@ -147,6 +147,10 @@ class ImplicitMotionAlignment(nn.Module):
         self.q_proj = nn.Linear(motion_dim, feature_dim)
         self.k_proj = nn.Linear(motion_dim, feature_dim)
         self.v_proj = nn.Linear(feature_dim, feature_dim)
+
+        # Create positional embeddings - 🤷‍♂️ not sure about this
+        self.p_q = nn.Parameter(torch.randn(1, max_seq_length, feature_dim))
+        self.p_k = nn.Parameter(torch.randn(1, max_seq_length, feature_dim))
 
         self.cross_attention = nn.MultiheadAttention(feature_dim, num_heads)
         self.norm1 = nn.LayerNorm(feature_dim)
@@ -161,53 +165,62 @@ class ImplicitMotionAlignment(nn.Module):
 
     def forward(self, q, k, v):
         debug_print(f"ImplicitMotionAlignment input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
-        
         batch_size, c, h, w = v.shape
+        seq_length = h * w
+        print(f"Input shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        print(f"Batch size: {batch_size}, Channels: {c}, Height: {h}, Width: {w}, Sequence length: {seq_length}")
 
         # Reshape and project inputs
         q = self.q_proj(q.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         k = self.k_proj(k.view(batch_size, self.motion_dim, -1).permute(0, 2, 1))
         v = self.v_proj(v.view(batch_size, self.feature_dim, -1).permute(0, 2, 1))
+        print(f"Projected shapes - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        debug_print(f"After projection - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        # Adjust q and k to match v's sequence length
+        if q.size(1) != v.size(1):
+            q = F.interpolate(q.transpose(1, 2), size=v.size(1), mode='linear', align_corners=False).transpose(1, 2)
+        if k.size(1) != v.size(1):
+            k = F.interpolate(k.transpose(1, 2), size=v.size(1), mode='linear', align_corners=False).transpose(1, 2)
 
-        # Ensure q, k, and v have the same sequence length
-        seq_len = min(q.size(1), k.size(1), v.size(1))
-        q = q[:, :seq_len, :]
-        k = k[:, :seq_len, :]
-        v = v[:, :seq_len, :]
+        # Add positional embeddings
+        max_seq_length = self.p_q.shape[1]
+        print(f"Max sequence length: {max_seq_length}")
+        
+        if v.size(1) <= max_seq_length:
+            p_q = self.p_q[:, :v.size(1), :].expand(batch_size, -1, -1)
+            p_k = self.p_k[:, :v.size(1), :].expand(batch_size, -1, -1)
+            print("Used direct positional embeddings")
+        else:
+            p_q = F.interpolate(self.p_q.transpose(1, 2), size=(v.size(1),), mode='linear', align_corners=False).transpose(1, 2)
+            p_k = F.interpolate(self.p_k.transpose(1, 2), size=(v.size(1),), mode='linear', align_corners=False).transpose(1, 2)
+            p_q = p_q.expand(batch_size, -1, -1)
+            p_k = p_k.expand(batch_size, -1, -1)
+            print("Used interpolated positional embeddings")
 
-        debug_print(f"After sequence length adjustment - q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        q = q + p_q
+        k = k + p_k
+
+        print(f"After adding positional embeddings - q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # Perform cross-attention
         attn_output, _ = self.cross_attention(q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1))
         attn_output = attn_output.transpose(0, 1)
-        debug_print(f"After cross-attention: {attn_output.shape}")
+        print(f"Attention output shape: {attn_output.shape}")
         
-        x = self.norm1(q + attn_output)
+        x = self.norm1(attn_output)
         x = self.norm2(x + self.ffn(x))
-        debug_print(f"After FFN: {x.shape}")
+        print(f"Normalized and feed-forward shapes: {x.shape}")
 
         # Reshape output to match original dimensions
-        x = x.transpose(1, 2).contiguous()
-        debug_print(f"After transpose: {x.shape}")
-        debug_print(f"Attempting to reshape to: {(batch_size, self.feature_dim, h, w)}")
+        x = x.transpose(1, 2).contiguous().view(batch_size, self.feature_dim, h, w)
+        print(f"Final output shape: {x.shape}")
         
-        # Check if the reshape is valid
-        if x.numel() != batch_size * self.feature_dim * h * w:
-            debug_print(f"WARNING: Cannot reshape tensor of size {x.numel()} into shape {(batch_size, self.feature_dim, h, w)}")
-            # Adjust the output size to match the input size
-            x = F.adaptive_avg_pool2d(x.view(batch_size, self.feature_dim, -1, 1), (h, w))
-        else:
-            x = x.view(batch_size, self.feature_dim, h, w)
-        
-        debug_print(f"Final output shape: {x.shape}")
-
         return x
 
 
+
 class IMF(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
+    def __init__(self, latent_dim=32, base_channels=64, num_layers=4,input_size=(512, 512)):
         super().__init__()
         self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
@@ -217,12 +230,28 @@ class IMF(nn.Module):
         self.feature_dims = [64, 256, 512, 1024]
         self.motion_dims = [base_channels // (2 ** i) for i in range(num_layers)]
         
+        # Calculate max_seq_length for each level
+        self.max_seq_lengths = self._calculate_max_seq_lengths(input_size, num_layers)
+        
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
             motion_dim = self.motion_dims[i]
-            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim)
+            h, w = input_size[0] // (2**(i+2)), input_size[1] // (2**(i+2))  # Adjust for each layer
+            max_seq_length = h * w
+            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim, max_seq_length=max_seq_length)
             self.implicit_motion_alignment.append(alignment_module)
+
+
+    # for positional embeddings
+    def _calculate_max_seq_lengths(self, input_size, num_layers):
+        max_seq_lengths = []
+        h, w = input_size
+        for _ in range(num_layers):
+            h = h // 2
+            w = w // 2
+            max_seq_lengths.append(min(h * w, MAXSEQLENGTH))  # Cap at 1024
+        return max_seq_lengths
 
     def forward(self, x_current, x_reference):
         debug_print(f"IMF input shapes - x_current: {x_current.shape}, x_reference: {x_reference.shape}")
