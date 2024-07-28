@@ -261,7 +261,7 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
                     reference_frames.requires_grad_(False)
             accelerator.backward(loss)
              # Monitor gradients before optimizer step
-            monitor_gradients(model, epoch, batch_idx)
+            # monitor_gradients(model, epoch, batch_idx)
             #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
 
@@ -320,9 +320,11 @@ def train(config, model, train_dataloader, accelerator, ema_decay=0.999, style_m
 def hook_fn(name):
     def hook(grad):
         if torch.isnan(grad).any():
-            print(f"🔥 NaN gradient detected in {name}")
+            # print(f"🔥 NaN gradient detected in {name}")
+            return torch.zeros_like(grad)  # Replace NaN with zero
         elif torch.isinf(grad).any():
-            print(f"🔥 Inf gradient detected in {name}")
+            # print(f"🔥 Inf gradient detected in {name}")
+            return torch.clamp(grad, -1e6, 1e6)  # Clamp infinite values
         #else:
             # You can add more conditions or logging here
          #  grad_norm = grad.norm().item()
