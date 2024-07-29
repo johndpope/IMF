@@ -233,7 +233,7 @@ class LatentTokenDecoder(nn.Module):
         ])
 
     def forward(self, t):
-        print(f"LatentTokenDecoder input shape: {t.shape}")
+        print(f"🎑 LatentTokenDecoder input shape: {t.shape}")
         x = self.const.repeat(t.shape[0], 1, 1, 1)
         print(f"After const: {x.shape}")
         features = []
@@ -479,34 +479,21 @@ class IMF(nn.Module):
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
-           # Define feature dimensions for each layer
-        self.feature_dims = [64, 128, 256, 512, 512]
+        # Define feature dimensions for each layer
+        self.feature_dims = [64, 128, 256, 512]
         
         # Create ImplicitMotionAlignment modules for each layer
-        self.implicit_motion_alignment = nn.ModuleList()
+        self.implicit_motion_alignment = nn.ModuleList([
+            ImplicitMotionAlignment(
+                feature_dim=self.feature_dims[i],
+                motion_dim=256 if i == 3 else 512
+            ) for i in range(num_layers)
+        ])
         
-        for i in range(num_layers):
-            # Determine the feature dimension for this layer
-            feature_dim = self.feature_dims[i]
-            
-            # Determine the motion dimension for this layer
-            # The first layer uses 256 channels, others use 512
-            if i == 0:
-                motion_dim = 256
-            else:
-                motion_dim = 512
-            
-            # Create the ImplicitMotionAlignment module for this layer
-            alignment_module = ImplicitMotionAlignment(
-                feature_dim=feature_dim,
-                motion_dim=motion_dim
-            )
-            
-            # Add the module to the ModuleList
-            self.implicit_motion_alignment.append(alignment_module)
+        
         
         # Print some information about the created modules
-        print(f"Created {len(self.implicit_motion_alignment)} ImplicitMotionAlignment modules:")
+        print(f"🎍 Created {len(self.implicit_motion_alignment)} ImplicitMotionAlignment modules:")
         for i, module in enumerate(self.implicit_motion_alignment):
             print(f"  Layer {i}: feature_dim={self.feature_dims[i]}, motion_dim={256 if i == 0 else 512}")
 
