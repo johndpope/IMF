@@ -355,108 +355,156 @@ class ImplicitMotionAlignment(nn.Module):
         self.motion_dim = motion_dim
         self.feature_dim = feature_dim
         self.num_heads = num_heads
-        self.scale = motion_dim ** -0.5
+        self.scale = (motion_dim // num_heads) ** -0.5
         
-        # Projections for Q, K, V
-        self.to_q = nn.Linear(motion_dim, motion_dim)
-        self.to_k = nn.Linear(motion_dim, motion_dim)
-        self.to_v = nn.Linear(feature_dim, motion_dim)
+        # Positional embeddings for motion features
+        self.pos_embedding = PositionalEncoding2D(motion_dim)
         
-        # Output projection
-        self.to_out = nn.Linear(motion_dim, feature_dim)
+        # Cross-attention
+        self.cross_attention = CrossAttention(motion_dim, feature_dim, num_heads)
         
-        # Positional embeddings
-        self.q_pos_embedding = PositionalEncoding2D(motion_dim)
-        self.k_pos_embedding = PositionalEncoding2D(motion_dim)
-        
-        # Attention
-        self.attend = nn.Softmax(dim=-1)
-        
-        # Transformer layers
+        # Transformer layers for refinement
         self.transformer_layers = nn.ModuleList([
-            TransformerBlock(motion_dim, num_heads) for _ in range(num_layers)
+            TransformerBlock(feature_dim, num_heads) for _ in range(num_layers)
         ])
         
-    def forward(self, queries, keys, values):
+    def forward(self, m_c, m_r, f_r):
         print(f"🔍 ImplicitMotionAlignment input shapes:")
-        print(f"   queries: {queries.shape}")
-        print(f"   keys: {keys.shape}")
-        print(f"   values: {values.shape}")
+        print(f"   m_c (Q): {m_c.shape}")
+        print(f"   m_r (K): {m_r.shape}")
+        print(f"   f_r (V): {f_r.shape}")
 
-        b, c, h, w = queries.shape
+        b_c, c_c, h_c, w_c = m_c.shape
+        b_r, c_r, h_r, w_r = m_r.shape
         
-        # (b, dim_qk, h, w) -> (b, h*w, dim_qk)
-        q = rearrange(queries, 'b c h w -> b (h w) c')
-        k = rearrange(keys, 'b c h w -> b (h w) c')
-        v = rearrange(values, 'b c h w -> b (h w) c')
+        # Flatten spatial dimensions
+        q = rearrange(m_c, 'b c h w -> b (h w) c')
+        k = rearrange(m_r, 'b c h w -> b (h w) c')
+        v = rearrange(f_r, 'b c h w -> b (h w) c')
         
-        print(f"🔄 After rearrange:")
+        print(f"🔄 After flatten:")
         print(f"   q: {q.shape}")
         print(f"   k: {k.shape}")
         print(f"   v: {v.shape}")
         
-        # Add positional embeddings
-        q = q + self.q_pos_embedding(h, w, c)
-        k = k + self.k_pos_embedding(h, w, c)
+        # Add positional embeddings to queries and keys
+        q = q + self.pos_embedding(h_c, w_c, self.motion_dim, q.device)
+        k = k + self.pos_embedding(h_r, w_r, self.motion_dim, k.device)
         
         print(f"➕ After adding positional embeddings:")
         print(f"   q: {q.shape}")
         print(f"   k: {k.shape}")
         
-        # Linear projections
-        q = self.to_q(q)
-        k = self.to_k(k)
-        v = self.to_v(v)
+        # Apply cross-attention
+        aligned_values = self.cross_attention(q, k, v)
+        print(f"💫 After cross-attention: {aligned_values.shape}")
         
-        print(f"🔠 After linear projections:")
-        print(f"   q: {q.shape}")
-        print(f"   k: {k.shape}")
-        print(f"   v: {v.shape}")
-        
-        # Scaled dot-product attention
-        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        print(f"🎯 Attention shape before softmax: {dots.shape}")
-        
-        attn = self.attend(dots)
-        print(f"🧠 Attention shape after softmax: {attn.shape}")
-        
-        # Compute aligned values
-        out = torch.matmul(attn, v)
-        print(f"💫 Shape after attention application: {out.shape}")
-        
-        # Apply transformer layers
+        # Apply transformer layers for refinement
         for i, layer in enumerate(self.transformer_layers):
-            out = layer(out)
-            print(f"🔄 After transformer layer {i+1}: {out.shape}")
-        
-        # Output projection
-        out = self.to_out(out)
-        print(f"🔳 After output projection: {out.shape}")
+            aligned_values = layer(aligned_values)
+            print(f"🔄 After transformer layer {i+1}: {aligned_values.shape}")
         
         # Reshape back to spatial dimensions
-        out = rearrange(out, 'b (h w) c -> b c h w', h=h, w=w)
+        out = rearrange(aligned_values, 'b (h w) c -> b c h w', h=h_c, w=w_c)
         print(f"🔲 Final output shape: {out.shape}")
         
         return out
-
+'''
+Positional Embeddings
+Additive Nature:
+Positional embeddings are typically added to the feature vectors. This means they don't directly scale or multiply the original values, but rather provide additional information alongside them.
+Preservation of Original Information:
+The original values in the vector are still present and important. The positional embedding doesn't override this information, it complements it.
+Relative Importance:
+The scale of the positional embeddings relative to the feature values is important. If the embeddings are too small, the position information might get lost. If they're too large, they might overshadow the actual feature information.
+Learned Interpretation:
+The neural network learns to interpret both the original values and the positional information together. It can learn to give more or less weight to position depending on the task.
+'''
 class PositionalEncoding2D(nn.Module):
     def __init__(self, d_model, max_len=1000):
         super().__init__()
         self.d_model = d_model
         
-    def forward(self, h, w, c):
+    def forward(self, h, w, c, device):
         print(f"📐 PositionalEncoding2D input dimensions: h={h}, w={w}, c={c}")
         
-        pe = torch.zeros(1, h * w, c)
-        position = torch.arange(0, h * w).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(0, c, 2).float() * -(math.log(10000.0) / c))
+        pe = torch.zeros(1, h * w, c, device=device)
+        position = torch.arange(0, h * w, device=device).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, c, 2, device=device).float() * -(math.log(10000.0) / c))
         
         pe[0, :, 0::2] = torch.sin(position * div_term)
         pe[0, :, 1::2] = torch.cos(position * div_term)
         
-        print(f"📍 Final positional encoding shape: {pe.shape}")
+        print(f"📍 Positional encoding shape: {pe.shape}")
         
         return pe
+
+class CrossAttention(nn.Module):
+    def __init__(self, motion_dim, feature_dim, num_heads):
+        super().__init__()
+        self.num_heads = num_heads
+        self.motion_dim = motion_dim
+        self.feature_dim = feature_dim
+        self.scale = (motion_dim // num_heads) ** -0.5
+        
+        self.to_q = nn.Linear(motion_dim, motion_dim)
+        self.to_k = nn.Linear(motion_dim, motion_dim)
+        self.to_v = nn.Linear(feature_dim, feature_dim)
+        self.to_out = nn.Linear(feature_dim, feature_dim)
+        
+    def forward(self, q, k, v):
+        print(f"\n🔍 CrossAttention Input Shapes:")
+        print(f"   q: {q.shape}")
+        print(f"   k: {k.shape}")
+        print(f"   v: {v.shape}")
+
+        b, n, _ = q.shape
+        h = self.num_heads
+        
+        print(f"📊 Reshaping for multi-head attention:")
+        print(f"   Batch size (b): {b}")
+        print(f"   Sequence length (n): {n}")
+        print(f"   Number of heads (h): {h}")
+        print(f"   Head dimension: {self.motion_dim // h}")
+
+        q = self.to_q(q)
+        k = self.to_k(k)
+        v = self.to_v(v)
+
+        print(f"\n🔢 After linear projections:")
+        print(f"   q: {q.shape}")
+        print(f"   k: {k.shape}")
+        print(f"   v: {v.shape}")
+
+        q = q.view(b, n, h, -1).transpose(1, 2)
+        k = k.view(b, n, h, -1).transpose(1, 2)
+        v = v.view(b, n, h, -1).transpose(1, 2)
+
+        print(f"\n🔀 After reshaping and transposing:")
+        print(f"   q: {q.shape}")
+        print(f"   k: {k.shape}")
+        print(f"   v: {v.shape}")
+        
+        dots = torch.matmul(q, k.transpose(-1, -2))
+        print(f"\n🔢 Attention scores shape (before scaling): {dots.shape}")
+        
+        dots = dots * self.scale
+        print(f"🔢 Scaled attention scores shape: {dots.shape}")
+        print(f"🔢 Scale factor: {self.scale}")
+        
+        attn = dots.softmax(dim=-1)
+        print(f"🧠 Attention weights shape (after softmax): {attn.shape}")
+        
+        out = torch.matmul(attn, v)
+        print(f"💡 Output shape after applying attention: {out.shape}")
+        
+        out = out.transpose(1, 2).contiguous().view(b, n, -1)
+        print(f"🔄 Output shape after reshaping: {out.shape}")
+        
+        out = self.to_out(out)
+        print(f"🏁 Final output shape: {out.shape}")
+        
+        return out
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads):
