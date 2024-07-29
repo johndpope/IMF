@@ -57,19 +57,19 @@ class DownConvResBlock(nn.Module):
         self.feat_res_block2 = FeatResBlock(out_channels)
 
     def forward(self, x):
-        # print(f"DownConvResBlock input shape: {x.shape}")
+        debug_print(f"DownConvResBlock input shape: {x.shape}")
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        # print(f"After conv1, bn1, relu: {out.shape}")
+        debug_print(f"After conv1, bn1, relu: {out.shape}")
         out = self.avgpool(out)
-        # print(f"After avgpool: {out.shape}")
+        debug_print(f"After avgpool: {out.shape}")
         out = self.conv2(out)
-        # print(f"After conv2: {out.shape}")
+        debug_print(f"After conv2: {out.shape}")
         out = self.feat_res_block1(out)
-        # print(f"After feat_res_block1: {out.shape}")
+        debug_print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
-        # print(f"DownConvResBlock output shape: {out.shape}")
+        debug_print(f"DownConvResBlock output shape: {out.shape}")
         return out
 
 
@@ -106,16 +106,16 @@ class DenseFeatureEncoder(nn.Module):
         ])
 
     def forward(self, x):
-        print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
+        debug_print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
         features = []
         x = self.initial_conv(x)
-        print(f"    After initial conv: {x.shape}")
+        debug_print(f"    After initial conv: {x.shape}")
         for i, block in enumerate(self.down_blocks):
             x = block(x)
-            print(f"    After down_block {i+1}: {x.shape}")
+            debug_print(f"    After down_block {i+1}: {x.shape}")
             if i >= 1:  # Start collecting features from the second block
                 features.append(x)
-        print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
+        debug_print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
 
 
@@ -152,27 +152,27 @@ class LatentTokenEncoder(nn.Module):
         )
 
     def forward(self, x):
-        print(f"💳 LatentTokenEncoder input shape: {x.shape}")
+        debug_print(f"💳 LatentTokenEncoder input shape: {x.shape}")
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        print(f"    After first conv, bn, relu: {x.shape}")
+        debug_print(f"    After first conv, bn, relu: {x.shape}")
         x = self.resblock1(x)
-        print(f"    After resblock1: {x.shape}")
+        debug_print(f"    After resblock1: {x.shape}")
         x = self.resblock2(x)
-        print(f"    After resblock2: {x.shape}")
+        debug_print(f"    After resblock2: {x.shape}")
         x = self.resblock3(x)
-        print(f"    After resblock3: {x.shape}")
+        debug_print(f"    After resblock3: {x.shape}")
         x = self.resblock4(x)
-        print(f"    After resblock4: {x.shape}")
+        debug_print(f"    After resblock4: {x.shape}")
         x = self.equal_conv(x)
-        print(f"    After equal_conv: {x.shape}")
+        debug_print(f"    After equal_conv: {x.shape}")
         x = self.adaptive_pool(x)
-        print(f"    After adaptive_pool: {x.shape}")
+        debug_print(f"    After adaptive_pool: {x.shape}")
         x = x.view(x.size(0), -1)
-        print(f"    After flatten: {x.shape}")
+        debug_print(f"    After flatten: {x.shape}")
         t = self.fc_layers(x)
-        print(f"    1xdm=32 LatentTokenEncoder output shape: {t.shape}")
+        debug_print(f"    1xdm=32 LatentTokenEncoder output shape: {t.shape}")
         return t
 
     
@@ -185,17 +185,17 @@ class StyleConv(nn.Module):
         self.activation = nn.LeakyReLU(0.2, inplace=True)
 
     def forward(self, x, style):
-        # print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
+        debug_print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
         style = self.style_mod(style).unsqueeze(2).unsqueeze(3)
-        # print(f"After style modulation: {style.shape}")
+        debug_print(f"After style modulation: {style.shape}")
         x = x * style
-        # print(f"After multiplication: {x.shape}")
+        debug_print(f"After multiplication: {x.shape}")
         x = self.conv(x)
-        # print(f"After conv: {x.shape}")
+        debug_print(f"After conv: {x.shape}")
         x = self.upsample(x)
-        # print(f"After upsample: {x.shape}")
+        debug_print(f"After upsample: {x.shape}")
         x = self.activation(x)
-        # print(f"StyleConv output shape: {x.shape}")
+        debug_print(f"StyleConv output shape: {x.shape}")
         return x
 
 
@@ -248,16 +248,16 @@ class LatentTokenDecoder(nn.Module):
         ])
 
     def forward(self, t):
-        print(f"🎑 LatentTokenDecoder input shape: {t.shape}")
+        debug_print(f"🎑 LatentTokenDecoder input shape: {t.shape}")
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        print(f"    After const: {x.shape}")
+        debug_print(f"    After const: {x.shape}")
         features = []
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
-            print(f"    After style_conv {i+1}: {x.shape}")
+            debug_print(f"    After style_conv {i+1}: {x.shape}")
             if i in [3, 6, 9, 12]:
                 features.append(x)
-        print(f"    LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
+        debug_print(f"    LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
 
@@ -279,7 +279,7 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x):
         def custom_forward(x):
-            print("💸 TransformerBlock")
+            debug_print("💸 TransformerBlock")
             # Apply layer normalization before attention
             norm_x = self.layer_norm1(x)
             
@@ -362,44 +362,44 @@ class ImplicitMotionAlignment(nn.Module):
         b_r, c_r, h_r, w_r = keys.shape
         b, c_f, h_f, w_f = values.shape
         
-        print("queries:",queries.shape) # [1, 256, 64, 64]) - B,C,H,W (64x64 resolution)
+        debug_print("queries:",queries.shape) # [1, 256, 64, 64]) - B,C,H,W (64x64 resolution)
         # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
         q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
-        print("q:",q.shape)
+        debug_print("q:",q.shape)
 
         # Generate positional embeddings
         q_pos_embedding = positional_embedding_2d(b, h_m, w_m, c_m).to(queries.device)
         k_pos_embedding = positional_embedding_2d(b_r, h_r, w_r, c_r).to(keys.device)
-        print("q_pos_embedding:",q_pos_embedding.shape) # [1, 4096, 256]
+        debug_print("q_pos_embedding:",q_pos_embedding.shape) # [1, 4096, 256]
         q = q + q_pos_embedding  # (b, dim_spatial, dim_qk)
 
         # Flatten and transpose keys, then add positional embeddings
         k = torch.flatten(keys, start_dim=2).transpose(-1, -2)
-        print(f"Shape of k after flattening and transposing: {k.shape}") # [1, 4096, 256]
+        debug_print(f"Shape of k after flattening and transposing: {k.shape}") # [1, 4096, 256]
         k = k + k_pos_embedding  # (b, dim_spatial, dim_qk)
 
         # Flatten and transpose values
-        print(f"values: {values.shape}") # values: torch.Size([1, 64, 128, 128]) <- why is this 128 x128
+        debug_print(f"values: {values.shape}") # values: torch.Size([1, 64, 128, 128]) <- why is this 128 x128
         v = torch.flatten(values, start_dim=2).transpose(-1, -2)
-        print(f"(b, dim_v, h, w) -> (b, dim_v, dim_spatial) -> (b, dim_spatial, dim_v): {v.shape}")# [1, 16384, 64]
+        debug_print(f"(b, dim_v, h, w) -> (b, dim_v, dim_spatial) -> (b, dim_spatial, dim_v): {v.shape}")# [1, 16384, 64]
         # Compute attention scores (dots)
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        print(f"Shape of dots after matmul and scaling: {dots.shape}")
+        debug_print(f"Shape of dots after matmul and scaling: {dots.shape}")
 
         # Apply softmax to get attention weights
         attn = self.attend(dots)  # (b, dim_spatial, dim_spatial)
-        print(f"Shape of attn after softmax: {attn.shape}")
+        debug_print(f"Shape of attn after softmax: {attn.shape}")
 
 
         # Compute the output by multiplying attention weights with values
         # (b, dim_spatial, dim_spatial) * (b, dim_spatial, dim_v) -> (b, dim_spatial, dim_v)
         out = torch.matmul(attn, v)
-        print(f"Shape of out after matmul with attention weights: {out.shape}")
+        debug_print(f"Shape of out after matmul with attention weights: {out.shape}")
         return out
 
 
 '''
-print("k_pos_embedding:",k_pos_embedding.shape)
+debug_print("k_pos_embedding:",k_pos_embedding.shape)
 Positional Embeddings
 Additive Nature:
 Positional embeddings are typically added to the feature vectors. This means they don't directly scale or multiply the original values, but rather provide additional information alongside them.
@@ -420,23 +420,23 @@ def positional_embedding_2d(b, h, w, dim):
     :param dim: embedding dimension
     :return: positional embeddings of shape (b, h*w, dim)
     """
-    print(f"\n🔍 Positional Embedding 2D Diagnostics:")
-    print(f"Input parameters: b={b}, h={h}, w={w}, dim={dim}")
+    debug_print(f"\n🔍 Positional Embedding 2D Diagnostics:")
+    debug_print(f"Input parameters: b={b}, h={h}, w={w}, dim={dim}")
 
     y_embed = torch.arange(h, dtype=torch.float32).unsqueeze(1).expand(h, w)
     x_embed = torch.arange(w, dtype=torch.float32).unsqueeze(0).expand(h, w)
 
-    print(f"Initial y_embed shape: {y_embed.shape}")
-    print(f"Initial x_embed shape: {x_embed.shape}")
+    debug_print(f"Initial y_embed shape: {y_embed.shape}")
+    debug_print(f"Initial x_embed shape: {x_embed.shape}")
 
     y_embed = y_embed / (h - 1) * 2 - 1
     x_embed = x_embed / (w - 1) * 2 - 1
 
-    print(f"Normalized y_embed range: [{y_embed.min():.2f}, {y_embed.max():.2f}]")
-    print(f"Normalized x_embed range: [{x_embed.min():.2f}, {x_embed.max():.2f}]")
+    debug_print(f"Normalized y_embed range: [{y_embed.min():.2f}, {y_embed.max():.2f}]")
+    debug_print(f"Normalized x_embed range: [{x_embed.min():.2f}, {x_embed.max():.2f}]")
 
     pos_embed = torch.stack([x_embed, y_embed], dim=-1)  # (h, w, 2)
-    print(f"Stacked pos_embed shape: {pos_embed.shape}")
+    debug_print(f"Stacked pos_embed shape: {pos_embed.shape}")
 
     def create_sinusoidal_embedding(x, dim):
         half_dim = dim // 2
@@ -449,8 +449,8 @@ def positional_embedding_2d(b, h, w, dim):
         return emb
 
     pos_embed = create_sinusoidal_embedding(pos_embed, dim)  # (h, w, 2, dim)
-    print(f"After sinusoidal embedding, shape: {pos_embed.shape}")
-    print(f"Sinusoidal embedding range: [{pos_embed.min():.2f}, {pos_embed.max():.2f}]")
+    debug_print(f"After sinusoidal embedding, shape: {pos_embed.shape}")
+    debug_print(f"Sinusoidal embedding range: [{pos_embed.min():.2f}, {pos_embed.max():.2f}]")
 
     # Reshape to (h*w, dim) by combining the x and y embeddings
     pos_embed = pos_embed.view(h * w, 2 * dim)
@@ -460,7 +460,7 @@ def positional_embedding_2d(b, h, w, dim):
         pos_embed = pos_embed[:, :dim]
 
     pos_embed = pos_embed.unsqueeze(0).expand(b, -1, -1)  # (b, h*w, dim)
-    print(f"Final pos_embed shape: {pos_embed.shape}")
+    debug_print(f"Final pos_embed shape: {pos_embed.shape}")
 
     return pos_embed
 
@@ -530,7 +530,7 @@ class FrameDecoder(nn.Module):
         )
 
     def forward(self, features):
-        print(f"FrameDecoder input shapes: {[f.shape for f in features]}")
+        debug_print(f"FrameDecoder input shapes: {[f.shape for f in features]}")
 
         x = features[-1]  # Start with the smallest feature map (512x8x8)
         
@@ -541,7 +541,7 @@ class FrameDecoder(nn.Module):
                 x = torch.cat([x, feat], dim=1)
         
         x = self.final_conv(x)
-        print(f"FrameDecoder output shape: {x.shape}")
+        debug_print(f"FrameDecoder output shape: {x.shape}")
 
         return x
 
@@ -575,28 +575,28 @@ class ResBlock(nn.Module):
         self.out_channels = out_channels
 
     def forward(self, x):
-        # print(f"ResBlock input shape: {x.shape}")
-        # print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+        debug_print(f"ResBlock input shape: {x.shape}")
+        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
 
         residual = self.shortcut(x)
-        # print(f"After shortcut: {residual.shape}")
+        debug_print(f"After shortcut: {residual.shape}")
         
         out = self.conv1(x)
-        # print(f"After conv1: {out.shape}")
+        debug_print(f"After conv1: {out.shape}")
         out = self.bn1(out)
         out = self.relu1(out)
-        # print(f"After bn1 and relu1: {out.shape}")
+        debug_print(f"After bn1 and relu1: {out.shape}")
         
         out = self.conv2(out)
-        # print(f"After conv2: {out.shape}")
+        debug_print(f"After conv2: {out.shape}")
         out = self.bn2(out)
-        # print(f"After bn2: {out.shape}")
+        debug_print(f"After bn2: {out.shape}")
         
         out += residual
-        # print(f"After adding residual: {out.shape}")
+        debug_print(f"After adding residual: {out.shape}")
         
         out = self.relu2(out)
-        # print(f"ResBlock output shape: {out.shape}")
+        debug_print(f"ResBlock output shape: {out.shape}")
         
         return out
 
@@ -659,10 +659,10 @@ class IMFModel(nn.Module):
         # Get the number of layers we're working with
         num_layers = len(self.implicit_motion_alignment)
 
-        print(f"🎣 IMF - Number of layers: {num_layers}")
-        print(f"f_r shapes: {[f.shape for f in f_r]}")
-        print(f"m_r shapes: {[m.shape for m in m_r]}")
-        print(f"m_c shapes: {[m.shape for m in m_c]}")
+        debug_print(f"🎣 IMF - Number of layers: {num_layers}")
+        debug_print(f"f_r shapes: {[f.shape for f in f_r]}")
+        debug_print(f"m_r shapes: {[m.shape for m in m_r]}")
+        debug_print(f"m_c shapes: {[m.shape for m in m_c]}")
 
         # Iterate through each layer
         for i in range(num_layers):
@@ -672,10 +672,10 @@ class IMFModel(nn.Module):
             m_c_i = m_c[i]
             align_layer = self.implicit_motion_alignment[i]
             
-            print(f"\nProcessing layer {i+1}:")
-            print(f"  f_r_i shape: {f_r_i.shape}")
-            print(f"  m_r_i shape: {m_r_i.shape}")
-            print(f"  m_c_i shape: {m_c_i.shape}")
+            debug_print(f"\nProcessing layer {i+1}:")
+            debug_print(f"  f_r_i shape: {f_r_i.shape}")
+            debug_print(f"  m_r_i shape: {m_r_i.shape}")
+            debug_print(f"  m_c_i shape: {m_c_i.shape}")
             
             # Perform the alignment
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
@@ -683,11 +683,11 @@ class IMFModel(nn.Module):
             # Add the aligned feature to our list
             aligned_features.append(aligned_feature)
             
-            print(f"  Aligned feature shape: {aligned_feature.shape}")
+            debug_print(f"  Aligned feature shape: {aligned_feature.shape}")
 
-        print("\nFinal aligned features shapes:")
+        debug_print("\nFinal aligned features shapes:")
         for i, feat in enumerate(aligned_features):
-            print(f"  Layer {i+1}: {feat.shape}")
+            debug_print(f"  Layer {i+1}: {feat.shape}")
         
         # Reshape aligned features back to 2D spatial form
         reshaped_features = []
@@ -697,9 +697,9 @@ class IMFModel(nn.Module):
             reshaped_feat = feat.transpose(1, 2).view(b, c, h, w)
             reshaped_features.append(reshaped_feat)
 
-        print("Reshaped features shapes:")
+        debug_print("Reshaped features shapes:")
         for i, feat in enumerate(reshaped_features):
-            print(f"  Layer {i+1}: {feat.shape}")
+            debug_print(f"  Layer {i+1}: {feat.shape}")
 
         # Frame decoding
         reconstructed_frame = self.frame_decoder(reshaped_features)
@@ -779,24 +779,24 @@ class PatchDiscriminator(nn.Module):
         )
 
     def forward(self, x):
-        print(f"PatchDiscriminator input shape: {x.shape}")
+        debug_print(f"PatchDiscriminator input shape: {x.shape}")
 
         # Scale 1
         output1 = x
         for i, layer in enumerate(self.scale1):
             output1 = layer(output1)
-            print(f"Scale 1 - Layer {i} output shape: {output1.shape}")
+            debug_print(f"Scale 1 - Layer {i} output shape: {output1.shape}")
 
         # Scale 2
         x_downsampled = F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False)
-        print(f"Scale 2 - Downsampled input shape: {x_downsampled.shape}")
+        debug_print(f"Scale 2 - Downsampled input shape: {x_downsampled.shape}")
         
         output2 = x_downsampled
         for i, layer in enumerate(self.scale2):
             output2 = layer(output2)
-            print(f"Scale 2 - Layer {i} output shape: {output2.shape}")
+            debug_print(f"Scale 2 - Layer {i} output shape: {output2.shape}")
 
-        print(f"PatchDiscriminator final output shapes: {output1.shape}, {output2.shape}")
+        debug_print(f"PatchDiscriminator final output shapes: {output1.shape}, {output2.shape}")
         return [output1, output2]
 
 # Helper function to initialize weights

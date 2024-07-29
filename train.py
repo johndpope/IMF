@@ -73,8 +73,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_d = optim.Adam(discriminator.parameters(), lr=config['training']['learning_rate'], 
                              betas=(config['optimizer']['beta1'], config['optimizer']['beta2']))
 
-    model,  optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
-        model,  optimizer_g, optimizer_d, train_dataloader
+    model,  discriminator,optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
+        model, discriminator, optimizer_g, optimizer_d, train_dataloader
     )
 
     vgg_loss = VGGLoss().to(accelerator.device)
@@ -181,7 +181,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 def main():
     config = load_config('config.yaml')
     torch.cuda.empty_cache()
-    # wandb.init(project='IMF', config=config)
+    wandb.init(project='IMF', config=config)
 
     accelerator = Accelerator(
         mixed_precision=config['accelerator']['mixed_precision'],
