@@ -344,6 +344,11 @@ import torch.nn as nn
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
+import torch
+import torch.nn as nn
+from einops import rearrange
+import math
+
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, motion_dim, feature_dim, num_heads=8, num_layers=4):
         super(ImplicitMotionAlignment, self).__init__()
@@ -391,8 +396,8 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"   v: {v.shape}")
         
         # Add positional embeddings
-        q = q + self.q_pos_embedding(h, w)
-        k = k + self.k_pos_embedding(h, w)
+        q = q + self.q_pos_embedding(h, w, c)
+        k = k + self.k_pos_embedding(h, w, c)
         
         print(f"➕ After adding positional embeddings:")
         print(f"   q: {q.shape}")
@@ -439,12 +444,12 @@ class PositionalEncoding2D(nn.Module):
         super().__init__()
         self.d_model = d_model
         
-    def forward(self, h, w):
-        print(f"📐 PositionalEncoding2D input dimensions: h={h}, w={w}")
+    def forward(self, h, w, c):
+        print(f"📐 PositionalEncoding2D input dimensions: h={h}, w={w}, c={c}")
         
-        pe = torch.zeros(1, h * w, self.d_model)
-        position = torch.arange(0, h * w).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, self.d_model, 2) * -(math.log(10000.0) / self.d_model))
+        pe = torch.zeros(1, h * w, c)
+        position = torch.arange(0, h * w).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, c, 2).float() * -(math.log(10000.0) / c))
         
         pe[0, :, 0::2] = torch.sin(position * div_term)
         pe[0, :, 1::2] = torch.cos(position * div_term)
@@ -483,8 +488,6 @@ class TransformerBlock(nn.Module):
         print(f"🔻 TransformerBlock output shape: {x.shape}")
         
         return x
-
-
 
 
 '''
