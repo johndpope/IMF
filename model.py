@@ -11,6 +11,8 @@ from memory_profiler import profile
 import colored_traceback.auto
 from torch.utils.checkpoint import checkpoint
 from performer_pytorch import SelfAttention
+import math
+
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -246,40 +248,66 @@ class LatentTokenDecoder(nn.Module):
         print(f"LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
-import math
 
 class CrossAttention(nn.Module):
     def __init__(self, query_dim, key_dim, value_dim, num_heads, dropout=0.1):
         super(CrossAttention, self).__init__()
+        self.num_heads = num_heads
+        self.query_dim = query_dim
+        self.key_dim = key_dim
+        self.value_dim = value_dim
+        self.head_dim = query_dim // num_heads
+        assert self.head_dim * num_heads == query_dim, "query_dim must be divisible by num_heads"
+
         self.query_linear = nn.Linear(query_dim, query_dim)
         self.key_linear = nn.Linear(key_dim, query_dim)
-        self.value_linear = nn.Linear(value_dim, value_dim)
+        self.value_linear = nn.Linear(value_dim, query_dim)
+        self.output_linear = nn.Linear(query_dim, value_dim)
         self.dropout = nn.Dropout(dropout)
-        self.num_heads = num_heads
 
     def forward(self, query, key, value):
-        # Compute attention scores
+        print(f"🍕 Input query shape: {query.shape}")
+        print(f"Input key shape: {key.shape}")
+        print(f"Input value shape: {value.shape}")
+
+        batch_size = query.size(0)
+
+        # Linear projections
         query = self.query_linear(query)
         key = self.key_linear(key)
         value = self.value_linear(value)
 
+        print(f"Query shape after linear projection: {query.shape}")
+        print(f"Key shape after linear projection: {key.shape}")
+        print(f"Value shape after linear projection: {value.shape}")
+
         # Split into heads
-        query = query.view(-1, query.size(-1), self.num_heads, query.size(-2)).transpose(1, 2)
-        key = key.view(-1, key.size(-1), self.num_heads, key.size(-2)).transpose(1, 2)
-        value = value.view(-1, value.size(-1), self.num_heads, value.size(-2)).transpose(1, 2)
+        query = query.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        key = key.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+        value = value.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
+
+        print(f"Query shape after splitting into heads: {query.shape}")
+        print(f"Key shape after splitting into heads: {key.shape}")
+        print(f"Value shape after splitting into heads: {value.shape}")
 
         # Compute attention scores
-        attention_scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(key.size(-1))
-
-        # Apply attention
+        attention_scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(self.head_dim)
         attention_weights = F.softmax(attention_scores, dim=-1)
         attention_weights = self.dropout(attention_weights)
+
+        # Apply attention to values
         context = torch.matmul(attention_weights, value)
 
         # Concatenate heads
-        context = context.transpose(1, 2).contiguous().view(-1, context.size(-2), context.size(-1))
+        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_heads * self.head_dim)
 
-        return context
+        # Project back to value_dim
+        output = self.output_linear(context)
+
+        print(f"Final output shape: {output.shape}")
+
+        return output
+
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads):
@@ -386,7 +414,6 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"  ml_r: {ml_r.shape}")
         print(f"  fl_r: {fl_r.shape}")
 
-        
         # Flatten the inputs
         b, c, h, w = ml_c.shape
         ml_c = ml_c.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
@@ -400,7 +427,8 @@ class ImplicitMotionAlignment(nn.Module):
 
         # Add positional embeddings to queries (ml_c) and keys (ml_r)
         ml_c = self.pq(ml_c)  # Add Pq to queries
-        ml_r = self.pk(ml_r)  # Add Pk to keys
+        ml_c = self.pq(ml_c)
+        ml_r = self.pk(ml_r)
 
         print("After adding positional embeddings:")
         print(f"  ml_c: {ml_c.shape}")
