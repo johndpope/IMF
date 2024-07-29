@@ -350,6 +350,7 @@ class ImplicitMotionAlignment(nn.Module):
         self.motion_dim = motion_dim
         self.feature_dim = feature_dim
         self.num_heads = num_heads
+        self.scale = motion_dim ** -0.5
         
         # Projections for Q, K, V
         self.to_q = nn.Linear(motion_dim, motion_dim)
@@ -363,10 +364,9 @@ class ImplicitMotionAlignment(nn.Module):
         self.q_pos_embedding = PositionalEncoding2D(motion_dim)
         self.k_pos_embedding = PositionalEncoding2D(motion_dim)
         
-
         # Attention
         self.attend = nn.Softmax(dim=-1)
-
+        
         # Transformer layers
         self.transformer_layers = nn.ModuleList([
             TransformerBlock(motion_dim, num_heads) for _ in range(num_layers)
@@ -380,12 +380,12 @@ class ImplicitMotionAlignment(nn.Module):
 
         b, c, h, w = queries.shape
         
-        # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
-        q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
-        k = torch.flatten(keys, start_dim=2).transpose(-1, -2)
-        v = torch.flatten(values, start_dim=2).transpose(-1, -2)
+        # (b, dim_qk, h, w) -> (b, h*w, dim_qk)
+        q = rearrange(queries, 'b c h w -> b (h w) c')
+        k = rearrange(keys, 'b c h w -> b (h w) c')
+        v = rearrange(values, 'b c h w -> b (h w) c')
         
-        print(f" After flatten and transpose:")
+        print(f"🔄 After rearrange:")
         print(f"   q: {q.shape}")
         print(f"   k: {k.shape}")
         print(f"   v: {v.shape}")
@@ -394,7 +394,7 @@ class ImplicitMotionAlignment(nn.Module):
         q = q + self.q_pos_embedding(h, w)
         k = k + self.k_pos_embedding(h, w)
         
-        print(f" After adding positional embeddings:")
+        print(f"➕ After adding positional embeddings:")
         print(f"   q: {q.shape}")
         print(f"   k: {k.shape}")
         
@@ -403,7 +403,7 @@ class ImplicitMotionAlignment(nn.Module):
         k = self.to_k(k)
         v = self.to_v(v)
         
-        print(f" After linear projections:")
+        print(f"🔠 After linear projections:")
         print(f"   q: {q.shape}")
         print(f"   k: {k.shape}")
         print(f"   v: {v.shape}")
@@ -413,24 +413,24 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"🎯 Attention shape before softmax: {dots.shape}")
         
         attn = self.attend(dots)
-        print(f" Attention shape after softmax: {attn.shape}")
+        print(f"🧠 Attention shape after softmax: {attn.shape}")
         
         # Compute aligned values
         out = torch.matmul(attn, v)
-        print(f" Shape after attention application: {out.shape}")
+        print(f"💫 Shape after attention application: {out.shape}")
         
         # Apply transformer layers
         for i, layer in enumerate(self.transformer_layers):
             out = layer(out)
-            print(f" After transformer layer {i+1}: {out.shape}")
+            print(f"🔄 After transformer layer {i+1}: {out.shape}")
         
         # Output projection
         out = self.to_out(out)
-        print(f" After output projection: {out.shape}")
+        print(f"🔳 After output projection: {out.shape}")
         
         # Reshape back to spatial dimensions
         out = rearrange(out, 'b (h w) c -> b c h w', h=h, w=w)
-        print(f" Final output shape: {out.shape}")
+        print(f"🔲 Final output shape: {out.shape}")
         
         return out
 
@@ -442,26 +442,14 @@ class PositionalEncoding2D(nn.Module):
     def forward(self, h, w):
         print(f"📐 PositionalEncoding2D input dimensions: h={h}, w={w}")
         
-        pe = torch.zeros(h, w, self.d_model)
-        y_position = torch.arange(0., h).unsqueeze(1).expand(h, w)
-        x_position = torch.arange(0., w).unsqueeze(0).expand(h, w)
+        pe = torch.zeros(1, h * w, self.d_model)
+        position = torch.arange(0, h * w).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.d_model, 2) * -(math.log(10000.0) / self.d_model))
         
-        print(f" Position tensor shapes:")
-        print(f"   y_position: {y_position.shape}")
-        print(f"   x_position: {x_position.shape}")
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
         
-        div_term = torch.exp(torch.arange(0., self.d_model, 2) * -(math.log(10000.0) / self.d_model))
-        print(f" Division term shape: {div_term.shape}")
-        
-        pe[:, :, 0::2] = torch.sin(y_position * div_term)
-        pe[:, :, 1::2] = torch.cos(y_position * div_term)
-        pe[:, :, 0::2] += torch.sin(x_position * div_term)
-        pe[:, :, 1::2] += torch.cos(x_position * div_term)
-        
-        print(f"📍 Positional encoding shape before reshape: {pe.shape}")
-        
-        pe = pe.view(1, h * w, self.d_model)
-        print(f" Final positional encoding shape: {pe.shape}")
+        print(f"📍 Final positional encoding shape: {pe.shape}")
         
         return pe
 
@@ -482,19 +470,20 @@ class TransformerBlock(nn.Module):
         
         # Self-attention
         attn_output, _ = self.attention(x, x, x)
-        print(f" After self-attention shape: {attn_output.shape}")
+        print(f"🔷 After self-attention shape: {attn_output.shape}")
         
         x = self.norm1(x + attn_output)
-        print(f" After first norm shape: {x.shape}")
+        print(f"🔹 After first norm shape: {x.shape}")
         
         # Feedforward
         ff_output = self.feed_forward(x)
-        print(f" After feedforward shape: {ff_output.shape}")
+        print(f"🔸 After feedforward shape: {ff_output.shape}")
         
         x = self.norm2(x + ff_output)
-        print(f" TransformerBlock output shape: {x.shape}")
+        print(f"🔻 TransformerBlock output shape: {x.shape}")
         
         return x
+
 
 
 
