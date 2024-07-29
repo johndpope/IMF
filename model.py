@@ -246,99 +246,154 @@ class LatentTokenDecoder(nn.Module):
         print(f"LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
-class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, num_heads=8, num_transformer_blocks=4, chunk_size=64):
+
+class MemoryEfficientAttention(nn.Module):
+    def __init__(self, dim, num_heads):
         super().__init__()
-        self.feature_dim = feature_dim
-        self.motion_dim = motion_dim
         self.num_heads = num_heads
-        self.chunk_size = chunk_size
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.qkv = nn.Linear(dim * 3, dim * 3, bias=False)  # Changed input dimension
+        self.proj = nn.Linear(dim, dim)
 
-        # Projections for Q, K, V
-        self.q_proj = nn.Linear(motion_dim, feature_dim)
-        self.k_proj = nn.Linear(motion_dim, feature_dim)
-        self.v_proj = nn.Linear(feature_dim, feature_dim)
+    def forward(self, x):
+        B, N, C = x.shape
 
-        # Positional embeddings
-        self.p_q = nn.Parameter(torch.randn(1, 1, feature_dim))
-        self.p_k = nn.Parameter(torch.randn(1, 1, feature_dim))
+        # Diagnostics: print input shape
+        print(f"Input shape: {x.shape}")
 
-        # Multi-head attention
-        self.multihead_attn = nn.MultiheadAttention(feature_dim, num_heads)
+        # Apply qkv transformation
+        qkv = self.qkv(x)
+        # Diagnostics: print shape after qkv transformation
+        print(f"Shape after qkv transformation: {qkv.shape}")
 
-        # Transformer blocks for refinement
-        self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(feature_dim, num_heads) for _ in range(num_transformer_blocks)
-        ])
+        # Reshape qkv and permute dimensions
+        qkv = qkv.reshape(B, N, 3, self.num_heads, C // 3 // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
 
-    def forward(self, m_c, m_r, f_r):
-        print(f"🎮 ImplicitMotionAlignment input shapes: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
+        # Diagnostics: print shapes of q, k, v
+        print(f"q shape: {q.shape}")
+        print(f"k shape: {k.shape}")
+        print(f"v shape: {v.shape}")
 
-        # Flatten inputs
-        b, c_m, h_m, w_m = m_c.shape
-        _, c_f, h_f, w_f = f_r.shape
-        m_c = m_c.view(b, self.motion_dim, -1).permute(0, 2, 1)
-        m_r = m_r.view(b, self.motion_dim, -1).permute(0, 2, 1)
-        f_r = f_r.view(b, self.feature_dim, -1).permute(0, 2, 1)
-        
-        print(f"After flatten: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
+        # Compute attention scores
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
 
-        # Project inputs and add positional embeddings
-        q = self.q_proj(m_c) + self.p_q
-        k = self.k_proj(m_r) + self.p_k
-        v = self.v_proj(f_r)
-        print(f"After projection and positional embedding: q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        # Diagnostics: print shape of attention scores
+        print(f"attn shape: {attn.shape}")
 
-        # Process in chunks
-        chunks = []
-        for i in range(0, q.size(1), self.chunk_size):
-            q_chunk = q[:, i:i+self.chunk_size].transpose(0, 1)
-            k_chunk = k[:, i:i+self.chunk_size].transpose(0, 1)
-            v_chunk = v[:, i:i+self.chunk_size].transpose(0, 1)
-            
-            attn_output, _ = self.multihead_attn(q_chunk, k_chunk, v_chunk)
-            chunks.append(attn_output.transpose(0, 1))
-        
-        x = torch.cat(chunks, dim=1)
-        print(f"After multi-head attention: {x.shape}")
+        # Apply attention to values
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C // 3)
+        # Diagnostics: print shape after applying attention
+        print(f"Shape after attention application: {x.shape}")
 
-        # Refinement using Transformer blocks
-        for i, block in enumerate(self.transformer_blocks):
-            print(f"Entering Transformer Block {i+1}")
-            x = block(x)
-            print(f"After Transformer Block {i+1} shape: {x.shape}")
+        # Project the output
+        x = self.proj(x)
+        # Diagnostics: print final output shape
+        print(f"Final output shape: {x.shape}")
 
-        # Reshape output
-        output = x.permute(0, 2, 1).view(b, self.feature_dim, h_f, w_f)
-        print(f"ImplicitMotionAlignment final output shape: {output.shape}")
+        return x
 
-        return output
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads):
         super().__init__()
-        self.attention = nn.MultiheadAttention(dim, num_heads)
+        self.attention = MemoryEfficientAttention(dim, num_heads)
         self.feed_forward = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+            nn.Linear(dim, dim * 2),
             nn.GELU(),
-            nn.Linear(dim * 4, dim)
+            nn.Linear(dim * 2, dim)
         )
         self.layer_norm1 = nn.LayerNorm(dim)
         self.layer_norm2 = nn.LayerNorm(dim)
 
     def forward(self, x):
         def custom_forward(x):
-            x_norm = self.layer_norm1(x)
-            x_norm = x_norm.transpose(0, 1)
-            attn_output, _ = self.attention(x_norm, x_norm, x_norm)
-            attn_output = attn_output.transpose(0, 1)
-            x = x + attn_output
-            x_norm = self.layer_norm2(x)
-            ff_output = self.feed_forward(x_norm)
-            return x + ff_output
-
+            x = x + self.attention(self.layer_norm1(x))
+            x = x + self.feed_forward(self.layer_norm2(x))
+            return x
         return checkpoint(custom_forward, x)
 
+class ImplicitMotionAlignment(nn.Module):
+    def __init__(self, feature_dim, motion_dim, num_heads=8, num_transformer_blocks=4, chunk_size=1024):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.motion_dim = motion_dim
+        self.num_heads = num_heads
+        self.chunk_size = chunk_size
+
+        self.q_proj = nn.Linear(motion_dim, feature_dim)
+        self.k_proj = nn.Linear(motion_dim, feature_dim)
+        self.v_proj = nn.Linear(feature_dim, feature_dim)
+
+        self.p_q = nn.Parameter(torch.randn(1, 1, feature_dim))
+        self.p_k = nn.Parameter(torch.randn(1, 1, feature_dim))
+
+        self.attention = MemoryEfficientAttention(feature_dim, num_heads)
+        
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(feature_dim, num_heads) for _ in range(num_transformer_blocks)
+        ])
+
+    def forward(self, m_c, m_r, f_r):
+        print(f"m_c shape: {m_c.shape}")
+        print(f"m_r shape: {m_r.shape}")
+        print(f"f_r shape: {f_r.shape}")
+
+        b, c_m, h_m, w_m = m_c.shape
+        _, c_f, h_f, w_f = f_r.shape
+        m_c = m_c.view(b, self.motion_dim, -1).permute(0, 2, 1)
+        m_r = m_r.view(b, self.motion_dim, -1).permute(0, 2, 1)
+        f_r = f_r.view(b, self.feature_dim, -1).permute(0, 2, 1)
+
+        print(f"Reshaped m_c shape: {m_c.shape}")
+        print(f"Reshaped m_r shape: {m_r.shape}")
+        print(f"Reshaped f_r shape: {f_r.shape}")
+
+        q = self.q_proj(m_c) + self.p_q
+        k = self.k_proj(m_r) + self.p_k
+        v = self.v_proj(f_r)
+
+        print(f"q shape: {q.shape}")
+        print(f"k shape: {k.shape}")
+        print(f"v shape: {v.shape}")
+
+        chunks = []
+        for i in range(0, q.size(1), self.chunk_size):
+            q_chunk = q[:, i:i+self.chunk_size]
+            k_chunk = k[:, i:i+self.chunk_size]
+            v_chunk = v[:, i:i+self.chunk_size]
+            
+            print(f"Chunk {i // self.chunk_size}:")
+            print(f"q_chunk shape: {q_chunk.shape}")
+            print(f"k_chunk shape: {k_chunk.shape}")
+            print(f"v_chunk shape: {v_chunk.shape}")
+            
+            if v_chunk.size(1) == 0:
+                print("Skipping empty v_chunk")
+                continue
+            elif v_chunk.size(1) < q_chunk.size(1):
+                v_chunk = v_chunk.repeat(1, (q_chunk.size(1) + v_chunk.size(1) - 1) // v_chunk.size(1), 1)[:, :q_chunk.size(1)]
+            
+            attn_input = torch.cat([q_chunk, k_chunk, v_chunk], dim=-1)
+            print(f"attn_input shape: {attn_input.shape}")
+            
+            attn_output = self.attention(attn_input)
+            print(f"attn_output shape: {attn_output.shape}")
+            
+            chunks.append(attn_output)
+        
+        x = torch.cat(chunks, dim=1)
+        print(f"Shape after concatenation: {x.shape}")
+
+        for block in self.transformer_blocks:
+            x = block(x)
+
+        output = x.permute(0, 2, 1).view(b, self.feature_dim, h_f, w_f)
+        print(f"Final output shape: {output.shape}")
+
+        return output
 
 
 
