@@ -13,6 +13,8 @@ from torch.utils.checkpoint import checkpoint
 from performer_pytorch import SelfAttention
 import math
 
+from einops import rearrange
+from einops.layers.torch import Rearrange
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -268,64 +270,7 @@ class LatentTokenDecoder(nn.Module):
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
 
-class CrossAttention(nn.Module):
-    def __init__(self, query_dim, key_dim, value_dim, num_heads, dropout=0.1):
-        super(CrossAttention, self).__init__()
-        self.num_heads = num_heads
-        self.query_dim = query_dim
-        self.key_dim = key_dim
-        self.value_dim = value_dim
-        self.head_dim = query_dim // num_heads
-        assert self.head_dim * num_heads == query_dim, "query_dim must be divisible by num_heads"
 
-        self.query_linear = nn.Linear(query_dim, query_dim)
-        self.key_linear = nn.Linear(key_dim, query_dim)
-        self.value_linear = nn.Linear(value_dim, query_dim)
-        self.output_linear = nn.Linear(query_dim, value_dim)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, query, key, value):
-        print(f"🍕 ml_c query shape (motion features): {query.shape}")
-        print(f"ml_r key shape (motion features): {key.shape}")
-        print(f"fl_r value shape (appearance features): {value.shape}")
-
-        batch_size = query.size(0)
-
-        # Linear projections
-        query = self.query_linear(query)
-        key = self.key_linear(key)
-        value = self.value_linear(value)
-
-        print(f"Query shape after linear projection: {query.shape}")
-        print(f"Key shape after linear projection: {key.shape}")
-        print(f"Value shape after linear projection: {value.shape}")
-
-        # Split into heads
-        query = query.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        key = key.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-        value = value.view(batch_size, -1, self.num_heads, self.head_dim).transpose(1, 2)
-
-        print(f"Query shape after splitting into heads: {query.shape}")
-        print(f"Key shape after splitting into heads: {key.shape}")
-        print(f"Value shape after splitting into heads: {value.shape}")
-
-        # Compute attention scores
-        attention_scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(self.head_dim)
-        attention_weights = F.softmax(attention_scores, dim=-1)
-        attention_weights = self.dropout(attention_weights)
-
-        # Apply attention to values
-        context = torch.matmul(attention_weights, value)
-
-        # Concatenate heads
-        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.num_heads * self.head_dim)
-
-        # Project back to value_dim
-        output = self.output_linear(context)
-
-        print(f"Final output shape: {output.shape}")
-
-        return output
 
 
 class TransformerBlock(nn.Module):
@@ -394,123 +339,163 @@ The output-aligned values V' are further refined using multi-head self-attention
 transformer blocks. This is done to capture the complex relationships between the features and to produce 
 the final appearance features fl_c of the current frame.
 '''
+import torch
+import torch.nn as nn
+from einops import rearrange
+from einops.layers.torch import Rearrange
+
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, motion_dim, feature_dim, num_heads=8):
+    def __init__(self, motion_dim, feature_dim, num_heads=8, num_layers=4):
         super(ImplicitMotionAlignment, self).__init__()
+        self.motion_dim = motion_dim
+        self.feature_dim = feature_dim
         self.num_heads = num_heads
         
-        self.pq = PositionalEncoding1D(motion_dim) # not feature_dim! motion features ml_c and ml_r as the queries (Q) and keys (K)
-        self.pk = PositionalEncoding1D(motion_dim)
+        # Projections for Q, K, V
+        self.to_q = nn.Linear(motion_dim, motion_dim)
+        self.to_k = nn.Linear(motion_dim, motion_dim)
+        self.to_v = nn.Linear(feature_dim, motion_dim)
         
-        self.cross_attention = nn.MultiheadAttention(embed_dim=motion_dim, num_heads=num_heads, batch_first=True)
+        # Output projection
+        self.to_out = nn.Linear(motion_dim, feature_dim)
         
-        self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(motion_dim, num_heads) for _ in range(4)
+        # Positional embeddings
+        self.q_pos_embedding = PositionalEncoding2D(motion_dim)
+        self.k_pos_embedding = PositionalEncoding2D(motion_dim)
+        
+
+        # Attention
+        self.attend = nn.Softmax(dim=-1)
+
+        # Transformer layers
+        self.transformer_layers = nn.ModuleList([
+            TransformerBlock(motion_dim, num_heads) for _ in range(num_layers)
         ])
         
-        self.output_proj = nn.Linear(motion_dim, feature_dim)
-        self.input_proj = nn.Linear(feature_dim, motion_dim)
+    def forward(self, queries, keys, values):
+        print(f"🔍 ImplicitMotionAlignment input shapes:")
+        print(f"   queries: {queries.shape}")
+        print(f"   keys: {keys.shape}")
+        print(f"   values: {values.shape}")
 
-    def forward(self, ml_c, ml_r, fl_r):
-        b, c, h, w = ml_c.shape # for reprojection
-        print("🎮 ImplicitMotionAlignment input shapes:")
-        print(f"  ml_c: {ml_c.shape}")
-        print(f"  ml_r: {ml_r.shape}")
-        print(f"  fl_r: {fl_r.shape}")
-
-        # Get the device of the input tensor
-        device = ml_c.device
-
-   
-
-        print("Before flattening:")
-        print(f"  ml_c: {ml_c.shape}")
-        print(f"  ml_r: {ml_r.shape}")
-        print(f"  fl_r: {fl_r.shape}")
-
-
-        # create positional embeddings
-        p_q = self.pq(ml_c)
-        p_k = self.pk(ml_r)
-        print(f"  p_q: {p_q.shape}")
-        print(f"  p_k: {p_k.shape}")
-
-
-        # Flatten into a 1D
-        ml_c = ml_c.flatten(1, 3)
-        ml_r = ml_r.flatten(1, 3)
-        fl_r = fl_r.flatten(1, 3)
-
-        # 🤷 flatten this too ? 
-        p_q = p_q.flatten(1, 3)
-        p_k = p_k.flatten(1, 3)
+        b, c, h, w = queries.shape
+        
+        # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
+        q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
+        k = torch.flatten(keys, start_dim=2).transpose(-1, -2)
+        v = torch.flatten(values, start_dim=2).transpose(-1, -2)
+        
+        print(f" After flatten and transpose:")
+        print(f"   q: {q.shape}")
+        print(f"   k: {k.shape}")
+        print(f"   v: {v.shape}")
+        
         # Add positional embeddings
-        # ml_c = ml_c + p_q - this blows up
-        # ml_r = ml_r + p_k
-        # 🤷 Concatenate instead of add
-        ml_c = torch.cat([ml_c, p_q], dim=-1)
-        ml_r = torch.cat([ml_r, p_k], dim=-1)
+        q = q + self.q_pos_embedding(h, w)
+        k = k + self.k_pos_embedding(h, w)
+        
+        print(f" After adding positional embeddings:")
+        print(f"   q: {q.shape}")
+        print(f"   k: {k.shape}")
+        
+        # Linear projections
+        q = self.to_q(q)
+        k = self.to_k(k)
+        v = self.to_v(v)
+        
+        print(f" After linear projections:")
+        print(f"   q: {q.shape}")
+        print(f"   k: {k.shape}")
+        print(f"   v: {v.shape}")
+        
+        # Scaled dot-product attention
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        print(f"🎯 Attention shape before softmax: {dots.shape}")
+        
+        attn = self.attend(dots)
+        print(f" Attention shape after softmax: {attn.shape}")
+        
+        # Compute aligned values
+        out = torch.matmul(attn, v)
+        print(f" Shape after attention application: {out.shape}")
+        
+        # Apply transformer layers
+        for i, layer in enumerate(self.transformer_layers):
+            out = layer(out)
+            print(f" After transformer layer {i+1}: {out.shape}")
+        
+        # Output projection
+        out = self.to_out(out)
+        print(f" After output projection: {out.shape}")
+        
+        # Reshape back to spatial dimensions
+        out = rearrange(out, 'b (h w) c -> b c h w', h=h, w=w)
+        print(f" Final output shape: {out.shape}")
+        
+        return out
 
+class PositionalEncoding2D(nn.Module):
+    def __init__(self, d_model, max_len=1000):
+        super().__init__()
+        self.d_model = d_model
+        
+    def forward(self, h, w):
+        print(f"📐 PositionalEncoding2D input dimensions: h={h}, w={w}")
+        
+        pe = torch.zeros(h, w, self.d_model)
+        y_position = torch.arange(0., h).unsqueeze(1).expand(h, w)
+        x_position = torch.arange(0., w).unsqueeze(0).expand(h, w)
+        
+        print(f" Position tensor shapes:")
+        print(f"   y_position: {y_position.shape}")
+        print(f"   x_position: {x_position.shape}")
+        
+        div_term = torch.exp(torch.arange(0., self.d_model, 2) * -(math.log(10000.0) / self.d_model))
+        print(f" Division term shape: {div_term.shape}")
+        
+        pe[:, :, 0::2] = torch.sin(y_position * div_term)
+        pe[:, :, 1::2] = torch.cos(y_position * div_term)
+        pe[:, :, 0::2] += torch.sin(x_position * div_term)
+        pe[:, :, 1::2] += torch.cos(x_position * div_term)
+        
+        print(f"📍 Positional encoding shape before reshape: {pe.shape}")
+        
+        pe = pe.view(1, h * w, self.d_model)
+        print(f" Final positional encoding shape: {pe.shape}")
+        
+        return pe
 
-        print("After flattening and adding positional embeddings:")
-        print(f"  ml_c: {ml_c.shape}")
-        print(f"  ml_r: {ml_r.shape}")
-        print(f"  fl_r: {fl_r.shape}")
-        print(f"  p_q: {p_q.shape}")
-        print(f"  p_k: {p_k.shape}")
-        # Create CrossAttention on the fly with correct dimensions
-        query_dim = ml_c.size(1) # 🤷 this is right?  1048576
-        key_dim = ml_r.size(1) # 1048576
-        value_dim = fl_r.size(1) # 1048576
-
-
-        cross_attention = CrossAttention(query_dim, key_dim, value_dim, self.num_heads).to(device)
-        # Cross-attention
-        v_prime, _ = cross_attention(ml_c, ml_r, fl_r)
-        print(f"After cross_attention - v_prime: {v_prime.shape}")
-
-        # Transformer blocks
-        for i, transformer_block in enumerate(self.transformer_blocks):
-            v_prime = transformer_block(v_prime)
-            print(f"After transformer block {i} - v_prime: {v_prime.shape}")
-
-        # Project to feature dimension
-        fl_c = self.output_proj(v_prime)
-        print(f"After output projection - fl_c: {fl_c.shape}")
-
-        # Reshape back to 2D
-        fl_c = fl_c.transpose(1, 2).view(b, -1, h, w)
-        print(f"Final output shape - fl_c: {fl_c.shape}")
-
-        return fl_c
-
-
-class PositionalEncoding1D(nn.Module):
-    def __init__(self, d_model, max_len=10000):
-        super(PositionalEncoding1D, self).__init__()
-        pe = torch.zeros(1, max_len, d_model)  # Add extra dimension for broadcasting
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[0, :, 0::2] = torch.sin(position * div_term)
-        pe[0, :, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
-
+class TransformerBlock(nn.Module):
+    def __init__(self, dim, num_heads):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(dim, num_heads)
+        self.feed_forward = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.GELU(),
+            nn.Linear(dim * 4, dim)
+        )
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        
     def forward(self, x):
-        """
-        Args:
-            x: Tensor, shape [batch_size, seq_len, embedding_dim] or [batch_size, embedding_dim, height, width]
-        """
-        if x.dim() == 3:
-            # For [batch_size, seq_len, embedding_dim] input
-            seq_len = x.size(1)
-            return self.pe[:, :seq_len, :].expand(x.size(0), -1, -1)
-        elif x.dim() == 4:
-            # For [batch_size, embedding_dim, height, width] input
-            batch_size, _, height, width = x.size()
-            positional_encoding = self.pe[:, :height*width, :].expand(batch_size, -1, -1)
-            return positional_encoding.view(batch_size, height, width, -1).permute(0, 3, 1, 2)
-        else:
-            raise ValueError("Input tensor must be 3D or 4D")
+        print(f"🔶 TransformerBlock input shape: {x.shape}")
+        
+        # Self-attention
+        attn_output, _ = self.attention(x, x, x)
+        print(f" After self-attention shape: {attn_output.shape}")
+        
+        x = self.norm1(x + attn_output)
+        print(f" After first norm shape: {x.shape}")
+        
+        # Feedforward
+        ff_output = self.feed_forward(x)
+        print(f" After feedforward shape: {ff_output.shape}")
+        
+        x = self.norm2(x + ff_output)
+        print(f" TransformerBlock output shape: {x.shape}")
+        
+        return x
+
 
 
 '''
