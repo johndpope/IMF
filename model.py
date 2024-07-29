@@ -121,9 +121,8 @@ class DenseFeatureEncoder(nn.Module):
         for i, block in enumerate(self.down_blocks):
             x = block(x)
             print(f"    After down_block {i+1}: {x.shape}")
-            if i < 4:
+            if i >= 1:  # Start collecting features from the second block
                 features.append(x)
-        features.append(x)
         print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
 
@@ -371,7 +370,7 @@ class ImplicitMotionAlignment(nn.Module):
         b_r, c_r, h_r, w_r = keys.shape
         b, c_f, h_f, w_f = values.shape
         
-        print("queries:",queries.shape) # [1, 256, 64, 64]) - B,C,H,W
+        print("queries:",queries.shape) # [1, 256, 64, 64]) - B,C,H,W (64x64 resolution)
         # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
         q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
         print("q:",q.shape)
@@ -388,7 +387,7 @@ class ImplicitMotionAlignment(nn.Module):
         k = k + k_pos_embedding  # (b, dim_spatial, dim_qk)
 
         # Flatten and transpose values
-        print(f"values: {values.shape}") # values: torch.Size([1, 64, 128, 128])
+        print(f"values: {values.shape}") # values: torch.Size([1, 64, 128, 128]) <- why is this 128 x128
         v = torch.flatten(values, start_dim=2).transpose(-1, -2)
         print(f"(b, dim_v, h, w) -> (b, dim_v, dim_spatial) -> (b, dim_spatial, dim_v): {v.shape}")# [1, 16384, 64]
         # Compute attention scores (dots)
@@ -687,7 +686,7 @@ class IMFModel(nn.Module):
         # Iterate through each layer
         for i in range(num_layers):
             # Extract the corresponding features and alignment layer for this iteration
-            f_r_i = f_r[i]
+            f_r_i = f_r[i]  
             m_r_i = m_r[i]
             m_c_i = m_c[i]
             align_layer = self.implicit_motion_alignment[i]
