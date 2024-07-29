@@ -33,7 +33,16 @@ def pixel_loss(x_hat, x):
     return nn.L1Loss()(x_hat_resized, x)
 
 def perceptual_loss(vgg, x_hat, x):
-    return sum(nn.L1Loss()(vgg(x_hat[:, :, i::2, i::2]), vgg(x[:, :, i::2, i::2])) for i in range(4))
+    # Resize x_hat to match x
+    x_hat_resized = F.interpolate(x_hat, size=x.shape[2:], mode='bilinear', align_corners=False)
+    
+    losses = []
+    for i in range(4):
+        x_hat_features = vgg(x_hat_resized[:, :, i::2, i::2])
+        x_features = vgg(x[:, :, i::2, i::2])
+        losses.append(F.l1_loss(x_hat_features, x_features))
+    
+    return sum(losses)
 
 def adversarial_loss(discriminator, x_hat):
     fake_outputs = discriminator(x_hat)
@@ -98,9 +107,16 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
             reconstructed_frames = model(current_frames, reference_frames)
 
+            print(f"Current frames shape: {current_frames.shape}")
+            print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
+
             loss_pixel = pixel_loss(reconstructed_frames, current_frames)
             loss_perceptual = perceptual_loss(vgg_loss, reconstructed_frames, current_frames)
             loss_adv = adversarial_loss(discriminator, reconstructed_frames)
+
+            print(f"Pixel loss: {loss_pixel.item()}")
+            print(f"Perceptual loss: {loss_perceptual.item()}")
+            print(f"Adversarial loss: {loss_adv.item()}")
 
             loss_g = config['training']['lambda_pixel'] * loss_pixel + \
                      config['training']['lambda_perceptual'] * loss_perceptual + \
