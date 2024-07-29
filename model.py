@@ -435,14 +435,13 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"  ml_c: {ml_c.shape}")
         print(f"  ml_r: {ml_r.shape}")
         print(f"  fl_r: {fl_r.shape}")
-
+        print(f"  p_q: {p_q.shape}")
+        print(f"  p_k: {p_k.shape}")
         # Create CrossAttention on the fly with correct dimensions
-        query_dim = ml_c.size(1)
-        key_dim = ml_r.size(1)
-        value_dim = fl_r.size(1)
-        print("query_dim:",query_dim)
-        print("key_dim:",key_dim)
-        print("value_dim:",value_dim)
+        query_dim = ml_c.size(1) # 🤷 this is right?  1048576
+        key_dim = ml_r.size(1) # 1048576
+        value_dim = fl_r.size(1) # 1048576
+
 
         cross_attention = CrossAttention(query_dim, key_dim, value_dim, self.num_heads).to(device)
 
