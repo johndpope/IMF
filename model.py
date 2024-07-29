@@ -344,10 +344,9 @@ import torch.nn as nn
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
-import torch
-import torch.nn as nn
-from einops import rearrange
-import math
+
+
+
 
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, motion_dim, feature_dim, num_heads=8, num_layers=4):
@@ -357,9 +356,8 @@ class ImplicitMotionAlignment(nn.Module):
         self.num_heads = num_heads
         self.scale = (motion_dim // num_heads) ** -0.5
         
-        # Positional embeddings for motion features
-        self.pos_embedding = PositionalEncoding2D(motion_dim)
-        
+        # Attention
+        self.attend = nn.Softmax(dim=-1)
         # Cross-attention
         self.cross_attention = CrossAttention(motion_dim, feature_dim, num_heads)
         
@@ -367,49 +365,50 @@ class ImplicitMotionAlignment(nn.Module):
         self.transformer_layers = nn.ModuleList([
             TransformerBlock(feature_dim, num_heads) for _ in range(num_layers)
         ])
-        
-    def forward(self, m_c, m_r, f_r):
-        print(f"🔍 ImplicitMotionAlignment input shapes:")
-        print(f"   m_c (Q): {m_c.shape}")
-        print(f"   m_r (K): {m_r.shape}")
-        print(f"   f_r (V): {f_r.shape}")
 
-        b_c, c_c, h_c, w_c = m_c.shape
-        b_r, c_r, h_r, w_r = m_r.shape
+    def forward(self, queries, keys, values):
+        b, c_m, h_m, w_m = queries.shape
+        b_r, c_r, h_r, w_r = keys.shape
+        b, c_f, h_f, w_f = values.shape
         
-        # Flatten spatial dimensions
-        q = rearrange(m_c, 'b c h w -> b (h w) c')
-        k = rearrange(m_r, 'b c h w -> b (h w) c')
-        v = rearrange(f_r, 'b c h w -> b (h w) c')
-        
-        print(f"🔄 After flatten:")
-        print(f"   q: {q.shape}")
-        print(f"   k: {k.shape}")
-        print(f"   v: {v.shape}")
-        
-        # Add positional embeddings to queries and keys
-        q = q + self.pos_embedding(h_c, w_c, self.motion_dim, q.device)
-        k = k + self.pos_embedding(h_r, w_r, self.motion_dim, k.device)
-        
-        print(f"➕ After adding positional embeddings:")
-        print(f"   q: {q.shape}")
-        print(f"   k: {k.shape}")
-        
-        # Apply cross-attention
-        aligned_values = self.cross_attention(q, k, v)
-        print(f"💫 After cross-attention: {aligned_values.shape}")
-        
-        # Apply transformer layers for refinement
-        for i, layer in enumerate(self.transformer_layers):
-            aligned_values = layer(aligned_values)
-            print(f"🔄 After transformer layer {i+1}: {aligned_values.shape}")
-        
-        # Reshape back to spatial dimensions
-        out = rearrange(aligned_values, 'b (h w) c -> b c h w', h=h_c, w=w_c)
-        print(f"🔲 Final output shape: {out.shape}")
-        
+        print("queries:",queries.shape) # [1, 256, 64, 64]) - B,C,H,W
+        # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
+        q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
+        print("q:",q.shape)
+
+        # Generate positional embeddings
+        q_pos_embedding = positional_embedding_2d(b, h_m, w_m, c_m).to(queries.device)
+        k_pos_embedding = positional_embedding_2d(b_r, h_r, w_r, c_r).to(keys.device)
+        print("q_pos_embedding:",q_pos_embedding.shape) # [1, 4096, 256]
+        q = q + q_pos_embedding  # (b, dim_spatial, dim_qk)
+
+        # Flatten and transpose keys, then add positional embeddings
+        k = torch.flatten(keys, start_dim=2).transpose(-1, -2)
+        print(f"Shape of k after flattening and transposing: {k.shape}") # [1, 4096, 256]
+        k = k + k_pos_embedding  # (b, dim_spatial, dim_qk)
+
+        # Flatten and transpose values
+        print(f"values: {values.shape}") # values: torch.Size([1, 64, 128, 128])
+        v = torch.flatten(values, start_dim=2).transpose(-1, -2)
+        print(f"(b, dim_v, h, w) -> (b, dim_v, dim_spatial) -> (b, dim_spatial, dim_v): {v.shape}")# [1, 16384, 64]
+        # Compute attention scores (dots)
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        print(f"Shape of dots after matmul and scaling: {dots.shape}")
+
+        # Apply softmax to get attention weights
+        attn = self.attend(dots)  # (b, dim_spatial, dim_spatial)
+        print(f"Shape of attn after softmax: {attn.shape}")
+
+
+        # Compute the output by multiplying attention weights with values
+        # (b, dim_spatial, dim_spatial) * (b, dim_spatial, dim_v) -> (b, dim_spatial, dim_v)
+        out = torch.matmul(attn, v)
+        print(f"Shape of out after matmul with attention weights: {out.shape}")
         return out
+
+
 '''
+print("k_pos_embedding:",k_pos_embedding.shape)
 Positional Embeddings
 Additive Nature:
 Positional embeddings are typically added to the feature vectors. This means they don't directly scale or multiply the original values, but rather provide additional information alongside them.
@@ -420,24 +419,60 @@ The scale of the positional embeddings relative to the feature values is importa
 Learned Interpretation:
 The neural network learns to interpret both the original values and the positional information together. It can learn to give more or less weight to position depending on the task.
 '''
-class PositionalEncoding2D(nn.Module):
-    def __init__(self, d_model, max_len=1000):
-        super().__init__()
-        self.d_model = d_model
-        
-    def forward(self, h, w, c, device):
-        print(f"📐 PositionalEncoding2D input dimensions: h={h}, w={w}, c={c}")
-        
-        pe = torch.zeros(1, h * w, c, device=device)
-        position = torch.arange(0, h * w, device=device).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(0, c, 2, device=device).float() * -(math.log(10000.0) / c))
-        
-        pe[0, :, 0::2] = torch.sin(position * div_term)
-        pe[0, :, 1::2] = torch.cos(position * div_term)
-        
-        print(f"📍 Positional encoding shape: {pe.shape}")
-        
-        return pe
+
+def positional_embedding_2d(b, h, w, dim):
+    """
+    Create 2D positional embeddings
+    :param b: batch size
+    :param h: height
+    :param w: width
+    :param dim: embedding dimension
+    :return: positional embeddings of shape (b, h*w, dim)
+    """
+    print(f"\n🔍 Positional Embedding 2D Diagnostics:")
+    print(f"Input parameters: b={b}, h={h}, w={w}, dim={dim}")
+
+    y_embed = torch.arange(h, dtype=torch.float32).unsqueeze(1).expand(h, w)
+    x_embed = torch.arange(w, dtype=torch.float32).unsqueeze(0).expand(h, w)
+
+    print(f"Initial y_embed shape: {y_embed.shape}")
+    print(f"Initial x_embed shape: {x_embed.shape}")
+
+    y_embed = y_embed / (h - 1) * 2 - 1
+    x_embed = x_embed / (w - 1) * 2 - 1
+
+    print(f"Normalized y_embed range: [{y_embed.min():.2f}, {y_embed.max():.2f}]")
+    print(f"Normalized x_embed range: [{x_embed.min():.2f}, {x_embed.max():.2f}]")
+
+    pos_embed = torch.stack([x_embed, y_embed], dim=-1)  # (h, w, 2)
+    print(f"Stacked pos_embed shape: {pos_embed.shape}")
+
+    def create_sinusoidal_embedding(x, dim):
+        half_dim = dim // 2
+        emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, dtype=torch.float32) * -emb)
+        emb = x[..., None] * emb[None, :]
+        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
+        if dim % 2 == 1:  # if odd
+            emb = torch.cat([emb, torch.zeros_like(emb[..., :1])], dim=-1)
+        return emb
+
+    pos_embed = create_sinusoidal_embedding(pos_embed, dim)  # (h, w, 2, dim)
+    print(f"After sinusoidal embedding, shape: {pos_embed.shape}")
+    print(f"Sinusoidal embedding range: [{pos_embed.min():.2f}, {pos_embed.max():.2f}]")
+
+    # Reshape to (h*w, dim) by combining the x and y embeddings
+    pos_embed = pos_embed.view(h * w, 2 * dim)
+    
+    # If necessary, adjust the dimension to match the required dim
+    if pos_embed.shape[1] != dim:
+        pos_embed = pos_embed[:, :dim]
+
+    pos_embed = pos_embed.unsqueeze(0).expand(b, -1, -1)  # (b, h*w, dim)
+    print(f"Final pos_embed shape: {pos_embed.shape}")
+
+    return pos_embed
+
 
 class CrossAttention(nn.Module):
     def __init__(self, motion_dim, feature_dim, num_heads):
@@ -453,89 +488,24 @@ class CrossAttention(nn.Module):
         self.to_out = nn.Linear(feature_dim, feature_dim)
         
     def forward(self, q, k, v):
-        print(f"\n🔍 CrossAttention Input Shapes:")
-        print(f"   q: {q.shape}")
-        print(f"   k: {k.shape}")
-        print(f"   v: {v.shape}")
-
         b, n, _ = q.shape
         h = self.num_heads
         
-        print(f"📊 Reshaping for multi-head attention:")
-        print(f"   Batch size (b): {b}")
-        print(f"   Sequence length (n): {n}")
-        print(f"   Number of heads (h): {h}")
-        print(f"   Head dimension: {self.motion_dim // h}")
+        q = self.to_q(q).view(b, n, h, -1).transpose(1, 2)
+        k = self.to_k(k).view(b, n, h, -1).transpose(1, 2)
+        v = self.to_v(v).view(b, n, h, -1).transpose(1, 2)
 
-        q = self.to_q(q)
-        k = self.to_k(k)
-        v = self.to_v(v)
-
-        print(f"\n🔢 After linear projections:")
-        print(f"   q: {q.shape}")
-        print(f"   k: {k.shape}")
-        print(f"   v: {v.shape}")
-
-        q = q.view(b, n, h, -1).transpose(1, 2)
-        k = k.view(b, n, h, -1).transpose(1, 2)
-        v = v.view(b, n, h, -1).transpose(1, 2)
-
-        print(f"\n🔀 After reshaping and transposing:")
-        print(f"   q: {q.shape}")
-        print(f"   k: {k.shape}")
-        print(f"   v: {v.shape}")
-        
-        dots = torch.matmul(q, k.transpose(-1, -2))
-        print(f"\n🔢 Attention scores shape (before scaling): {dots.shape}")
-        
-        dots = dots * self.scale
-        print(f"🔢 Scaled attention scores shape: {dots.shape}")
-        print(f"🔢 Scale factor: {self.scale}")
-        
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         attn = dots.softmax(dim=-1)
-        print(f"🧠 Attention weights shape (after softmax): {attn.shape}")
         
         out = torch.matmul(attn, v)
-        print(f"💡 Output shape after applying attention: {out.shape}")
-        
         out = out.transpose(1, 2).contiguous().view(b, n, -1)
-        print(f"🔄 Output shape after reshaping: {out.shape}")
-        
         out = self.to_out(out)
-        print(f"🏁 Final output shape: {out.shape}")
         
         return out
 
-class TransformerBlock(nn.Module):
-    def __init__(self, dim, num_heads):
-        super().__init__()
-        self.attention = nn.MultiheadAttention(dim, num_heads)
-        self.feed_forward = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.GELU(),
-            nn.Linear(dim * 4, dim)
-        )
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
-        
-    def forward(self, x):
-        print(f"🔶 TransformerBlock input shape: {x.shape}")
-        
-        # Self-attention
-        attn_output, _ = self.attention(x, x, x)
-        print(f"🔷 After self-attention shape: {attn_output.shape}")
-        
-        x = self.norm1(x + attn_output)
-        print(f"🔹 After first norm shape: {x.shape}")
-        
-        # Feedforward
-        ff_output = self.feed_forward(x)
-        print(f"🔸 After feedforward shape: {ff_output.shape}")
-        
-        x = self.norm2(x + ff_output)
-        print(f"🔻 TransformerBlock output shape: {x.shape}")
-        
-        return x
+
+
 
 
 '''
@@ -678,12 +648,13 @@ class IMFModel(nn.Module):
         
         self.feature_dims = [64, 128, 256, 512, 512]
         
-        self.implicit_motion_alignment = nn.ModuleList([
-            ImplicitMotionAlignment(
-                feature_dim=self.feature_dims[i],
-                motion_dim=base_channels // (2 ** i) if i < 4 else base_channels // 8
-            ) for i in range(num_layers)
-        ])
+        # Initialize a list of ImplicitMotionAlignment modules
+        self.implicit_motion_alignment = nn.ModuleList()
+        for i in range(num_layers):
+            feature_dim = self.feature_dims[i]
+            motion_dim = base_channels // (2 ** i) if i < 4 else base_channels // 8
+            self.implicit_motion_alignment.append(ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim))
+       
         
         self.frame_decoder = FrameDecoder()
 
