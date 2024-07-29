@@ -426,7 +426,6 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"  fl_r: {fl_r.shape}")
 
         # Add positional embeddings to queries (ml_c) and keys (ml_r)
-        ml_c = self.pq(ml_c)  # Add Pq to queries
         ml_c = self.pq(ml_c)
         ml_r = self.pk(ml_r)
 
