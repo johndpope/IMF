@@ -109,7 +109,7 @@ class DenseFeatureEncoder(nn.Module):
         ])
 
     def forward(self, x):
-        print(f"DenseFeatureEncoder input shape: {x.shape}")
+        print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
         features = []
         x = self.initial_conv(x)
         print(f"After initial conv: {x.shape}")
