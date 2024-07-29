@@ -361,7 +361,7 @@ transformer blocks. This is done to capture the complex relationships between th
 the final appearance features fl_c of the current frame.
 '''
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, motion_dim,feature_dim, num_heads):
+    def __init__(self, motion_dim,feature_dim, num_heads=8):
         super(ImplicitMotionAlignment, self).__init__()
         self.cross_attention = CrossAttention(motion_dim, motion_dim, feature_dim, num_heads)
         self.pq = PositionalEncoding(feature_dim)
