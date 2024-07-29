@@ -9,7 +9,8 @@ import os
 import torchvision.models as models
 from memory_profiler import profile
 import colored_traceback.auto
-
+from torch.utils.checkpoint import checkpoint
+from performer_pytorch import SelfAttention
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -32,19 +33,19 @@ class UpConvResBlock(nn.Module):
         self.feat_res_block2 = FeatResBlock(out_channels)
 
     def forward(self, x):
-        print(f"UpConvResBlock input shape: {x.shape}")
+        # print(f"UpConvResBlock input shape: {x.shape}")
         out = self.upsample(x)
-        print(f"After upsample: {out.shape}")
+        # print(f"After upsample: {out.shape}")
         out = self.conv1(out)
         out = self.bn1(out)
         out = self.relu(out)
-        print(f"After conv1, bn1, relu: {out.shape}")
+        # print(f"After conv1, bn1, relu: {out.shape}")
         out = self.conv2(out)
-        print(f"After conv2: {out.shape}")
+        # print(f"After conv2: {out.shape}")
         out = self.feat_res_block1(out)
-        print(f"After feat_res_block1: {out.shape}")
+        # print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
-        print(f"UpConvResBlock output shape: {out.shape}")
+        # print(f"UpConvResBlock output shape: {out.shape}")
         return out
 
 
@@ -60,19 +61,19 @@ class DownConvResBlock(nn.Module):
         self.feat_res_block2 = FeatResBlock(out_channels)
 
     def forward(self, x):
-        print(f"DownConvResBlock input shape: {x.shape}")
+        # print(f"DownConvResBlock input shape: {x.shape}")
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        print(f"After conv1, bn1, relu: {out.shape}")
+        # print(f"After conv1, bn1, relu: {out.shape}")
         out = self.avgpool(out)
-        print(f"After avgpool: {out.shape}")
+        # print(f"After avgpool: {out.shape}")
         out = self.conv2(out)
-        print(f"After conv2: {out.shape}")
+        # print(f"After conv2: {out.shape}")
         out = self.feat_res_block1(out)
-        print(f"After feat_res_block1: {out.shape}")
+        # print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
-        print(f"DownConvResBlock output shape: {out.shape}")
+        # print(f"DownConvResBlock output shape: {out.shape}")
         return out
 
 
@@ -112,14 +113,14 @@ class DenseFeatureEncoder(nn.Module):
         print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
         features = []
         x = self.initial_conv(x)
-        print(f"After initial conv: {x.shape}")
+        # print(f"After initial conv: {x.shape}")
         for i, block in enumerate(self.down_blocks):
             x = block(x)
-            print(f"After down_block {i+1}: {x.shape}")
+            # print(f"After down_block {i+1}: {x.shape}")
             if i < 4:
                 features.append(x)
         features.append(x)
-        print(f"DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
+        # print(f"DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
 
 
@@ -156,27 +157,27 @@ class LatentTokenEncoder(nn.Module):
         )
 
     def forward(self, x):
-        print(f"LatentTokenEncoder input shape: {x.shape}")
+        # print(f"LatentTokenEncoder input shape: {x.shape}")
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        print(f"After first conv, bn, relu: {x.shape}")
+        # print(f"After first conv, bn, relu: {x.shape}")
         x = self.resblock1(x)
-        print(f"After resblock1: {x.shape}")
+        # print(f"After resblock1: {x.shape}")
         x = self.resblock2(x)
-        print(f"After resblock2: {x.shape}")
+        # print(f"After resblock2: {x.shape}")
         x = self.resblock3(x)
-        print(f"After resblock3: {x.shape}")
+        # print(f"After resblock3: {x.shape}")
         x = self.resblock4(x)
-        print(f"After resblock4: {x.shape}")
+        # print(f"After resblock4: {x.shape}")
         x = self.equal_conv(x)
-        print(f"After equal_conv: {x.shape}")
+        # print(f"After equal_conv: {x.shape}")
         x = self.adaptive_pool(x)
-        print(f"After adaptive_pool: {x.shape}")
+        # print(f"After adaptive_pool: {x.shape}")
         x = x.view(x.size(0), -1)
-        print(f"After flatten: {x.shape}")
+        # print(f"After flatten: {x.shape}")
         t = self.fc_layers(x)
-        print(f"LatentTokenEncoder output shape: {t.shape}")
+        # print(f"LatentTokenEncoder output shape: {t.shape}")
         return t
 
     
@@ -189,17 +190,17 @@ class StyleConv(nn.Module):
         self.activation = nn.LeakyReLU(0.2, inplace=True)
 
     def forward(self, x, style):
-        print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
+        # print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
         style = self.style_mod(style).unsqueeze(2).unsqueeze(3)
-        print(f"After style modulation: {style.shape}")
+        # print(f"After style modulation: {style.shape}")
         x = x * style
-        print(f"After multiplication: {x.shape}")
+        # print(f"After multiplication: {x.shape}")
         x = self.conv(x)
-        print(f"After conv: {x.shape}")
+        # print(f"After conv: {x.shape}")
         x = self.upsample(x)
-        print(f"After upsample: {x.shape}")
+        # print(f"After upsample: {x.shape}")
         x = self.activation(x)
-        print(f"StyleConv output shape: {x.shape}")
+        # print(f"StyleConv output shape: {x.shape}")
         return x
 
 
@@ -246,11 +247,12 @@ class LatentTokenDecoder(nn.Module):
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, num_heads=8, num_transformer_blocks=4):
+    def __init__(self, feature_dim, motion_dim, num_heads=8, num_transformer_blocks=4, chunk_size=64):
         super().__init__()
         self.feature_dim = feature_dim
         self.motion_dim = motion_dim
         self.num_heads = num_heads
+        self.chunk_size = chunk_size
 
         # Projections for Q, K, V
         self.q_proj = nn.Linear(motion_dim, feature_dim)
@@ -261,8 +263,8 @@ class ImplicitMotionAlignment(nn.Module):
         self.p_q = nn.Parameter(torch.randn(1, 1, feature_dim))
         self.p_k = nn.Parameter(torch.randn(1, 1, feature_dim))
 
-        # Scaled dot-product cross-attention
-        self.scale = nn.Parameter(torch.sqrt(torch.tensor(feature_dim, dtype=torch.float)))
+        # Multi-head attention
+        self.multihead_attn = nn.MultiheadAttention(feature_dim, num_heads)
 
         # Transformer blocks for refinement
         self.transformer_blocks = nn.ModuleList([
@@ -273,9 +275,10 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"🎮 ImplicitMotionAlignment input shapes: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
 
         # Flatten inputs
-        b, c, h, w = m_c.shape
-        m_c = m_c.view(b, c, -1).permute(0, 2, 1)
-        m_r = m_r.view(b, c, -1).permute(0, 2, 1)
+        b, c_m, h_m, w_m = m_c.shape
+        _, c_f, h_f, w_f = f_r.shape
+        m_c = m_c.view(b, self.motion_dim, -1).permute(0, 2, 1)
+        m_r = m_r.view(b, self.motion_dim, -1).permute(0, 2, 1)
         f_r = f_r.view(b, self.feature_dim, -1).permute(0, 2, 1)
         
         print(f"After flatten: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
@@ -286,22 +289,27 @@ class ImplicitMotionAlignment(nn.Module):
         v = self.v_proj(f_r)
         print(f"After projection and positional embedding: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Scaled dot-product cross-attention
-        attn = torch.matmul(q, k.transpose(-2, -1)) / self.scale
-        print(f"Attention weights shape: {attn.shape}")
-        attn = F.softmax(attn, dim=-1)
-        v_aligned = torch.matmul(attn, v)
-        print(f"Aligned values shape: {v_aligned.shape}")
+        # Process in chunks
+        chunks = []
+        for i in range(0, q.size(1), self.chunk_size):
+            q_chunk = q[:, i:i+self.chunk_size].transpose(0, 1)
+            k_chunk = k[:, i:i+self.chunk_size].transpose(0, 1)
+            v_chunk = v[:, i:i+self.chunk_size].transpose(0, 1)
+            
+            attn_output, _ = self.multihead_attn(q_chunk, k_chunk, v_chunk)
+            chunks.append(attn_output.transpose(0, 1))
+        
+        x = torch.cat(chunks, dim=1)
+        print(f"After multi-head attention: {x.shape}")
 
         # Refinement using Transformer blocks
-        x = v_aligned
         for i, block in enumerate(self.transformer_blocks):
             print(f"Entering Transformer Block {i+1}")
             x = block(x)
             print(f"After Transformer Block {i+1} shape: {x.shape}")
 
         # Reshape output
-        output = x.permute(0, 2, 1).view(b, self.feature_dim, h, w)
+        output = x.permute(0, 2, 1).view(b, self.feature_dim, h_f, w_f)
         print(f"ImplicitMotionAlignment final output shape: {output.shape}")
 
         return output
@@ -319,26 +327,17 @@ class TransformerBlock(nn.Module):
         self.layer_norm2 = nn.LayerNorm(dim)
 
     def forward(self, x):
-        print(f"TransformerBlock input shape: {x.shape}")
+        def custom_forward(x):
+            x_norm = self.layer_norm1(x)
+            x_norm = x_norm.transpose(0, 1)
+            attn_output, _ = self.attention(x_norm, x_norm, x_norm)
+            attn_output = attn_output.transpose(0, 1)
+            x = x + attn_output
+            x_norm = self.layer_norm2(x)
+            ff_output = self.feed_forward(x_norm)
+            return x + ff_output
 
-        # Multi-head self-attention
-        attn_output, _ = self.attention(x, x, x)
-        print(f"After self-attention shape: {attn_output.shape}")
-
-        # First residual connection and layer norm
-        x = self.layer_norm1(x + attn_output)
-        print(f"After first layer norm shape: {x.shape}")
-
-        # Feed-forward network
-        ff_output = self.feed_forward(x)
-        print(f"After feed-forward network shape: {ff_output.shape}")
-
-        # Second residual connection and layer norm
-        x = self.layer_norm2(x + ff_output)
-        print(f"TransformerBlock output shape: {x.shape}")
-
-        return x
-
+        return checkpoint(custom_forward, x)
 
 
 
@@ -430,28 +429,28 @@ class ResBlock(nn.Module):
         self.out_channels = out_channels
 
     def forward(self, x):
-        print(f"ResBlock input shape: {x.shape}")
-        print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+        # print(f"ResBlock input shape: {x.shape}")
+        # print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
 
         residual = self.shortcut(x)
-        print(f"After shortcut: {residual.shape}")
+        # print(f"After shortcut: {residual.shape}")
         
         out = self.conv1(x)
-        print(f"After conv1: {out.shape}")
+        # print(f"After conv1: {out.shape}")
         out = self.bn1(out)
         out = self.relu1(out)
-        print(f"After bn1 and relu1: {out.shape}")
+        # print(f"After bn1 and relu1: {out.shape}")
         
         out = self.conv2(out)
-        print(f"After conv2: {out.shape}")
+        # print(f"After conv2: {out.shape}")
         out = self.bn2(out)
-        print(f"After bn2: {out.shape}")
+        # print(f"After bn2: {out.shape}")
         
         out += residual
-        print(f"After adding residual: {out.shape}")
+        # print(f"After adding residual: {out.shape}")
         
         out = self.relu2(out)
-        print(f"ResBlock output shape: {out.shape}")
+        # print(f"ResBlock output shape: {out.shape}")
         
         return out
 
@@ -489,13 +488,6 @@ class IMF(nn.Module):
                 motion_dim=256 if i == 3 else 512
             ) for i in range(num_layers)
         ])
-        
-        
-        
-        # Print some information about the created modules
-        print(f"🎍 Created {len(self.implicit_motion_alignment)} ImplicitMotionAlignment modules:")
-        for i, module in enumerate(self.implicit_motion_alignment):
-            print(f"  Layer {i}: feature_dim={self.feature_dims[i]}, motion_dim={256 if i == 0 else 512}")
 
 
     def forward(self, x_current, x_reference):
@@ -515,10 +507,35 @@ class IMF(nn.Module):
         
         # Align features
         aligned_features = []
-        for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
+
+        # Get the number of layers we're working with
+        num_layers = len(self.implicit_motion_alignment)
+
+        # Iterate through each layer
+        for i in range(num_layers):
+            # Extract the corresponding features and alignment layer for this iteration
+            f_r_i = f_r[i]
+            m_r_i = m_r[i]
+            m_c_i = m_c[i]
+            align_layer = self.implicit_motion_alignment[i]
+            
+            # Print input shapes for debugging
+            print(f"Layer {i+1} input shapes:")
+            print(f"  f_r_i shape: {f_r_i.shape}")
+            print(f"  m_r_i shape: {m_r_i.shape}")
+            print(f"  m_c_i shape: {m_c_i.shape}")
+            
+            # Perform the alignment
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+            
+            # Add the aligned feature to our list
             aligned_features.append(aligned_feature)
+            
+            # Print the shape of the aligned feature
             print(f"Aligned feature {i+1} shape: {aligned_feature.shape}")
+            print("--------------------")
+
+        # At this point, aligned_features contains all the aligned features
 
         return aligned_features
 
@@ -567,9 +584,38 @@ class IMFModel(nn.Module):
         
         # Implicit motion alignment
         aligned_features = []
-        for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
+        # Get the number of layers we're working with
+        num_layers = len(self.implicit_motion_alignment)
+
+        print(f"🎣 IMF - Number of layers: {num_layers}")
+        print(f"f_r shapes: {[f.shape for f in f_r]}")
+        print(f"m_r shapes: {[m.shape for m in m_r]}")
+        print(f"m_c shapes: {[m.shape for m in m_c]}")
+
+        # Iterate through each layer
+        for i in range(num_layers):
+            # Extract the corresponding features and alignment layer for this iteration
+            f_r_i = f_r[i]
+            m_r_i = m_r[i]
+            m_c_i = m_c[i]
+            align_layer = self.implicit_motion_alignment[i]
+            
+            print(f"\nProcessing layer {i+1}:")
+            print(f"  f_r_i shape: {f_r_i.shape}")
+            print(f"  m_r_i shape: {m_r_i.shape}")
+            print(f"  m_c_i shape: {m_c_i.shape}")
+            
+            # Perform the alignment
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+            
+            # Add the aligned feature to our list
             aligned_features.append(aligned_feature)
+            
+            print(f"  Aligned feature shape: {aligned_feature.shape}")
+
+        print("\nFinal aligned features shapes:")
+        for i, feat in enumerate(aligned_features):
+            print(f"  Layer {i+1}: {feat.shape}")
         
         # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)

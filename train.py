@@ -162,7 +162,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
 def main():
     config = load_config('config.yaml')
-
+    torch.cuda.empty_cache()
     # wandb.init(project='IMF', config=config)
 
     accelerator = Accelerator(
