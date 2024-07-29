@@ -21,15 +21,15 @@ def debug_print(*args, **kwargs):
 
 
 class UpConvResBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block1 = FeatResBlock(channels)
-        self.feat_res_block2 = FeatResBlock(channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block1 = FeatResBlock(out_channels)
+        self.feat_res_block2 = FeatResBlock(out_channels)
 
     def forward(self, x):
         print(f"UpConvResBlock input shape: {x.shape}")
@@ -49,15 +49,15 @@ class UpConvResBlock(nn.Module):
 
 
 class DownConvResBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block1 = FeatResBlock(channels)
-        self.feat_res_block2 = FeatResBlock(channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block1 = FeatResBlock(out_channels)
+        self.feat_res_block2 = FeatResBlock(out_channels)
 
     def forward(self, x):
         print(f"DownConvResBlock input shape: {x.shape}")
@@ -123,7 +123,6 @@ class DenseFeatureEncoder(nn.Module):
         return features
 
 
-
 class LatentTokenEncoder(nn.Module):
     def __init__(self, in_channels=3, latent_dim=32):
         super().__init__()
@@ -131,14 +130,14 @@ class LatentTokenEncoder(nn.Module):
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         
-        self.resblock1 = ResBlock(64, 64, upsample=False)
-        self.resblock2 = ResBlock(64, 128, upsample=False)
-        self.resblock3 = ResBlock(128, 256, upsample=False)
+        self.resblock1 = ResBlock(64, 64, downsample=False)
+        self.resblock2 = ResBlock(64, 128, downsample=True)
+        self.resblock3 = ResBlock(128, 256, downsample=True)
         
         self.resblock4 = nn.Sequential(
-            ResBlock(256, 512, upsample=False),
-            ResBlock(512, 512, upsample=False),
-            ResBlock(512, 512, upsample=False)
+            ResBlock(256, 512, downsample=True),
+            ResBlock(512, 512, downsample=False),
+            ResBlock(512, 512, downsample=False)
         )
         
         self.equal_conv = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
@@ -159,19 +158,30 @@ class LatentTokenEncoder(nn.Module):
     def forward(self, x):
         print(f"LatentTokenEncoder input shape: {x.shape}")
         x = self.conv1(x)
-        print(f"After first conv: {x.shape}")
-        x = self.resblock4(self.resblock3(self.resblock2(self.resblock1(x))))
-        print(f"After resblocks: {x.shape}")
+        x = self.bn1(x)
+        x = self.relu(x)
+        print(f"After first conv, bn, relu: {x.shape}")
+        x = self.resblock1(x)
+        print(f"After resblock1: {x.shape}")
+        x = self.resblock2(x)
+        print(f"After resblock2: {x.shape}")
+        x = self.resblock3(x)
+        print(f"After resblock3: {x.shape}")
+        x = self.resblock4(x)
+        print(f"After resblock4: {x.shape}")
         x = self.equal_conv(x)
+        print(f"After equal_conv: {x.shape}")
         x = self.adaptive_pool(x)
+        print(f"After adaptive_pool: {x.shape}")
         x = x.view(x.size(0), -1)
+        print(f"After flatten: {x.shape}")
         t = self.fc_layers(x)
         print(f"LatentTokenEncoder output shape: {t.shape}")
         return t
 
     
 class StyleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=512):
+    def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
         super().__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2)
         self.style_mod = nn.Linear(style_dim, in_channels)
@@ -202,24 +212,24 @@ The network maintains 512 channels for most of the layers, switching to 256 chan
 It outputs multiple feature maps (m⁴, m³, m², m¹) as shown in the image. These are collected in the features list and returned in reverse order to match the notation in the image.
 '''
 class LatentTokenDecoder(nn.Module):
-    def __init__(self, latent_dim=512, const_dim=512):
+    def __init__(self, latent_dim=32, const_dim=64):
         super().__init__()
         self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
         
         self.style_conv_layers = nn.ModuleList([
-            StyleConv(const_dim, 512),
-            StyleConv(512, 512, upsample=True),
-            StyleConv(512, 512),
-            StyleConv(512, 512),
-            StyleConv(512, 512, upsample=True),
-            StyleConv(512, 512),
-            StyleConv(512, 512),
-            StyleConv(512, 512, upsample=True),
-            StyleConv(512, 512),
-            StyleConv(512, 512),
-            StyleConv(256, 256, upsample=True),
-            StyleConv(256, 256),
-            StyleConv(256, 256)
+            StyleConv(const_dim, 512, style_dim=latent_dim),
+            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
+            StyleConv(512, 512, style_dim=latent_dim),
+            StyleConv(512, 512, style_dim=latent_dim),
+            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
+            StyleConv(512, 512, style_dim=latent_dim),
+            StyleConv(512, 512, style_dim=latent_dim),
+            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
+            StyleConv(512, 512, style_dim=latent_dim),
+            StyleConv(512, 512, style_dim=latent_dim),
+            StyleConv(512, 256, upsample=True, style_dim=latent_dim),
+            StyleConv(256, 256, style_dim=latent_dim),
+            StyleConv(256, 256, style_dim=latent_dim)
         ])
 
     def forward(self, t):
@@ -235,8 +245,6 @@ class LatentTokenDecoder(nn.Module):
         print(f"LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
-
-
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, num_heads=8, num_transformer_blocks=4):
         super().__init__()
@@ -249,43 +257,52 @@ class ImplicitMotionAlignment(nn.Module):
         self.k_proj = nn.Linear(motion_dim, feature_dim)
         self.v_proj = nn.Linear(feature_dim, feature_dim)
 
-        # Separate positional embeddings for queries and keys
+        # Positional embeddings
         self.p_q = nn.Parameter(torch.randn(1, 1, feature_dim))
         self.p_k = nn.Parameter(torch.randn(1, 1, feature_dim))
 
-        # Cross-attention
-        self.cross_attention = nn.MultiheadAttention(feature_dim, num_heads)
+        # Scaled dot-product cross-attention
+        self.scale = nn.Parameter(torch.sqrt(torch.tensor(feature_dim, dtype=torch.float)))
 
-        # Transformer blocks
+        # Transformer blocks for refinement
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(feature_dim, num_heads) for _ in range(num_transformer_blocks)
         ])
 
     def forward(self, m_c, m_r, f_r):
-        print(f"ImplicitMotionAlignment input shapes: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
+        print(f"🎮 ImplicitMotionAlignment input shapes: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
 
         # Flatten inputs
-        m_c = m_c.flatten(2).transpose(1, 2)
-        m_r = m_r.flatten(2).transpose(1, 2)
-        f_r = f_r.flatten(2).transpose(1, 2)
+        b, c, h, w = m_c.shape
+        m_c = m_c.view(b, c, -1).permute(0, 2, 1)
+        m_r = m_r.view(b, c, -1).permute(0, 2, 1)
+        f_r = f_r.view(b, self.feature_dim, -1).permute(0, 2, 1)
+        
         print(f"After flatten: m_c: {m_c.shape}, m_r: {m_r.shape}, f_r: {f_r.shape}")
 
         # Project inputs and add positional embeddings
         q = self.q_proj(m_c) + self.p_q
         k = self.k_proj(m_r) + self.p_k
         v = self.v_proj(f_r)
+        print(f"After projection and positional embedding: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Cross-attention
-        attn_output, _ = self.cross_attention(q, k, v)
+        # Scaled dot-product cross-attention
+        attn = torch.matmul(q, k.transpose(-2, -1)) / self.scale
+        print(f"Attention weights shape: {attn.shape}")
+        attn = F.softmax(attn, dim=-1)
+        v_aligned = torch.matmul(attn, v)
+        print(f"Aligned values shape: {v_aligned.shape}")
 
-        # Transformer blocks
-        x = attn_output
-        for block in self.transformer_blocks:
+        # Refinement using Transformer blocks
+        x = v_aligned
+        for i, block in enumerate(self.transformer_blocks):
+            print(f"Entering Transformer Block {i+1}")
             x = block(x)
+            print(f"After Transformer Block {i+1} shape: {x.shape}")
 
-        # Unflatten output
-        output = x.transpose(1, 2).reshape_as(f_r)
-        print(f"ImplicitMotionAlignment output shape: {output.shape}")
+        # Reshape output
+        output = x.permute(0, 2, 1).view(b, self.feature_dim, h, w)
+        print(f"ImplicitMotionAlignment final output shape: {output.shape}")
 
         return output
 
@@ -302,13 +319,23 @@ class TransformerBlock(nn.Module):
         self.layer_norm2 = nn.LayerNorm(dim)
 
     def forward(self, x):
+        print(f"TransformerBlock input shape: {x.shape}")
+
         # Multi-head self-attention
         attn_output, _ = self.attention(x, x, x)
+        print(f"After self-attention shape: {attn_output.shape}")
+
+        # First residual connection and layer norm
         x = self.layer_norm1(x + attn_output)
+        print(f"After first layer norm shape: {x.shape}")
 
         # Feed-forward network
         ff_output = self.feed_forward(x)
+        print(f"After feed-forward network shape: {ff_output.shape}")
+
+        # Second residual connection and layer norm
         x = self.layer_norm2(x + ff_output)
+        print(f"TransformerBlock output shape: {x.shape}")
 
         return x
 
@@ -324,7 +351,6 @@ It uses concatenation (Concat in the image) to combine the upsampled features wi
 The channel dimensions decrease as we go up the network: 512 → 512 → 256 → 128 → 64.
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
-
 class FrameDecoder(nn.Module):
     def __init__(self):
         super().__init__()
@@ -382,40 +408,56 @@ ReLU activations are applied both after adding the residual and at the end of th
 The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
 '''
 class ResBlock(nn.Module):
-    def __init__(self, channels, downsample=False):
+    def __init__(self, in_channels, out_channels, downsample=False):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
         self.relu2 = nn.ReLU(inplace=True)
         
-        if downsample:
+        if downsample or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1),
-                nn.BatchNorm2d(channels)
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
+                nn.BatchNorm2d(out_channels)
             )
         else:
             self.shortcut = nn.Identity()
 
+        self.downsample = downsample
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
     def forward(self, x):
+        print(f"ResBlock input shape: {x.shape}")
+        print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+
         residual = self.shortcut(x)
+        print(f"After shortcut: {residual.shape}")
         
         out = self.conv1(x)
+        print(f"After conv1: {out.shape}")
         out = self.bn1(out)
         out = self.relu1(out)
+        print(f"After bn1 and relu1: {out.shape}")
+        
         out = self.conv2(out)
+        print(f"After conv2: {out.shape}")
         out = self.bn2(out)
+        print(f"After bn2: {out.shape}")
         
         out += residual
+        print(f"After adding residual: {out.shape}")
+        
         out = self.relu2(out)
+        print(f"ResBlock output shape: {out.shape}")
         
         return out
 
 class FeatResBlock(ResBlock):
     def __init__(self, channels):
-        super().__init__(channels, downsample=False)
+        super().__init__(channels, channels, downsample=False)
     
 '''
 DenseFeatureEncoder (EF): Encodes the reference frame into multi-scale features.
@@ -437,16 +479,37 @@ class IMF(nn.Module):
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
-        # Define feature dimensions for each layer
+           # Define feature dimensions for each layer
         self.feature_dims = [64, 128, 256, 512, 512]
         
         # Create ImplicitMotionAlignment modules for each layer
-        self.implicit_motion_alignment = nn.ModuleList([
-            ImplicitMotionAlignment(
-                feature_dim=self.feature_dims[i],
-                motion_dim=base_channels // (2 ** i) if i < 4 else base_channels // 8
-            ) for i in range(num_layers)
-        ])
+        self.implicit_motion_alignment = nn.ModuleList()
+        
+        for i in range(num_layers):
+            # Determine the feature dimension for this layer
+            feature_dim = self.feature_dims[i]
+            
+            # Determine the motion dimension for this layer
+            # The first layer uses 256 channels, others use 512
+            if i == 0:
+                motion_dim = 256
+            else:
+                motion_dim = 512
+            
+            # Create the ImplicitMotionAlignment module for this layer
+            alignment_module = ImplicitMotionAlignment(
+                feature_dim=feature_dim,
+                motion_dim=motion_dim
+            )
+            
+            # Add the module to the ModuleList
+            self.implicit_motion_alignment.append(alignment_module)
+        
+        # Print some information about the created modules
+        print(f"Created {len(self.implicit_motion_alignment)} ImplicitMotionAlignment modules:")
+        for i, module in enumerate(self.implicit_motion_alignment):
+            print(f"  Layer {i}: feature_dim={self.feature_dims[i]}, motion_dim={256 if i == 0 else 512}")
+
 
     def forward(self, x_current, x_reference):
         print(f"IMF input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
@@ -484,30 +547,46 @@ The property decorators for accessing the encoders and decoder are maintained, n
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        self.imf = IMF(latent_dim, base_channels, num_layers)
+        self.dense_feature_encoder = DenseFeatureEncoder()
+        self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
+        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
-        # Update feature_dims to match the output of DenseFeatureEncoder
-        feature_dims = [64, 128, 256, 512, 512]
+        self.feature_dims = [64, 128, 256, 512, 512]
+        
+        self.implicit_motion_alignment = nn.ModuleList([
+            ImplicitMotionAlignment(
+                feature_dim=self.feature_dims[i],
+                motion_dim=base_channels // (2 ** i) if i < 4 else base_channels // 8
+            ) for i in range(num_layers)
+        ])
+        
         self.frame_decoder = FrameDecoder()
 
     def forward(self, x_current, x_reference):
-        print(f"IMFModel input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
-
         # Enable gradient computation for input tensors
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
         
-        # Get aligned features from IMF
-        aligned_features = self.imf(x_current, x_reference)
+        # Dense feature encoding
+        f_r = self.dense_feature_encoder(x_reference)
         
-        # Reconstruct the current frame using the FrameDecoder
+        # Latent token encoding
+        t_r = self.latent_token_encoder(x_reference)
+        t_c = self.latent_token_encoder(x_current)
+        
+        # Latent token decoding
+        m_r = self.latent_token_decoder(t_r)
+        m_c = self.latent_token_decoder(t_c)
+        
+        # Implicit motion alignment
+        aligned_features = []
+        for i, (f_r_i, m_r_i, m_c_i, align_layer) in enumerate(zip(f_r, m_r, m_c, self.implicit_motion_alignment)):
+            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+            aligned_features.append(aligned_feature)
+        
+        # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)
-        print(f"IMFModel output shape: {reconstructed_frame.shape}")
 
-        # Compute gradients during training
-        if self.training:
-            grads = torch.autograd.grad(reconstructed_frame.sum(), [x_current, x_reference], retain_graph=True, allow_unused=True)
-        
         return reconstructed_frame
 
     @property
@@ -526,12 +605,12 @@ class IMFModel(nn.Module):
 class SNConv2d(nn.Conv2d):
     def __init__(self, *args, **kwargs):
         super(SNConv2d, self).__init__(*args, **kwargs)
-        self.weight = nn.Parameter(torch.nn.utils.spectral_norm(self.weight))
+        self.conv = nn.utils.spectral_norm(self)
 
-
+    def forward(self, input):
+        return self.conv(input)
 '''
-Certainly! I'll implement the PatchDiscriminator class based on the multi-scale discriminator described in the IMF paper's supplementary material. This discriminator uses two different scales for better performance.
-PatchDiscriminator ClassClick to open code
+PatchDiscriminator
 This implementation of the PatchDiscriminator class follows the architecture described in the supplementary material of the IMF paper. Here are the key features:
 
 Multi-scale: The discriminator operates on two scales. The first scale (scale1) processes the input at its original resolution, while the second scale (scale2) processes a downsampled version of the input.
@@ -582,8 +661,24 @@ class PatchDiscriminator(nn.Module):
         )
 
     def forward(self, x):
-        output1 = self.scale1(x)
-        output2 = self.scale2(F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False))
+        print(f"PatchDiscriminator input shape: {x.shape}")
+
+        # Scale 1
+        output1 = x
+        for i, layer in enumerate(self.scale1):
+            output1 = layer(output1)
+            print(f"Scale 1 - Layer {i} output shape: {output1.shape}")
+
+        # Scale 2
+        x_downsampled = F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False)
+        print(f"Scale 2 - Downsampled input shape: {x_downsampled.shape}")
+        
+        output2 = x_downsampled
+        for i, layer in enumerate(self.scale2):
+            output2 = layer(output2)
+            print(f"Scale 2 - Layer {i} output shape: {output2.shape}")
+
+        print(f"PatchDiscriminator final output shapes: {output1.shape}, {output2.shape}")
         return [output1, output2]
 
 # Helper function to initialize weights

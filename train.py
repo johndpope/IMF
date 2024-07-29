@@ -9,9 +9,9 @@ import wandb
 import yaml
 import os
 
-from model import IMFModel
-from dataset import VideoDataset
-from patch_discriminator import PatchDiscriminator, init_weights
+from model import IMFModel,PatchDiscriminator, init_weights
+from VideoDataset import VideoDataset
+
 
 def load_config(config_path):
     with open(config_path, 'r') as file:
@@ -62,8 +62,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_d = optim.Adam(discriminator.parameters(), lr=config['training']['learning_rate'], 
                              betas=(config['optimizer']['beta1'], config['optimizer']['beta2']))
 
-    model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
-        model, discriminator, optimizer_g, optimizer_d, train_dataloader
+    model,  optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
+        model,  optimizer_g, optimizer_d, train_dataloader
     )
 
     vgg_loss = VGGLoss().to(accelerator.device)
@@ -84,7 +84,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
     for epoch in range(start_epoch, config['training']['num_epochs']):
         model.train()
-        discriminator.train()
+        # discriminator.train()
         total_loss_g = 0
         total_loss_d = 0
 
@@ -163,7 +163,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 def main():
     config = load_config('config.yaml')
 
-    wandb.init(project='IMF', config=config)
+    # wandb.init(project='IMF', config=config)
 
     accelerator = Accelerator(
         mixed_precision=config['accelerator']['mixed_precision'],
@@ -177,7 +177,7 @@ def main():
     )
 
     discriminator = PatchDiscriminator(ndf=config['discriminator']['ndf'])
-    discriminator.apply(init_weights)
+    # discriminator.apply(init_weights)
 
     transform = transforms.Compose([
         transforms.Resize((256, 256)),
