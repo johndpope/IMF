@@ -33,23 +33,15 @@ class UpConvResBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        self.feat_res_block2 = FeatResBlock(out_channels)
+        self.feat_res_block = FeatResBlock(out_channels)
 
     def forward(self, x):
-        # print(f"UpConvResBlock input shape: {x.shape}")
         out = self.upsample(x)
-        # print(f"After upsample: {out.shape}")
         out = self.conv1(out)
         out = self.bn1(out)
         out = self.relu(out)
-        # print(f"After conv1, bn1, relu: {out.shape}")
         out = self.conv2(out)
-        # print(f"After conv2: {out.shape}")
-        out = self.feat_res_block1(out)
-        # print(f"After feat_res_block1: {out.shape}")
-        out = self.feat_res_block2(out)
-        # print(f"UpConvResBlock output shape: {out.shape}")
+        out = self.feat_res_block(out)
         return out
 
 
@@ -521,19 +513,20 @@ class FrameDecoder(nn.Module):
         
         self.upconv_blocks = nn.ModuleList([
             UpConvResBlock(512, 512),
-            UpConvResBlock(512, 512),
-            UpConvResBlock(512, 256),
-            UpConvResBlock(256, 128),
-            UpConvResBlock(128, 64)
+            UpConvResBlock(1024, 512),  # Increased input channels
+            UpConvResBlock(768, 256),   # Increased input channels
+            UpConvResBlock(384, 128)    # Increased input channels
         ])
         
         self.feat_blocks = nn.ModuleList([
-            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(256) for _ in range(3)])
+            FeatResBlock(512),
+            FeatResBlock(256),
+            FeatResBlock(128)
         ])
         
         self.final_conv = nn.Sequential(
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
             nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
@@ -541,28 +534,18 @@ class FrameDecoder(nn.Module):
     def forward(self, features):
         print(f"FrameDecoder input shapes: {[f.shape for f in features]}")
 
-        f4, f3, f2, f1 = features
+        x = features[-1]  # Start with the smallest feature map (512x8x8)
         
-        x = self.upconv_blocks[0](f4)
-        print(f"After first upconv: {x.shape}")
-
-        x = torch.cat([x, self.feat_blocks[0](f3)], dim=1)
-        print(f"After first concat: {x.shape}")
-
-        x = self.upconv_blocks[1](x)
-        x = torch.cat([x, self.feat_blocks[1](f2)], dim=1)
+        for i in range(len(self.upconv_blocks)):
+            x = self.upconv_blocks[i](x)
+            if i < len(self.feat_blocks):
+                feat = self.feat_blocks[i](features[-(i+2)])
+                x = torch.cat([x, feat], dim=1)
         
-        x = self.upconv_blocks[2](x)
-        x = torch.cat([x, self.feat_blocks[2](f1)], dim=1)
-        
-        x = self.upconv_blocks[3](x)
-        x = self.upconv_blocks[4](x)
-        
-        x_c = self.final_conv(x)
-        print(f"FrameDecoder output shape: {x_c.shape}")
+        x = self.final_conv(x)
+        print(f"FrameDecoder output shape: {x.shape}")
 
-        return x_c
-
+        return x
 
 '''
 The upsample parameter is replaced with downsample to match the diagram.
@@ -708,8 +691,20 @@ class IMFModel(nn.Module):
         for i, feat in enumerate(aligned_features):
             print(f"  Layer {i+1}: {feat.shape}")
         
+        # Reshape aligned features back to 2D spatial form
+        reshaped_features = []
+        for i, feat in enumerate(aligned_features):
+            b, hw, c = feat.shape
+            h = w = int(math.sqrt(hw))
+            reshaped_feat = feat.transpose(1, 2).view(b, c, h, w)
+            reshaped_features.append(reshaped_feat)
+
+        print("Reshaped features shapes:")
+        for i, feat in enumerate(reshaped_features):
+            print(f"  Layer {i+1}: {feat.shape}")
+
         # Frame decoding
-        reconstructed_frame = self.frame_decoder(aligned_features)
+        reconstructed_frame = self.frame_decoder(reshaped_features)
 
         return reconstructed_frame
 
