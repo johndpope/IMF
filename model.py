@@ -417,7 +417,7 @@ class ImplicitMotionAlignment(nn.Module):
         # Get the device of the input tensor
         device = ml_c.device
 
-        # Add positional embeddings
+        # create positional embeddings
         p_q = self.pq(ml_c)
         p_k = self.pk(ml_r)
 
