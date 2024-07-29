@@ -266,9 +266,9 @@ class CrossAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, query, key, value):
-        print(f"🍕 Input query shape: {query.shape}")
-        print(f"Input key shape: {key.shape}")
-        print(f"Input value shape: {value.shape}")
+        print(f"🍕 ml_c query shape (motion features): {query.shape}")
+        print(f"ml_r key shape (motion features): {key.shape}")
+        print(f"fl_r value shape (appearance features): {value.shape}")
 
         batch_size = query.size(0)
 
@@ -414,11 +414,13 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"  ml_r: {ml_r.shape}")
         print(f"  fl_r: {fl_r.shape}")
 
-        # Flatten the inputs
-        b, c, h, w = ml_c.shape
-        ml_c = ml_c.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
-        ml_r = ml_r.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
-        fl_r = fl_r.view(b, fl_r.size(1), -1).permute(0, 2, 1)  # (b, h*w, c)
+        ml_c = ml_c.flatten(0, 3)
+        ml_r = ml_r.flatten(0, 3)
+        fl_r = fl_r.flatten(0, 3)
+
+        #  >>>> ml_c: torch.Size([1048576])
+        #  >>>> ml_r: torch.Size([1048576])
+        #  >>>> fl_r: torch.Size([1048576])
 
         print("After flattening:")
         print(f"  ml_c: {ml_c.shape}")
