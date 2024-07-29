@@ -115,14 +115,14 @@ class DenseFeatureEncoder(nn.Module):
         print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
         features = []
         x = self.initial_conv(x)
-        # print(f"After initial conv: {x.shape}")
+        print(f"    After initial conv: {x.shape}")
         for i, block in enumerate(self.down_blocks):
             x = block(x)
-            # print(f"After down_block {i+1}: {x.shape}")
+            print(f"    After down_block {i+1}: {x.shape}")
             if i < 4:
                 features.append(x)
         features.append(x)
-        # print(f"DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
+        print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
 
 
@@ -159,27 +159,27 @@ class LatentTokenEncoder(nn.Module):
         )
 
     def forward(self, x):
-        # print(f"LatentTokenEncoder input shape: {x.shape}")
+        print(f"💳 LatentTokenEncoder input shape: {x.shape}")
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        # print(f"After first conv, bn, relu: {x.shape}")
+        print(f"    After first conv, bn, relu: {x.shape}")
         x = self.resblock1(x)
-        # print(f"After resblock1: {x.shape}")
+        print(f"    After resblock1: {x.shape}")
         x = self.resblock2(x)
-        # print(f"After resblock2: {x.shape}")
+        print(f"    After resblock2: {x.shape}")
         x = self.resblock3(x)
-        # print(f"After resblock3: {x.shape}")
+        print(f"    After resblock3: {x.shape}")
         x = self.resblock4(x)
-        # print(f"After resblock4: {x.shape}")
+        print(f"    After resblock4: {x.shape}")
         x = self.equal_conv(x)
-        # print(f"After equal_conv: {x.shape}")
+        print(f"    After equal_conv: {x.shape}")
         x = self.adaptive_pool(x)
-        # print(f"After adaptive_pool: {x.shape}")
+        print(f"    After adaptive_pool: {x.shape}")
         x = x.view(x.size(0), -1)
-        # print(f"After flatten: {x.shape}")
+        print(f"    After flatten: {x.shape}")
         t = self.fc_layers(x)
-        # print(f"LatentTokenEncoder output shape: {t.shape}")
+        print(f"    1xdm=32 LatentTokenEncoder output shape: {t.shape}")
         return t
 
     
@@ -213,6 +213,25 @@ It uses a series of StyleConv layers, which apply style modulation based on the 
 Some StyleConv layers perform upsampling (indicated by ↑2 in the image).
 The network maintains 512 channels for most of the layers, switching to 256 channels for the final three layers.
 It outputs multiple feature maps (m⁴, m³, m², m¹) as shown in the image. These are collected in the features list and returned in reverse order to match the notation in the image.
+
+
+
+
+Latent Token Decoder
+Transforms compact tokens (tr, tc) into multiple motion features (mlr and mlc) with specific dimensions, where "l" indicates the layer index.
+
+Style Modulation:
+
+Uses a technique from StyleGAN2 called Weight Modulation and Demodulation.
+This technique scales convolution weights with the latent token and normalizes them to have a unit standard deviation.
+Benefits:
+
+The latent tokens compress multi-scale information, making them comprehensive representations.
+Our representation is fully implicit, allowing flexible adjustment of the latent token dimension for different scenarios.
+Advantages Over Keypoint-Based Methods:
+
+Unlike keypoint-based methods that use Gaussian heatmaps converted from keypoints, our design scales better and has more capabilities.
+Our latent tokens are directly learned by the encoder, rather than being restricted to coordinates with a limited value range.
 '''
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=64):
@@ -238,14 +257,14 @@ class LatentTokenDecoder(nn.Module):
     def forward(self, t):
         print(f"🎑 LatentTokenDecoder input shape: {t.shape}")
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        print(f"After const: {x.shape}")
+        print(f"    After const: {x.shape}")
         features = []
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
-            print(f"After style_conv {i+1}: {x.shape}")
+            print(f"    After style_conv {i+1}: {x.shape}")
             if i in [3, 6, 9, 12]:
                 features.append(x)
-        print(f"LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
+        print(f"    LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
 
@@ -324,6 +343,7 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x):
         def custom_forward(x):
+            print("💸 TransformerBlock")
             # Apply layer normalization before attention
             norm_x = self.layer_norm1(x)
             
@@ -348,30 +368,6 @@ class TransformerBlock(nn.Module):
 
 
 
-class PositionalEncoding(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        print(f"PositionalEncoding input shape: {x.shape}")
-        
-        batch_size, channels, height, width = x.size()
-        d_model = channels
-        
-        # Create positional encodings for 2D data
-        pos_h = torch.arange(height, dtype=torch.float32).unsqueeze(1).expand(height, width)
-        pos_w = torch.arange(width, dtype=torch.float32).unsqueeze(0).expand(height, width)
-        
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        
-        pe = torch.zeros(d_model, height, width)
-        pe[0::2, :, :] = torch.sin(pos_h.unsqueeze(0) * div_term.view(-1, 1, 1))
-        pe[1::2, :, :] = torch.cos(pos_w.unsqueeze(0) * div_term.view(-1, 1, 1))
-        
-        pe = pe.unsqueeze(0).expand(batch_size, -1, -1, -1)
-        
-        print(f"Generated positional encoding shape: {pe.shape}")
-        return x + pe.to(x.device)
 '''
 ImplicitMotionAlignment
 
@@ -402,13 +398,21 @@ class ImplicitMotionAlignment(nn.Module):
     def __init__(self, motion_dim, feature_dim, num_heads=8):
         super(ImplicitMotionAlignment, self).__init__()
         self.num_heads = num_heads
-        self.pq = PositionalEncoding()
-        self.pk = PositionalEncoding()
+        
+        self.pq = PositionalEncoding1D(motion_dim) # not feature_dim! motion features ml_c and ml_r as the queries (Q) and keys (K)
+        self.pk = PositionalEncoding1D(motion_dim)
+        
+        self.cross_attention = nn.MultiheadAttention(embed_dim=motion_dim, num_heads=num_heads, batch_first=True)
+        
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(feature_dim, num_heads) for _ in range(4)
+            TransformerBlock(motion_dim, num_heads) for _ in range(4)
         ])
+        
+        self.output_proj = nn.Linear(motion_dim, feature_dim)
+        self.input_proj = nn.Linear(feature_dim, motion_dim)
 
     def forward(self, ml_c, ml_r, fl_r):
+        b, c, h, w = ml_c.shape # for reprojection
         print("🎮 ImplicitMotionAlignment input shapes:")
         print(f"  ml_c: {ml_c.shape}")
         print(f"  ml_r: {ml_r.shape}")
@@ -417,19 +421,36 @@ class ImplicitMotionAlignment(nn.Module):
         # Get the device of the input tensor
         device = ml_c.device
 
+   
+
+        print("Before flattening:")
+        print(f"  ml_c: {ml_c.shape}")
+        print(f"  ml_r: {ml_r.shape}")
+        print(f"  fl_r: {fl_r.shape}")
+
+
         # create positional embeddings
         p_q = self.pq(ml_c)
         p_k = self.pk(ml_r)
+        print(f"  p_q: {p_q.shape}")
+        print(f"  p_k: {p_k.shape}")
+
 
         # Flatten into a 1D
         ml_c = ml_c.flatten(1, 3)
         ml_r = ml_r.flatten(1, 3)
         fl_r = fl_r.flatten(1, 3)
+
+        # 🤷 flatten this too ? 
         p_q = p_q.flatten(1, 3)
         p_k = p_k.flatten(1, 3)
         # Add positional embeddings
-        ml_c = ml_c + p_q
-        ml_r = ml_r + p_k
+        # ml_c = ml_c + p_q - this blows up
+        # ml_r = ml_r + p_k
+        # 🤷 Concatenate instead of add
+        ml_c = torch.cat([ml_c, p_q], dim=-1)
+        ml_r = torch.cat([ml_r, p_k], dim=-1)
+
 
         print("After flattening and adding positional embeddings:")
         print(f"  ml_c: {ml_c.shape}")
@@ -444,22 +465,52 @@ class ImplicitMotionAlignment(nn.Module):
 
 
         cross_attention = CrossAttention(query_dim, key_dim, value_dim, self.num_heads).to(device)
-
         # Cross-attention
-        v_prime = cross_attention(ml_c, ml_r, fl_r)
-        print(f"After cross-attention: {v_prime.shape}")
+        v_prime, _ = cross_attention(ml_c, ml_r, fl_r)
+        print(f"After cross_attention - v_prime: {v_prime.shape}")
 
         # Transformer blocks
         for i, transformer_block in enumerate(self.transformer_blocks):
             v_prime = transformer_block(v_prime)
-            print(f"After transformer block {i+1}: {v_prime.shape}")
+            print(f"After transformer block {i} - v_prime: {v_prime.shape}")
+
+        # Project to feature dimension
+        fl_c = self.output_proj(v_prime)
+        print(f"After output projection - fl_c: {fl_c.shape}")
 
         # Reshape back to 2D
-        fl_c = v_prime.transpose(1, 2).view(b, -1, h, w)
-        print(f"Final output shape: {fl_c.shape}")
+        fl_c = fl_c.transpose(1, 2).view(b, -1, h, w)
+        print(f"Final output shape - fl_c: {fl_c.shape}")
 
         return fl_c
 
+
+class PositionalEncoding1D(nn.Module):
+    def __init__(self, d_model, max_len=10000):
+        super(PositionalEncoding1D, self).__init__()
+        pe = torch.zeros(1, max_len, d_model)  # Add extra dimension for broadcasting
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        Args:
+            x: Tensor, shape [batch_size, seq_len, embedding_dim] or [batch_size, embedding_dim, height, width]
+        """
+        if x.dim() == 3:
+            # For [batch_size, seq_len, embedding_dim] input
+            seq_len = x.size(1)
+            return self.pe[:, :seq_len, :].expand(x.size(0), -1, -1)
+        elif x.dim() == 4:
+            # For [batch_size, embedding_dim, height, width] input
+            batch_size, _, height, width = x.size()
+            positional_encoding = self.pe[:, :height*width, :].expand(batch_size, -1, -1)
+            return positional_encoding.view(batch_size, height, width, -1).permute(0, 3, 1, 2)
+        else:
+            raise ValueError("Input tensor must be 3D or 4D")
 
 
 '''
@@ -578,6 +629,8 @@ class FeatResBlock(ResBlock):
     def __init__(self, channels):
         super().__init__(channels, channels, downsample=False)
     
+
+
 '''
 DenseFeatureEncoder (EF): Encodes the reference frame into multi-scale features.
 LatentTokenEncoder (ET): Encodes both the current and reference frames into latent tokens.
@@ -590,83 +643,6 @@ Encodes the reference frame using the dense feature encoder.
 Encodes both current and reference frames into latent tokens.
 Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
-'''
-class IMF(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
-        super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder()
-        self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
-        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
-        
-        # Define feature dimensions for each layer
-        self.feature_dims = [64, 128, 256, 512]
-        
-        # Create ImplicitMotionAlignment modules for each layer
-        self.implicit_motion_alignment = nn.ModuleList([
-            ImplicitMotionAlignment(
-                feature_dim=self.feature_dims[i],
-                motion_dim=256 if i == 3 else 512
-            ) for i in range(num_layers)
-        ])
-
-
-    def forward(self, x_current, x_reference):
-        print(f"IMF input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
-
-        # Encode reference frame
-        f_r = self.dense_feature_encoder(x_reference)
-        
-        # Encode latent tokens
-        t_r = self.latent_token_encoder(x_reference)
-        t_c = self.latent_token_encoder(x_current)
-        print(f"Encoded tokens shapes: t_r: {t_r.shape}, t_c: {t_c.shape}")
-
-        # Decode motion features
-        m_r = self.latent_token_decoder(t_r)
-        m_c = self.latent_token_decoder(t_c)
-        
-        # Align features
-        aligned_features = []
-
-        # Get the number of layers we're working with
-        num_layers = len(self.implicit_motion_alignment)
-
-        # Iterate through each layer
-        for i in range(num_layers):
-            # Extract the corresponding features and alignment layer for this iteration
-            f_r_i = f_r[i]
-            m_r_i = m_r[i]
-            m_c_i = m_c[i]
-            align_layer = self.implicit_motion_alignment[i]
-            
-            # Print input shapes for debugging
-            print(f"Layer {i+1} input shapes:")
-            print(f"  f_r_i shape: {f_r_i.shape}")
-            print(f"  m_r_i shape: {m_r_i.shape}")
-            print(f"  m_c_i shape: {m_c_i.shape}")
-            
-            # Perform the alignment
-            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            
-            # Add the aligned feature to our list
-            aligned_features.append(aligned_feature)
-            
-            # Print the shape of the aligned feature
-            print(f"Aligned feature {i+1} shape: {aligned_feature.shape}")
-            print("--------------------")
-
-        # At this point, aligned_features contains all the aligned features
-
-        return aligned_features
-
-
-
-'''
-The IMF class is now used as a submodule, which encapsulates the DenseFeatureEncoder, LatentTokenEncoder, LatentTokenDecoder, and ImplicitMotionAlignment modules.
-The FrameDecoder is initialized without specifying feature dimensions, as it now expects a list of 4 feature maps as input, which is consistent with the output of the IMF.
-In the forward method, we first get the aligned features from the IMF, then pass these to the FrameDecoder to reconstruct the current frame.
-We've kept the gradient computation during training, which could be useful for certain training techniques or analyses.
-The property decorators for accessing the encoders and decoder are maintained, now accessing them through the IMF submodule.
 '''
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
