@@ -513,20 +513,18 @@ class FrameDecoder(nn.Module):
         
         self.upconv_blocks = nn.ModuleList([
             UpConvResBlock(512, 512),
-            UpConvResBlock(1024, 512),  # Increased input channels
-            UpConvResBlock(768, 256),   # Increased input channels
-            UpConvResBlock(384, 128)    # Increased input channels
+            UpConvResBlock(1024, 256),
+            UpConvResBlock(512, 128),
+            UpConvResBlock(256, 64)
         ])
         
         self.feat_blocks = nn.ModuleList([
-            FeatResBlock(512),
-            FeatResBlock(256),
-            FeatResBlock(128)
+            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
         ])
         
         self.final_conv = nn.Sequential(
-            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(inplace=True),
             nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )

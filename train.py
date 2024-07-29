@@ -8,7 +8,7 @@ from tqdm.auto import tqdm
 import wandb
 import yaml
 import os
-
+import torch.nn.functional as F
 from model import IMFModel,PatchDiscriminator, init_weights
 from VideoDataset import VideoDataset
 
@@ -28,7 +28,9 @@ class VGGLoss(nn.Module):
         return self.vgg(x)
 
 def pixel_loss(x_hat, x):
-    return nn.L1Loss()(x_hat, x)
+    # Resize x_hat to match the dimensions of x
+    x_hat_resized = F.interpolate(x_hat, size=x.shape[2:], mode='bilinear', align_corners=False)
+    return nn.L1Loss()(x_hat_resized, x)
 
 def perceptual_loss(vgg, x_hat, x):
     return sum(nn.L1Loss()(vgg(x_hat[:, :, i::2, i::2]), vgg(x[:, :, i::2, i::2])) for i in range(4))
