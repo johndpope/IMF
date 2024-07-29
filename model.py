@@ -331,6 +331,8 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
+        print(f"Input shape: {x.shape}")
+        print(f"Positional embeddings shape: {self.pe.shape}")
         return x + self.pe[:x.size(0)]
 
 
