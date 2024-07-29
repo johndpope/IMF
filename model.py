@@ -321,21 +321,25 @@ class TransformerBlock(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+    def __init__(self, max_len=5000):
         super().__init__()
-        position = torch.arange(max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-        pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe)
+        self.max_len = max_len
 
     def forward(self, x):
-        print(f"Input shape: {x.shape}")
-        print(f"Positional embeddings shape: {self.pe.shape}")
-        return x + self.pe[:x.size(0)]
-
-
+        print(f"PositionalEncoding input shape: {x.shape}")
+        
+        batch_size, seq_len, d_model = x.size()
+        position = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        
+        pe = torch.zeros(seq_len, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        pe = pe.unsqueeze(0).expand(batch_size, -1, -1)
+        
+        print(f"Generated positional encoding shape: {pe.shape}")
+        return x + pe.to(x.device)
 '''
 ImplicitMotionAlignment
 
@@ -363,37 +367,60 @@ transformer blocks. This is done to capture the complex relationships between th
 the final appearance features fl_c of the current frame.
 '''
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, motion_dim,feature_dim, num_heads=8):
+    def __init__(self, motion_dim, feature_dim, num_heads=8):
         super(ImplicitMotionAlignment, self).__init__()
-        self.cross_attention = CrossAttention(motion_dim, motion_dim, feature_dim, num_heads)
-        self.pq = PositionalEncoding(feature_dim)
-        self.pk = PositionalEncoding(feature_dim)
+        query_dim = motion_dim
+        key_dim = motion_dim
+        value_dim = feature_dim
+        
+        self.cross_attention = CrossAttention(query_dim, key_dim, value_dim, num_heads)
+        self.pq = PositionalEncoding(query_dim)
+        self.pk = PositionalEncoding(key_dim)
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(feature_dim, num_heads) for _ in range(4)
         ])
 
     def forward(self, ml_c, ml_r, fl_r):
+        print("🎮 ImplicitMotionAlignment input shapes:")
+        print(f"  ml_c: {ml_c.shape}")
+        print(f"  ml_r: {ml_r.shape}")
+        print(f"  fl_r: {fl_r.shape}")
+
+        
         # Flatten the inputs
         b, c, h, w = ml_c.shape
         ml_c = ml_c.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
         ml_r = ml_r.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
-        fl_r = fl_r.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
+        fl_r = fl_r.view(b, fl_r.size(1), -1).permute(0, 2, 1)  # (b, h*w, c)
+
+        print("After flattening:")
+        print(f"  ml_c: {ml_c.shape}")
+        print(f"  ml_r: {ml_r.shape}")
+        print(f"  fl_r: {fl_r.shape}")
 
         # Add positional embeddings to queries (ml_c) and keys (ml_r)
         ml_c = self.pq(ml_c)  # Add Pq to queries
         ml_r = self.pk(ml_r)  # Add Pk to keys
 
+        print("After adding positional embeddings:")
+        print(f"  ml_c: {ml_c.shape}")
+        print(f"  ml_r: {ml_r.shape}")
+
         # Cross-attention
         v_prime = self.cross_attention(ml_c, ml_r, fl_r)
+        print(f"After cross-attention: {v_prime.shape}")
 
         # Transformer blocks
-        for transformer_block in self.transformer_blocks:
+        for i, transformer_block in enumerate(self.transformer_blocks):
             v_prime = transformer_block(v_prime)
+            print(f"After transformer block {i+1}: {v_prime.shape}")
 
         # Reshape back to 2D
-        fl_c = v_prime.permute(0, 2, 1).view(b, c, h, w)
+        fl_c = v_prime.permute(0, 2, 1).view(b, -1, h, w)
+        print(f"Final output shape: {fl_c.shape}")
 
         return fl_c
+
 
 
 '''
