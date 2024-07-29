@@ -349,22 +349,26 @@ class TransformerBlock(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, max_len=5000):
+    def __init__(self):
         super().__init__()
-        self.max_len = max_len
 
     def forward(self, x):
         print(f"PositionalEncoding input shape: {x.shape}")
         
-        batch_size, seq_len, d_model = x.size()
-        position = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
+        batch_size, channels, height, width = x.size()
+        d_model = channels
+        
+        # Create positional encodings for 2D data
+        pos_h = torch.arange(height, dtype=torch.float32).unsqueeze(1).expand(height, width)
+        pos_w = torch.arange(width, dtype=torch.float32).unsqueeze(0).expand(height, width)
+        
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         
-        pe = torch.zeros(seq_len, d_model)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = torch.zeros(d_model, height, width)
+        pe[0::2, :, :] = torch.sin(pos_h.unsqueeze(0) * div_term.view(-1, 1, 1))
+        pe[1::2, :, :] = torch.cos(pos_w.unsqueeze(0) * div_term.view(-1, 1, 1))
         
-        pe = pe.unsqueeze(0).expand(batch_size, -1, -1)
+        pe = pe.unsqueeze(0).expand(batch_size, -1, -1, -1)
         
         print(f"Generated positional encoding shape: {pe.shape}")
         return x + pe.to(x.device)
@@ -397,13 +401,9 @@ the final appearance features fl_c of the current frame.
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, motion_dim, feature_dim, num_heads=8):
         super(ImplicitMotionAlignment, self).__init__()
-        query_dim = motion_dim
-        key_dim = motion_dim
-        value_dim = feature_dim
-        
-        self.cross_attention = CrossAttention(query_dim, key_dim, value_dim, num_heads)
-        self.pq = PositionalEncoding(query_dim)
-        self.pk = PositionalEncoding(key_dim)
+        self.num_heads = num_heads
+        self.pq = PositionalEncoding()
+        self.pk = PositionalEncoding()
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(feature_dim, num_heads) for _ in range(4)
         ])
@@ -414,29 +414,40 @@ class ImplicitMotionAlignment(nn.Module):
         print(f"  ml_r: {ml_r.shape}")
         print(f"  fl_r: {fl_r.shape}")
 
-        ml_c = ml_c.flatten(0, 3)
-        ml_r = ml_r.flatten(0, 3)
-        fl_r = fl_r.flatten(0, 3)
+        # Get the device of the input tensor
+        device = ml_c.device
 
-        #  >>>> ml_c: torch.Size([1048576])
-        #  >>>> ml_r: torch.Size([1048576])
-        #  >>>> fl_r: torch.Size([1048576])
+        # Add positional embeddings
+        p_q = self.pq(ml_c)
+        p_k = self.pk(ml_r)
 
-        print("After flattening:")
+        # Flatten into a 1D
+        ml_c = ml_c.flatten(1, 3)
+        ml_r = ml_r.flatten(1, 3)
+        fl_r = fl_r.flatten(1, 3)
+        p_q = p_q.flatten(1, 3)
+        p_k = p_k.flatten(1, 3)
+        # Add positional embeddings
+        ml_c = ml_c + p_q
+        ml_r = ml_r + p_k
+
+        print("After flattening and adding positional embeddings:")
         print(f"  ml_c: {ml_c.shape}")
         print(f"  ml_r: {ml_r.shape}")
         print(f"  fl_r: {fl_r.shape}")
 
-        # Add positional embeddings to queries (ml_c) and keys (ml_r)
-        ml_c = self.pq(ml_c)
-        ml_r = self.pk(ml_r)
+        # Create CrossAttention on the fly with correct dimensions
+        query_dim = ml_c.size(1)
+        key_dim = ml_r.size(1)
+        value_dim = fl_r.size(1)
+        print("query_dim:",query_dim)
+        print("key_dim:",key_dim)
+        print("value_dim:",value_dim)
 
-        print("After adding positional embeddings:")
-        print(f"  ml_c: {ml_c.shape}")
-        print(f"  ml_r: {ml_r.shape}")
+        cross_attention = CrossAttention(query_dim, key_dim, value_dim, self.num_heads).to(device)
 
         # Cross-attention
-        v_prime = self.cross_attention(ml_c, ml_r, fl_r)
+        v_prime = cross_attention(ml_c, ml_r, fl_r)
         print(f"After cross-attention: {v_prime.shape}")
 
         # Transformer blocks
@@ -445,7 +456,7 @@ class ImplicitMotionAlignment(nn.Module):
             print(f"After transformer block {i+1}: {v_prime.shape}")
 
         # Reshape back to 2D
-        fl_c = v_prime.permute(0, 2, 1).view(b, -1, h, w)
+        fl_c = v_prime.transpose(1, 2).view(b, -1, h, w)
         print(f"Final output shape: {fl_c.shape}")
 
         return fl_c
