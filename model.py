@@ -246,60 +246,46 @@ class LatentTokenDecoder(nn.Module):
         print(f"LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 
+import math
 
-class MemoryEfficientAttention(nn.Module):
-    def __init__(self, dim, num_heads):
-        super().__init__()
+class CrossAttention(nn.Module):
+    def __init__(self, query_dim, key_dim, value_dim, num_heads, dropout=0.1):
+        super(CrossAttention, self).__init__()
+        self.query_linear = nn.Linear(query_dim, query_dim)
+        self.key_linear = nn.Linear(key_dim, query_dim)
+        self.value_linear = nn.Linear(value_dim, value_dim)
+        self.dropout = nn.Dropout(dropout)
         self.num_heads = num_heads
-        self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
-        self.qkv = nn.Linear(dim * 3, dim * 3, bias=False)  # Changed input dimension
-        self.proj = nn.Linear(dim, dim)
 
-    def forward(self, x):
-        B, N, C = x.shape
+    def forward(self, query, key, value):
+        # Compute attention scores
+        query = self.query_linear(query)
+        key = self.key_linear(key)
+        value = self.value_linear(value)
 
-        # Diagnostics: print input shape
-        print(f"Input shape: {x.shape}")
-
-        # Apply qkv transformation
-        qkv = self.qkv(x)
-        # Diagnostics: print shape after qkv transformation
-        print(f"Shape after qkv transformation: {qkv.shape}")
-
-        # Reshape qkv and permute dimensions
-        qkv = qkv.reshape(B, N, 3, self.num_heads, C // 3 // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-
-        # Diagnostics: print shapes of q, k, v
-        print(f"q shape: {q.shape}")
-        print(f"k shape: {k.shape}")
-        print(f"v shape: {v.shape}")
+        # Split into heads
+        query = query.view(-1, query.size(-1), self.num_heads, query.size(-2)).transpose(1, 2)
+        key = key.view(-1, key.size(-1), self.num_heads, key.size(-2)).transpose(1, 2)
+        value = value.view(-1, value.size(-1), self.num_heads, value.size(-2)).transpose(1, 2)
 
         # Compute attention scores
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
+        attention_scores = torch.matmul(query, key.transpose(-1, -2)) / math.sqrt(key.size(-1))
 
-        # Diagnostics: print shape of attention scores
-        print(f"attn shape: {attn.shape}")
+        # Apply attention
+        attention_weights = F.softmax(attention_scores, dim=-1)
+        attention_weights = self.dropout(attention_weights)
+        context = torch.matmul(attention_weights, value)
 
-        # Apply attention to values
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C // 3)
-        # Diagnostics: print shape after applying attention
-        print(f"Shape after attention application: {x.shape}")
+        # Concatenate heads
+        context = context.transpose(1, 2).contiguous().view(-1, context.size(-2), context.size(-1))
 
-        # Project the output
-        x = self.proj(x)
-        # Diagnostics: print final output shape
-        print(f"Final output shape: {x.shape}")
-
-        return x
-
+        return context
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, num_heads):
         super().__init__()
-        self.attention = MemoryEfficientAttention(dim, num_heads)
+        # Initialize the multi-head attention layer
+        self.attention = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, batch_first=True)
         self.feed_forward = nn.Sequential(
             nn.Linear(dim, dim * 2),
             nn.GELU(),
@@ -310,91 +296,102 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x):
         def custom_forward(x):
-            x = x + self.attention(self.layer_norm1(x))
-            x = x + self.feed_forward(self.layer_norm2(x))
+            # Apply layer normalization before attention
+            norm_x = self.layer_norm1(x)
+            
+            # Perform self-attention
+            attn_output, _ = self.attention(norm_x, norm_x, norm_x)
+            
+            # Add the residual connection
+            x = x + attn_output
+            
+            # Apply layer normalization before feed-forward network
+            norm_x = self.layer_norm2(x)
+            
+            # Pass through feed-forward network
+            ff_output = self.feed_forward(norm_x)
+            
+            # Add the residual connection
+            x = x + ff_output
+            
             return x
+        
         return checkpoint(custom_forward, x)
 
-class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, num_heads=8, num_transformer_blocks=4, chunk_size=1024):
+
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
         super().__init__()
-        self.feature_dim = feature_dim
-        self.motion_dim = motion_dim
-        self.num_heads = num_heads
-        self.chunk_size = chunk_size
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(max_len, 1, d_model)
+        pe[:, 0, 0::2] = torch.sin(position * div_term)
+        pe[:, 0, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
 
-        self.q_proj = nn.Linear(motion_dim, feature_dim)
-        self.k_proj = nn.Linear(motion_dim, feature_dim)
-        self.v_proj = nn.Linear(feature_dim, feature_dim)
+    def forward(self, x):
+        return x + self.pe[:x.size(0)]
 
-        self.p_q = nn.Parameter(torch.randn(1, 1, feature_dim))
-        self.p_k = nn.Parameter(torch.randn(1, 1, feature_dim))
 
-        self.attention = MemoryEfficientAttention(feature_dim, num_heads)
-        
+'''
+ImplicitMotionAlignment
+
+Cross-Attention Module
+The module consists of two parts: the cross-attention module and the transformer. 
+The cross-attention module is implemented using the scaled dot-product cross-attention mechanism. 
+This module takes as input the motion features ml_c and ml_r as the queries (Q) and keys (K), respectively, 
+and the appearance features fl_r as the values (V).
+
+Flattening and Positional Embeddings
+Before computing the attention weights, the input features are first flattened to a 1D vector. 
+Then, positional embeddings Pq and Pk are added to the queries and keys, respectively. 
+This is done to capture the spatial relationships between the features.
+
+Attention Weights Computation
+The attention weights are computed by taking the dot product of the queries with the keys, dividing each by √dk 
+(where dk is the dimensionality of the keys), and applying a softmax function to obtain the weights on the values.
+
+Output-Aligned Values
+The output-aligned values V' are computed through matrix multiplication of the attention weights with the values.
+
+Transformer Blocks
+The output-aligned values V' are further refined using multi-head self-attention and feedforward network-based 
+transformer blocks. This is done to capture the complex relationships between the features and to produce 
+the final appearance features fl_c of the current frame.
+'''
+class ImplicitMotionAlignment(nn.Module):
+    def __init__(self, motion_dim,feature_dim, num_heads):
+        super(ImplicitMotionAlignment, self).__init__()
+        self.cross_attention = CrossAttention(motion_dim, motion_dim, feature_dim, num_heads)
+        self.pq = PositionalEncoding(feature_dim)
+        self.pk = PositionalEncoding(feature_dim)
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(feature_dim, num_heads) for _ in range(num_transformer_blocks)
+            TransformerBlock(feature_dim, num_heads) for _ in range(4)
         ])
 
-    def forward(self, m_c, m_r, f_r):
-        print(f"m_c shape: {m_c.shape}")
-        print(f"m_r shape: {m_r.shape}")
-        print(f"f_r shape: {f_r.shape}")
+    def forward(self, ml_c, ml_r, fl_r):
+        # Flatten the inputs
+        b, c, h, w = ml_c.shape
+        ml_c = ml_c.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
+        ml_r = ml_r.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
+        fl_r = fl_r.view(b, c, -1).permute(0, 2, 1)  # (b, h*w, c)
 
-        b, c_m, h_m, w_m = m_c.shape
-        _, c_f, h_f, w_f = f_r.shape
-        m_c = m_c.view(b, self.motion_dim, -1).permute(0, 2, 1)
-        m_r = m_r.view(b, self.motion_dim, -1).permute(0, 2, 1)
-        f_r = f_r.view(b, self.feature_dim, -1).permute(0, 2, 1)
+        # Add positional embeddings to queries (ml_c) and keys (ml_r)
+        ml_c = self.pq(ml_c)  # Add Pq to queries
+        ml_r = self.pk(ml_r)  # Add Pk to keys
 
-        print(f"Reshaped m_c shape: {m_c.shape}")
-        print(f"Reshaped m_r shape: {m_r.shape}")
-        print(f"Reshaped f_r shape: {f_r.shape}")
+        # Cross-attention
+        v_prime = self.cross_attention(ml_c, ml_r, fl_r)
 
-        q = self.q_proj(m_c) + self.p_q
-        k = self.k_proj(m_r) + self.p_k
-        v = self.v_proj(f_r)
+        # Transformer blocks
+        for transformer_block in self.transformer_blocks:
+            v_prime = transformer_block(v_prime)
 
-        print(f"q shape: {q.shape}")
-        print(f"k shape: {k.shape}")
-        print(f"v shape: {v.shape}")
+        # Reshape back to 2D
+        fl_c = v_prime.permute(0, 2, 1).view(b, c, h, w)
 
-        chunks = []
-        for i in range(0, q.size(1), self.chunk_size):
-            q_chunk = q[:, i:i+self.chunk_size]
-            k_chunk = k[:, i:i+self.chunk_size]
-            v_chunk = v[:, i:i+self.chunk_size]
-            
-            print(f"Chunk {i // self.chunk_size}:")
-            print(f"q_chunk shape: {q_chunk.shape}")
-            print(f"k_chunk shape: {k_chunk.shape}")
-            print(f"v_chunk shape: {v_chunk.shape}")
-            
-            if v_chunk.size(1) == 0:
-                print("Skipping empty v_chunk")
-                continue
-            elif v_chunk.size(1) < q_chunk.size(1):
-                v_chunk = v_chunk.repeat(1, (q_chunk.size(1) + v_chunk.size(1) - 1) // v_chunk.size(1), 1)[:, :q_chunk.size(1)]
-            
-            attn_input = torch.cat([q_chunk, k_chunk, v_chunk], dim=-1)
-            print(f"attn_input shape: {attn_input.shape}")
-            
-            attn_output = self.attention(attn_input)
-            print(f"attn_output shape: {attn_output.shape}")
-            
-            chunks.append(attn_output)
-        
-        x = torch.cat(chunks, dim=1)
-        print(f"Shape after concatenation: {x.shape}")
-
-        for block in self.transformer_blocks:
-            x = block(x)
-
-        output = x.permute(0, 2, 1).view(b, self.feature_dim, h_f, w_f)
-        print(f"Final output shape: {output.shape}")
-
-        return output
-
+        return fl_c
 
 
 '''
