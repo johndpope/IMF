@@ -12,7 +12,7 @@ import colored_traceback.auto
 from torch.utils.checkpoint import checkpoint
 from performer_pytorch import SelfAttention
 import math
-
+import torch.nn.utils.spectral_norm as spectral_norm
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
@@ -719,13 +719,14 @@ class IMFModel(nn.Module):
         return self.imf.latent_token_decoder
 
 
+
 class SNConv2d(nn.Conv2d):
     def __init__(self, *args, **kwargs):
         super(SNConv2d, self).__init__(*args, **kwargs)
-        self.conv = nn.utils.spectral_norm(self)
+        self = spectral_norm(self)
 
     def forward(self, input):
-        return self.conv(input)
+        return super(SNConv2d, self).forward(input)
 '''
 PatchDiscriminator
 This implementation of the PatchDiscriminator class follows the architecture described in the supplementary material of the IMF paper. Here are the key features:
