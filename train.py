@@ -128,10 +128,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=4):
         fr = model.dense_feature_encoder(reference_frames)
 
         # Get aligned features from IMF
-        aligned_features = model(current_frames, reference_frames)
-
-        # Reconstruct frames
-        reconstructed_frames = model.frame_decoder(aligned_features)
+        reconstructed_frames = model(current_frames, reference_frames)
 
         # Prepare original and reconstructed frames for saving
         orig_frames = torch.cat((reference_frames, current_frames), dim=0)
