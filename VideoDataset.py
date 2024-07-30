@@ -12,7 +12,7 @@ import random
 import os
 
 class VideoDataset(Dataset):
-    def __init__(self, root_dir, transform=None, frame_skip=1):
+    def __init__(self, root_dir, transform=None, frame_skip=0):
         self.root_dir = root_dir
         self.transform = transform
         self.frame_skip = frame_skip
