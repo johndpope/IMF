@@ -59,10 +59,9 @@ def adversarial_loss(discriminator, x_hat):
     return sum(-torch.mean(output) for output in fake_outputs)
 
 
-
 def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
-    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
+    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
 
     model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
         model, discriminator, optimizer_g, optimizer_d, train_dataloader
@@ -75,8 +74,6 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     noise_magnitude = config.training.noise_magnitude
     r1_gamma = config.training.r1_gamma
 
-
-    # Select the loss function based on config
     if config.loss.type == "wasserstein":
         loss_fn = wasserstein_loss
     elif config.loss.type == "hinge":
@@ -86,17 +83,18 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     else:
         raise ValueError(f"Unsupported loss type: {config.loss.type}")
 
+    step_counter = 0
+    total_g_loss = 0
+    total_d_loss = 0
 
     for epoch in range(config.training.num_epochs):
         model.train()
         discriminator.train()
-        total_g_loss = 0
-        total_d_loss = 0
-        step_counter = 0
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-            step_counter += 1 # Increment step counter
+            step_counter += 1
+
             # Train Discriminator
             for _ in range(config.training.n_critic):
                 optimizer_d.zero_grad()
@@ -110,7 +108,6 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 d_loss = loss_fn(real_outputs, fake_outputs)
 
                 accelerator.backward(d_loss)
-                # Clip gradients
                 torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
                 optimizer_d.step()
 
@@ -137,43 +134,61 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 mix_tc = [tc] * len(model.implicit_motion_alignment)
                 mix_tr = [tr] * len(model.implicit_motion_alignment)
 
-
-            debug_print(f"Mixed token shapes - mix_tc: {[t.shape for t in mix_tc]}, mix_tr: {[t.shape for t in mix_tr]}")
-
             m_c, m_r = model.process_tokens(mix_tc, mix_tr)
 
             fr = model.dense_feature_encoder(reference_frames)
-            debug_print(f"Dense feature encoder output shapes: {[f.shape for f in fr]}")
 
             aligned_features = []
             for i in range(len(model.implicit_motion_alignment)):
                 f_r_i = fr[i]
                 align_layer = model.implicit_motion_alignment[i]
-                m_c_i = m_c[i][i]  # Access the i-th element of the i-th sublist
-                m_r_i = m_r[i][i]  # Access the i-th element of the i-th sublist
-                debug_print(f"Layer {i} input shapes - f_r_i: {f_r_i.shape}, m_c_i: {m_c_i.shape}, m_r_i: {m_r_i.shape}")
+                m_c_i = m_c[i][i]
+                m_r_i = m_r[i][i]
                 aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                debug_print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
                 aligned_features.append(aligned_feature)
 
-          
             reconstructed_frames = model.frame_decoder(aligned_features)
-            debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")              
-            # lpips_l = lpips_loss(reconstructed_frames, current_frames).mean()
             perceptual_l = perceptual_loss_fn(reconstructed_frames, current_frames)
             adv_l = adversarial_loss(discriminator, reconstructed_frames)
 
             current_frames.requires_grad_(False)
             reference_frames.requires_grad_(False)
-            g_loss = ( config.training.lambda_perceptual * perceptual_l +
-                config.training.lambda_adv * adv_l)
+            g_loss = (config.training.lambda_perceptual * perceptual_l +
+                      config.training.lambda_adv * adv_l)
 
             accelerator.backward(g_loss)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                
+            
             optimizer_g.step()
 
             total_g_loss += g_loss.item()
+
+            # Adjust discriminator learning rate
+            if step_counter % config.training.d_lr_adjust_frequency == 0:
+                avg_d_loss = total_d_loss / config.training.d_lr_adjust_frequency
+                avg_g_loss = total_g_loss / config.training.d_lr_adjust_frequency
+                loss_ratio = avg_d_loss / (avg_g_loss + 1e-8)  # Avoid division by zero
+
+                current_lr = optimizer_d.param_groups[0]['lr']
+                if loss_ratio > config.training.target_d_loss_ratio:
+                    new_lr = min(current_lr * config.training.d_lr_adjust_factor, config.training.max_learning_rate_d)
+                else:
+                    new_lr = max(current_lr / config.training.d_lr_adjust_factor, config.training.min_learning_rate_d)
+
+                for param_group in optimizer_d.param_groups:
+                    param_group['lr'] = new_lr
+
+                accelerator.print(f"Step {step_counter}: Adjusted D learning rate to {new_lr:.2e}")
+                
+                # Reset loss counters
+                total_d_loss = 0
+                total_g_loss = 0
+
+                # Log the new learning rate
+                wandb.log({
+                    "discriminator_lr": new_lr,
+                    "step": step_counter
+                })
 
             progress_bar.update(1)
             progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
@@ -189,8 +204,6 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 sample_path = f"recon_epoch_{epoch+1}.png"
                 sample_frames = sample_recon(model, next(iter(train_dataloader)), accelerator, sample_path, 
                                             num_samples=config.logging.sample_size)
-                
-                # wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
 
         progress_bar.close()
 
