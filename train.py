@@ -12,8 +12,9 @@ import torch.nn.functional as F
 from model import IMFModel,PatchDiscriminator, init_weights
 from VideoDataset import VideoDataset
 from torchvision.utils import save_image
-from collections import defaultdict
-import numpy as np
+from helper import monitor_gradients,add_gradient_hooks
+from torch.optim import AdamW
+
 def load_config(config_path):
     with open(config_path, 'r') as file:
         return yaml.safe_load(file)
@@ -69,50 +70,6 @@ def r1_regularization(discriminator, x):
     return r1_penalty
 
 
-def monitor_gradients(model, epoch, batch_idx, log_interval=10):
-    """
-    Monitor gradients of the model parameters.
-    
-    :param model: The neural network model
-    :param epoch: Current epoch number
-    :param batch_idx: Current batch index
-    :param log_interval: How often to log gradient statistics
-    """
-    if batch_idx % log_interval == 0:
-        grad_stats = defaultdict(list)
-        
-        for name, param in model.named_parameters():
-            if param.grad is not None:
-                grad_norm = param.grad.norm().item()
-                grad_stats['norm'].append(grad_norm)
-                
-                if torch.isnan(param.grad).any():
-                    print(f"NaN gradient detected in {name}")
-                
-                if torch.isinf(param.grad).any():
-                    print(f"Inf gradient detected in {name}")
-                
-                grad_stats['names'].append(name)
-        
-        if grad_stats['norm']:
-            avg_norm = np.mean(grad_stats['norm'])
-            max_norm = np.max(grad_stats['norm'])
-            min_norm = np.min(grad_stats['norm'])
-            
-            print(f"Epoch {epoch}, Batch {batch_idx}")
-            print(f"Gradient norms - Avg: {avg_norm:.4f}, Max: {max_norm:.4f}, Min: {min_norm:.4f}")
-            
-            # Identify layers with unusually high or low gradients
-            threshold_high = avg_norm * 10  # Adjust this multiplier as needed
-            threshold_low = avg_norm * 0.1  # Adjust this multiplier as needed
-            
-            for name, norm in zip(grad_stats['names'], grad_stats['norm']):
-                if norm > threshold_high:
-                    print(f"High gradient in {name}: {norm:.4f}")
-                elif norm < threshold_low:
-                    print(f"Low gradient in {name}: {norm:.4f}")
-        else:
-            print("No gradients to monitor")
 
 def sample_recon(model, data, accelerator, output_path, num_samples=4):
     model.eval()
@@ -122,13 +79,12 @@ def sample_recon(model, data, accelerator, output_path, num_samples=4):
         num_samples = min(num_samples, batch_size)  # Ensure we don't exceed the batch size
         current_frames, reference_frames = current_frames[:num_samples], reference_frames[:num_samples]
         
-        # Encode frames
-        tc = model.latent_token_encoder(current_frames)
-        tr = model.latent_token_encoder(reference_frames)
-        fr = model.dense_feature_encoder(reference_frames)
-
-        # Get aligned features from IMF
+        # Get reconstructed frames from IMF
         reconstructed_frames = model(current_frames, reference_frames)
+
+        # Ensure reconstructed_frames have the same size as reference_frames
+        if reconstructed_frames.shape != current_frames.shape:
+            reconstructed_frames = F.interpolate(reconstructed_frames, size=current_frames.shape[2:], mode='bilinear', align_corners=False)
 
         # Prepare original and reconstructed frames for saving
         orig_frames = torch.cat((reference_frames, current_frames), dim=0)
@@ -163,12 +119,12 @@ def sample_recon(model, data, accelerator, output_path, num_samples=4):
         wandb.log({"Sample Reconstructions": wandb_images})
 
         return frames
-    
+
+
+
 def train(config, model, discriminator, train_dataloader, accelerator):
-    optimizer_g = optim.Adam(model.parameters(), lr=config['training']['learning_rate'], 
-                             betas=(config['optimizer']['beta1'], config['optimizer']['beta2']))
-    optimizer_d = optim.Adam(discriminator.parameters(), lr=config['training']['learning_rate'], 
-                             betas=(config['optimizer']['beta1'], config['optimizer']['beta2']))
+    optimizer_g = AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=1e-4)
+    optimizer_d = AdamW(discriminator.parameters(), lr=config['training']['learning_rate'], weight_decay=1e-4)
 
     model,  discriminator,optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
         model, discriminator, optimizer_g, optimizer_d, train_dataloader
@@ -221,7 +177,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
             accelerator.backward(loss_g)
             # Monitor gradients before optimizer step
-            monitor_gradients(model, epoch, batch_idx)
+            # monitor_gradients(model, epoch, batch_idx)
             optimizer_g.step()
 
             # Discriminator step
@@ -287,45 +243,51 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 # Log sample image to wandb
                 wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
 def main():
-    config = load_config('config.yaml')
-    torch.cuda.empty_cache()
-    wandb.init(project='IMF', config=config)
+    try:
+        config = load_config('config.yaml')
+        torch.cuda.empty_cache()
+        wandb.init(project='IMF', config=config)
 
-    accelerator = Accelerator(
-        mixed_precision=config['accelerator']['mixed_precision'],
-        cpu=config['accelerator']['cpu']
-    )
+        accelerator = Accelerator(
+            mixed_precision=config['accelerator']['mixed_precision'],
+            cpu=config['accelerator']['cpu']
+        )
 
-    model = IMFModel(
-        latent_dim=config['model']['latent_dim'],
-        base_channels=config['model']['base_channels'],
-        num_layers=config['model']['num_layers']
-    )
+        model = IMFModel(
+            latent_dim=config['model']['latent_dim'],
+            base_channels=config['model']['base_channels'],
+            num_layers=config['model']['num_layers']
+        )
+        add_gradient_hooks(model)
+        discriminator = PatchDiscriminator(ndf=config['discriminator']['ndf'])
+        # discriminator.apply(init_weights)
 
-    discriminator = PatchDiscriminator(ndf=config['discriminator']['ndf'])
-    # discriminator.apply(init_weights)
+        transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        ])
 
-    transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
-    ])
+        dataset = VideoDataset(
+            root_dir=config['dataset']['root_dir'],
+            transform=transform,
+            frame_skip=config['dataset']['frame_skip']
+        )
+        dataloader = DataLoader(
+            dataset,
+            batch_size=config['training']['batch_size'],
+            num_workers=4,
+            shuffle=True
+        )
 
-    dataset = VideoDataset(
-        root_dir=config['dataset']['root_dir'],
-        transform=transform,
-        frame_skip=config['dataset']['frame_skip']
-    )
-    dataloader = DataLoader(
-        dataset,
-        batch_size=config['training']['batch_size'],
-        num_workers=4,
-        shuffle=True
-    )
+        train(config, model, discriminator, dataloader, accelerator)
 
-    train(config, model, discriminator, dataloader, accelerator)
-
-    wandb.finish()
+    except Exception as e:
+        print(f"An error occurred: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        wandb.finish()
 
 if __name__ == "__main__":
     main()
