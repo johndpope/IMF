@@ -15,6 +15,7 @@ import math
 import torch.nn.utils.spectral_norm as spectral_norm
 from einops import rearrange
 from einops.layers.torch import Rearrange
+import torchvision.models as models
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -22,8 +23,38 @@ def debug_print(*args, **kwargs):
         print(*args, **kwargs)
 
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
+class ResNetFeatureExtractor(nn.Module):
+    def __init__(self, pretrained=True):
+        super().__init__()
+        # Load a pre-trained ResNet model
+        resnet = models.resnet50(pretrained=pretrained)
+        
+        # We'll use the first 4 layers of ResNet
+        self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
 
+        # Add additional convolutional layers to adjust channel dimensions
+        self.adjust1 = nn.Conv2d(256, 128, kernel_size=1)
+        self.adjust2 = nn.Conv2d(512, 256, kernel_size=1)
+        self.adjust3 = nn.Conv2d(1024, 512, kernel_size=1)
+        self.adjust4 = nn.Conv2d(2048, 512, kernel_size=1)
 
+    def forward(self, x):
+        features = []
+        x = self.layer0(x)
+        x = self.layer1(x)
+        features.append(self.adjust1(x))  # 128 channels, 64x64
+        x = self.layer2(x)
+        features.append(self.adjust2(x))  # 256 channels, 32x32
+        x = self.layer3(x)
+        features.append(self.adjust3(x))  # 512 channels, 16x16
+        x = self.layer4(x)
+        features.append(self.adjust4(x))  # 512 channels, 8x8
+        
+        return features
 
 class UpConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -530,18 +561,30 @@ class FrameDecoder(nn.Module):
         )
 
     def forward(self, features):
-        debug_print(f"FrameDecoder input shapes: {[f.shape for f in features]}")
+        debug_print(f"🎒 FrameDecoder input shapes: {[f.shape for f in features]}")
 
-        x = features[-1]  # Start with the smallest feature map (512x8x8)
+        x = features[-1]  # Start with the smallest feature map
+        debug_print(f"    Initial x shape: {x.shape}")
         
         for i in range(len(self.upconv_blocks)):
+            debug_print(f"\n    Processing upconv_block {i+1}")
             x = self.upconv_blocks[i](x)
+            debug_print(f"    After upconv_block {i+1}: {x.shape}")
+            
             if i < len(self.feat_blocks):
-                feat = self.feat_blocks[i](features[-(i+2)])
+                debug_print(f"    Processing feat_block {i+1}")
+                feat_input = features[-(i+2)]
+                debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
+                feat = self.feat_blocks[i](feat_input)
+                debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
+                
+                debug_print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
                 x = torch.cat([x, feat], dim=1)
+                debug_print(f"    After concatenation: {x.shape}")
         
+        debug_print("\n    Applying final convolution")
         x = self.final_conv(x)
-        debug_print(f"FrameDecoder output shape: {x.shape}")
+        debug_print(f"    FrameDecoder final output shape: {x.shape}")
 
         return x
 
@@ -622,7 +665,8 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder()
+        self.dense_feature_encoder = ResNetFeatureExtractor()
+        # self.dense_feature_encoder = DenseFeatureEncoder()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
