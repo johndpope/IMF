@@ -137,6 +137,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     flash_forward_steps = 100
     nan_counter = 0
     max_consecutive_nans = 5
+    step_counter = 0  # Add this line to keep track of steps
 
     # Add gradient monitoring
     # add_gradient_hooks(model)
@@ -167,7 +168,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-
+            step_counter += 1  # Increment step counter
 
             debug_print(f"Batch {batch_idx} input shapes - current_frames: {current_frames.shape}, reference_frames: {reference_frames.shape}")
 
@@ -271,7 +272,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             
             # Update progress bar
             progress_bar.update(1)
-            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
+            progress_bar.set_postfix({"Loss": f"{total_loss.item():.4f}"})
 
             # Log batch loss to wandb
             wandb.log({
@@ -281,6 +282,13 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 "batch": batch_idx + epoch * len(train_dataloader)
             })
 
+            # Save reconstruction sample every 250 steps
+            if step_counter % config.training.save_steps == 0:
+                sample_path = f"recon_step_{step_counter}.png"
+                sample_frames = sample_recon(model, (current_frames, reference_frames), accelerator, sample_path, 
+                                            num_samples=config.logging.sample_size)
+                
+                wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
 
         progress_bar.close()
 
@@ -292,9 +300,10 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                               f"Avg G Loss: {avg_loss_g:.4f}") #  Avg D Loss: {avg_loss_d:.4f}
 
             wandb.log({
-                "epoch": epoch + 1,
-                "avg_loss_g": avg_loss_g,
-                # "avg_loss_d": avg_loss_d
+                "batch_mse_loss": mse.item(),
+                "batch_perceptual_loss": perceptual.item(),
+                "batch_total_loss": loss.item(),
+                "batch": batch_idx + epoch * len(train_dataloader)
             })
 
         if (epoch + 1) % config.checkpoints.interval == 0:
