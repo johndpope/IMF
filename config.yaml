@@ -19,7 +19,9 @@ training:
   lambda_gp: 10  # Gradient penalty coefficient
   n_critic: 5  # Number of discriminator updates per generator update
   clip_grad_norm: 1.0  # Maximum norm for gradient clipping
-
+  r1_gamma: 10
+  r1_interval: 16
+  
 # Dataset parameters
 dataset:
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666"

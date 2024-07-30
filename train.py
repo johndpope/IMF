@@ -66,10 +66,7 @@ def r1_regularization(discriminator, x):
 def wasserstein_loss(y_pred, y_true):
     return torch.mean(y_true * y_pred)
 
-def generator_loss(discriminator, fake_images, config):
-    fake_validity = discriminator(fake_images)
-    g_loss = -torch.mean(fake_validity[0])  # Using only the output from the first scale
-    return g_loss
+
 
 def discriminator_loss(discriminator, real_images, fake_images, config):
     real_validity = discriminator(real_images)
@@ -133,7 +130,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     )
 
     vgg_loss = VGGLoss().to(accelerator.device)
-    flash_forward_steps = 1000
+    flash_forward_steps = 100
     nan_counter = 0
     max_consecutive_nans = 5
 
@@ -160,6 +157,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
             try:
+                # Train Discriminator
                 for _ in range(config.training.n_critic):
                     optimizer_d.zero_grad()
                     
@@ -173,6 +171,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     
                     loss_d = -torch.mean(real_validity) + torch.mean(fake_validity) + config.training.lambda_gp * gradient_penalty
 
+                    # Apply R1 regularization
+                    if batch_idx % config.training.r1_interval == 0:
+                        r1_penalty = r1_regularization(discriminator, current_frames)
+                        loss_d += config.training.r1_gamma * r1_penalty
+
                     if torch.isnan(loss_d):
                         raise ValueError("NaN discriminator loss detected")
 
@@ -180,6 +183,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
                     optimizer_d.step()
 
+                # Train Generator
                 optimizer_g.zero_grad()
                 
                 reconstructed_frames = model(current_frames, reference_frames)
@@ -213,7 +217,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
             except ValueError as e:
                 nan_counter += 1
-                accelerator.print(f"NaN detected (count: {nan_counter}). {str(e)}. Attempting to flash forward.")
+                accelerator.print(f"NaN detected (count: {nan_counter}). {str(e)}. Attempting to flash forward (next movie).")
                 
                 if nan_counter >= max_consecutive_nans:
                     accelerator.print("Too many consecutive NaNs. Stopping training.")
