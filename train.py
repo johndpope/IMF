@@ -272,7 +272,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             
             # Update progress bar
             progress_bar.update(1)
-            progress_bar.set_postfix({"Loss": f"{total_loss.item():.4f}"})
+            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
 
             # Log batch loss to wandb
             wandb.log({
