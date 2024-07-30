@@ -9,7 +9,7 @@ training:
   batch_size: 4
   num_epochs: 100
   save_steps: 250
-  learning_rate_g: 1.0e-4  # Reduced learning rate for generator
+  learning_rate_g: 1.0e-5  # Reduced learning rate for generator
   learning_rate_d: 1.0e-4  # Reduced learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
@@ -18,7 +18,7 @@ training:
   noise_magnitude: 0.1
   gradient_accumulation_steps: 4
   lambda_pixel: 10
-  lambda_perceptual: 30
+  lambda_perceptual: 3
   lambda_adv: 1
   lambda_gp: 10  # Gradient penalty coefficient
   n_critic: 5  # Number of discriminator updates per generator update
