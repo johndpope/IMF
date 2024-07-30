@@ -23,6 +23,23 @@ from perceptual import PerceptualLoss
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
+
+def wasserstein_loss(real_outputs, fake_outputs):
+    real_loss = sum(torch.mean(out) for out in real_outputs)
+    fake_loss = sum(torch.mean(out) for out in fake_outputs)
+    return fake_loss - real_loss
+
+def hinge_loss(real_outputs, fake_outputs):
+    real_loss = sum(torch.mean(F.relu(1 - out)) for out in real_outputs)
+    fake_loss = sum(torch.mean(F.relu(1 + out)) for out in fake_outputs)
+    return real_loss + fake_loss
+
+def vanilla_gan_loss(real_outputs, fake_outputs):
+    real_loss = sum(F.binary_cross_entropy_with_logits(out, torch.ones_like(out)) for out in real_outputs)
+    fake_loss = sum(F.binary_cross_entropy_with_logits(out, torch.zeros_like(out)) for out in fake_outputs)
+    return real_loss + fake_loss
+
+
 class VGGLoss(nn.Module):
     def __init__(self):
         super(VGGLoss, self).__init__()
@@ -33,13 +50,6 @@ class VGGLoss(nn.Module):
     def forward(self, x):
         return self.vgg(x)
 
-class SNConv2d(nn.Conv2d):
-    def __init__(self, *args, **kwargs):
-        super(SNConv2d, self).__init__(*args, **kwargs)
-        self = spectral_norm(self)
-
-    def forward(self, input):
-        return super(SNConv2d, self).forward(input)
 
 def pixel_loss(x_hat, x):
     return nn.L1Loss()(x_hat, x)
@@ -48,10 +58,7 @@ def adversarial_loss(discriminator, x_hat):
     fake_outputs = discriminator(x_hat)
     return sum(-torch.mean(output) for output in fake_outputs)
 
-def hinge_loss(real_outputs, fake_outputs):
-    real_loss = sum(torch.mean(F.relu(1 - out)) for out in real_outputs)
-    fake_loss = sum(torch.mean(F.relu(1 + out)) for out in fake_outputs)
-    return real_loss + fake_loss
+
 
 def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
@@ -67,6 +74,18 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     style_mixing_prob = config.training.style_mixing_prob
     noise_magnitude = config.training.noise_magnitude
     r1_gamma = config.training.r1_gamma
+
+
+    # Select the loss function based on config
+    if config.loss.type == "wasserstein":
+        loss_fn = wasserstein_loss
+    elif config.loss.type == "hinge":
+        loss_fn = hinge_loss
+    elif config.loss.type == "vanilla":
+        loss_fn = vanilla_gan_loss
+    else:
+        raise ValueError(f"Unsupported loss type: {config.loss.type}")
+
 
     for epoch in range(config.training.num_epochs):
         model.train()
@@ -88,7 +107,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 real_outputs = discriminator(current_frames)
                 fake_outputs = discriminator(reconstructed_frames.detach())
 
-                d_loss = hinge_loss(real_outputs, fake_outputs)
+                d_loss = loss_fn(real_outputs, fake_outputs)
 
                 accelerator.backward(d_loss)
                 # Clip gradients
