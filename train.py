@@ -253,8 +253,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     reference_frames.requires_grad_(False)
             accelerator.backward(loss)
              # Monitor gradients before optimizer step
-            # monitor_gradients(model, epoch, batch_idx)
-            #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            monitor_gradients(model, epoch, batch_idx)
+            
 
 
             optimizer_g.step()
@@ -341,7 +341,7 @@ def main():
             base_channels=config.model.base_channels,
             num_layers=config.model.num_layers
         )
-        # add_gradient_hooks(model)
+        add_gradient_hooks(model)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
 
