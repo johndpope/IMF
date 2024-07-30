@@ -6,7 +6,7 @@ model:
 
 # Training parameters
 training:
-  batch_size: 4
+  batch_size: 8
   num_epochs: 100
   save_steps: 25
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
@@ -21,7 +21,7 @@ training:
   lambda_perceptual: 1.0 # lambda perceptual = 10 
   lambda_adv: 0.1 # adverserial = 1
   lambda_gp: 10  # Gradient penalty coefficient
-  n_critic: 3  # Number of discriminator updates per generator update
+  n_critic: 2  # Number of discriminator updates per generator update
   clip_grad_norm: 1.0  # Maximum norm for gradient clipping
   r1_gamma: 10
   r1_interval: 16

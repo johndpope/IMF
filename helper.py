@@ -23,8 +23,13 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
         if reconstructed_frames.shape != current_frames.shape:
             reconstructed_frames = F.interpolate(reconstructed_frames, size=current_frames.shape[2:], mode='bilinear', align_corners=False)
         
+        # Reduce size by half
+        current_frames = F.interpolate(current_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
+        reference_frames = F.interpolate(reference_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
+        reconstructed_frames = F.interpolate(reconstructed_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
+        
         # Prepare frames for saving (2x4 grid)
-        frames = torch.cat((reference_frames, current_frames, reconstructed_frames, reference_frames), dim=0)
+        frames = torch.cat((reconstructed_frames, reference_frames), dim=0)
         
         # Unnormalize frames
         frames = frames * 0.5 + 0.5
@@ -46,8 +51,6 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
         wandb_images = []
         for i in range(num_samples):
             wandb_images.extend([
-                wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}"),
-                wandb.Image(current_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Current {i}"),
                 wandb.Image(reconstructed_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
                 wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i} (repeat)")
             ])
