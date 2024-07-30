@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from model import IMFModel,PatchDiscriminator, init_weights
 from VideoDataset import VideoDataset
 from torchvision.utils import save_image
-from helper import monitor_gradients,add_gradient_hooks
+from helper import monitor_gradients,add_gradient_hooks,sample_recon
 from torch.optim import AdamW
 
 def load_config(config_path):
@@ -70,55 +70,6 @@ def r1_regularization(discriminator, x):
     return r1_penalty
 
 
-
-def sample_recon(model, data, accelerator, output_path, num_samples=4):
-    model.eval()
-    with torch.no_grad():
-        current_frames, reference_frames = data
-        batch_size = current_frames.size(0)
-        num_samples = min(num_samples, batch_size)  # Ensure we don't exceed the batch size
-        current_frames, reference_frames = current_frames[:num_samples], reference_frames[:num_samples]
-        
-        # Get reconstructed frames from IMF
-        reconstructed_frames = model(current_frames, reference_frames)
-
-        # Ensure reconstructed_frames have the same size as reference_frames
-        if reconstructed_frames.shape != current_frames.shape:
-            reconstructed_frames = F.interpolate(reconstructed_frames, size=current_frames.shape[2:], mode='bilinear', align_corners=False)
-
-        # Prepare original and reconstructed frames for saving
-        orig_frames = torch.cat((reference_frames, current_frames), dim=0)
-        recon_frames = torch.cat((reference_frames, reconstructed_frames), dim=0)
-        frames = torch.cat((orig_frames, recon_frames), dim=0)
-        
-        # Unnormalize frames
-        frames = frames * 0.5 + 0.5
-        
-        # Ensure we have a valid output directory
-        if output_path:
-            output_dir = os.path.dirname(output_path)
-            if not output_dir:
-                output_dir = '.'  # Use current directory if no directory is specified
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # Save frames as a grid
-            save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
-            accelerator.print(f"Saved sample reconstructions to {output_path}")
-        else:
-            accelerator.print("Warning: No output path provided. Skipping image save.")
-
-        # Log images to wandb
-        wandb_images = []
-        for i in range(num_samples):
-            wandb_images.extend([
-                wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}"),
-                wandb.Image(current_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Current {i}"),
-                wandb.Image(reconstructed_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}")
-            ])
-
-        wandb.log({"Sample Reconstructions": wandb_images})
-
-        return frames
 
 
 
