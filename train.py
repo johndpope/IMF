@@ -50,12 +50,6 @@ def adversarial_loss(discriminator, x_hat):
     fake_outputs = discriminator(x_hat)
     return sum(-torch.mean(output) for output in fake_outputs)
 
-def discriminator_loss(discriminator, x_hat, x):
-    real_outputs = discriminator(x)
-    fake_outputs = discriminator(x_hat.detach())
-    real_loss = sum(torch.mean(torch.relu(1 - output)) for output in real_outputs)
-    fake_loss = sum(torch.mean(torch.relu(1 + output)) for output in fake_outputs)
-    return real_loss + fake_loss
 
 def r1_regularization(discriminator, x):
     x.requires_grad_(True)
@@ -69,7 +63,38 @@ def r1_regularization(discriminator, x):
     r1_penalty = grad_real.pow(2).reshape(grad_real.shape[0], -1).sum(1).mean()
     return r1_penalty
 
+def wasserstein_loss(y_pred, y_true):
+    return torch.mean(y_true * y_pred)
 
+def generator_loss(discriminator, fake_images, config):
+    fake_validity = discriminator(fake_images)
+    g_loss = -torch.mean(fake_validity[0])  # Using only the output from the first scale
+    return g_loss
+
+def discriminator_loss(discriminator, real_images, fake_images, config):
+    real_validity = discriminator(real_images)
+    fake_validity = discriminator(fake_images.detach())
+    
+    real_loss = torch.mean(F.relu(1.0 - real_validity[0]))
+    fake_loss = torch.mean(F.relu(1.0 + fake_validity[0]))
+    
+    return real_loss + fake_loss
+
+def gradient_penalty(discriminator, real_images, fake_images):
+    alpha = torch.rand(real_images.size(0), 1, 1, 1).to(real_images.device)
+    interpolated = (alpha * real_images + (1 - alpha) * fake_images).requires_grad_(True)
+    
+    interpolated_validity = discriminator(interpolated)[0]
+    
+    gradients = torch.autograd.grad(
+        outputs=interpolated_validity, inputs=interpolated,
+        grad_outputs=torch.ones_like(interpolated_validity),
+        create_graph=True, retain_graph=True, only_inputs=True
+    )[0]
+    
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
 
 
 
@@ -126,6 +151,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                      config['training']['lambda_perceptual'] * loss_perceptual + \
                      config['training']['lambda_adv'] * loss_adv
 
+            # Check for NaN in generator loss
+            if torch.isnan(loss_g):
+                accelerator.print("NaN generator loss detected. Skipping this batch.")
+                optimizer_g.zero_grad()
+                continue
             accelerator.backward(loss_g)
             # Monitor gradients before optimizer step
             # monitor_gradients(model, epoch, batch_idx)
@@ -141,6 +171,12 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 r1_penalty = r1_regularization(discriminator, current_frames)
                 loss_d += config['training']['r1_gamma'] * r1_penalty * config['training']['r1_interval']
 
+
+            # Check for NaN in discriminator loss
+            if torch.isnan(loss_d):
+                accelerator.print("NaN discriminator loss detected. Skipping this batch.")
+                optimizer_d.zero_grad()
+                continue
             accelerator.backward(loss_d)
             optimizer_d.step()
 
