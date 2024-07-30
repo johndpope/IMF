@@ -372,13 +372,16 @@ The output-aligned values V' are further refined using multi-head self-attention
 transformer blocks. This is done to capture the complex relationships between the features and to produce 
 the final appearance features fl_c of the current frame.
 '''
-import torch
-import torch.nn as nn
-from einops import rearrange
-from einops.layers.torch import Rearrange
 
 
-
+import matplotlib.pyplot as plt
+def visualize_positional_embedding(embedding):
+    plt.figure(figsize=(10, 10))
+    plt.imshow(embedding[0].cpu().numpy(), cmap='viridis')
+    plt.colorbar()
+    plt.title('Positional Embedding')
+    plt.savefig('positional_embedding.png')
+    plt.close()
 
 
 class ImplicitMotionAlignment(nn.Module):
@@ -452,7 +455,6 @@ The scale of the positional embeddings relative to the feature values is importa
 Learned Interpretation:
 The neural network learns to interpret both the original values and the positional information together. It can learn to give more or less weight to position depending on the task.
 '''
-
 def positional_embedding_2d(b, h, w, dim):
     """
     Create 2D positional embeddings
@@ -467,13 +469,12 @@ def positional_embedding_2d(b, h, w, dim):
 
     if dim % 4 != 0:
         raise ValueError("Embedding dimension must be divisible by 4")
-    
+
     d_model = dim // 2
-    
+
     def get_angles(pos, i, d_model):
         return pos / np.power(10000, (2 * i) / d_model)
-    
-    # Create position indices
+
     y_pos = np.arange(h)[:, np.newaxis]
     x_pos = np.arange(w)[np.newaxis, :]
     

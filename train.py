@@ -91,6 +91,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 d_loss = hinge_loss(real_outputs, fake_outputs)
 
                 accelerator.backward(d_loss)
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
                 optimizer_d.step()
 
                 total_d_loss += d_loss.item()
@@ -148,6 +150,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 config.training.lambda_adv * adv_l)
 
             accelerator.backward(g_loss)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                
             optimizer_g.step()
 
             total_g_loss += g_loss.item()
