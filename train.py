@@ -14,10 +14,10 @@ from VideoDataset import VideoDataset
 from torchvision.utils import save_image
 from helper import monitor_gradients,add_gradient_hooks,sample_recon
 from torch.optim import AdamW
+from omegaconf import OmegaConf
 
 def load_config(config_path):
-    with open(config_path, 'r') as file:
-        return yaml.safe_load(file)
+    return OmegaConf.load(config_path)
 
 class VGGLoss(nn.Module):
     def __init__(self):
@@ -80,40 +80,68 @@ def discriminator_loss(discriminator, real_images, fake_images, config):
     
     return real_loss + fake_loss
 
-def gradient_penalty(discriminator, real_images, fake_images):
-    alpha = torch.rand(real_images.size(0), 1, 1, 1).to(real_images.device)
-    interpolated = (alpha * real_images + (1 - alpha) * fake_images).requires_grad_(True)
-    
-    interpolated_validity = discriminator(interpolated)[0]
-    
-    gradients = torch.autograd.grad(
-        outputs=interpolated_validity, inputs=interpolated,
-        grad_outputs=torch.ones_like(interpolated_validity),
-        create_graph=True, retain_graph=True, only_inputs=True
-    )[0]
-    
-    gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-    return gradient_penalty
+def compute_gradient_penalty(discriminator, real_samples, fake_samples):
+    # print(f"Real samples shape: {real_samples.shape}")
+    # print(f"Fake samples shape: {fake_samples.shape}")
 
+    alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(real_samples.device)
+    # print(f"Alpha shape: {alpha.shape}")
+
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    # print(f"Interpolates shape: {interpolates.shape}")
+
+    d_interpolates = discriminator(interpolates)
+    # print(f"Discriminator output type: {type(d_interpolates)}")
+    # if isinstance(d_interpolates, list):
+    #     print(f"Discriminator output shapes: {[o.shape for o in d_interpolates]}")
+    # else:
+    #     print(f"Discriminator output shape: {d_interpolates.shape}")
+
+    # Use the first output of the discriminator (feature map)
+    fake = torch.ones_like(d_interpolates[0]).to(real_samples.device)
+    # print(f"Fake tensor shape: {fake.shape}")
+
+    try:
+        gradients = torch.autograd.grad(
+            outputs=d_interpolates[0],  # Use the feature map directly
+            inputs=interpolates,
+            grad_outputs=fake,
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True
+        )[0]
+        # print(f"Gradients shape: {gradients.shape}")
+
+        gradients = gradients.view(gradients.size(0), -1)
+        # print(f"Reshaped gradients shape: {gradients.shape}")
+
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+        # print(f"Gradient penalty value: {gradient_penalty.item()}")
+
+        return gradient_penalty
+    except Exception as e:
+        print(f"Error in gradient computation: {str(e)}")
+        raise
 
 
 def train(config, model, discriminator, train_dataloader, accelerator):
-    optimizer_g = AdamW(model.parameters(), lr=config['training']['learning_rate'], weight_decay=1e-4)
-    optimizer_d = AdamW(discriminator.parameters(), lr=config['training']['learning_rate'], weight_decay=1e-4)
+    optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(0.5, 0.999))
+    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.learning_rate_d, betas=(0.5, 0.999))
 
-    model,  discriminator,optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
+    model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
         model, discriminator, optimizer_g, optimizer_d, train_dataloader
     )
 
     vgg_loss = VGGLoss().to(accelerator.device)
+    flash_forward_steps = 1000
+    nan_counter = 0
+    max_consecutive_nans = 5
 
-    # Check for existing checkpoints
     start_epoch = 0
-    if os.path.isdir(config['checkpoints']['dir']):
-        checkpoint_list = sorted([f for f in os.listdir(config['checkpoints']['dir']) if f.endswith('.pth')], reverse=True)
+    if os.path.isdir(config.checkpoints.dir):
+        checkpoint_list = sorted([f for f in os.listdir(config.checkpoints.dir) if f.endswith('.pth')], reverse=True)
         if checkpoint_list:
-            checkpoint_path = os.path.join(config['checkpoints']['dir'], checkpoint_list[0])
+            checkpoint_path = os.path.join(config.checkpoints.dir, checkpoint_list[0])
             checkpoint = torch.load(checkpoint_path, map_location=accelerator.device)
             accelerator.unwrap_model(model).load_state_dict(checkpoint['model_state_dict'])
             accelerator.unwrap_model(discriminator).load_state_dict(checkpoint['discriminator_state_dict'])
@@ -122,76 +150,85 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             start_epoch = checkpoint['epoch'] + 1
             accelerator.print(f"Restored from {checkpoint_path}")
 
-    for epoch in range(start_epoch, config['training']['num_epochs']):
+    for epoch in range(config.training.num_epochs):
         model.train()
-        # discriminator.train()
+        discriminator.train()
         total_loss_g = 0
         total_loss_d = 0
 
-        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config['training']['num_epochs']}")
+        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-            # Generator step
-            optimizer_g.zero_grad()
+            try:
+                for _ in range(config.training.n_critic):
+                    optimizer_d.zero_grad()
+                    
+                    with torch.no_grad():
+                        reconstructed_frames = model(current_frames, reference_frames)
+                    
+                    real_validity = discriminator(current_frames)[0]
+                    fake_validity = discriminator(reconstructed_frames.detach())[0]
+                    
+                    gradient_penalty = compute_gradient_penalty(discriminator, current_frames, reconstructed_frames)
+                    
+                    loss_d = -torch.mean(real_validity) + torch.mean(fake_validity) + config.training.lambda_gp * gradient_penalty
 
-            reconstructed_frames = model(current_frames, reference_frames)
+                    if torch.isnan(loss_d):
+                        raise ValueError("NaN discriminator loss detected")
 
-            # print(f"Current frames shape: {current_frames.shape}")
-            # print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
+                    accelerator.backward(loss_d)
+                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
+                    optimizer_d.step()
 
-            loss_pixel = pixel_loss(reconstructed_frames, current_frames)
-            loss_perceptual = perceptual_loss(vgg_loss, reconstructed_frames, current_frames)
-            loss_adv = adversarial_loss(discriminator, reconstructed_frames)
-
-            # print(f"Pixel loss: {loss_pixel.item()}")
-            # print(f"Perceptual loss: {loss_perceptual.item()}")
-            # print(f"Adversarial loss: {loss_adv.item()}")
-
-            loss_g = config['training']['lambda_pixel'] * loss_pixel + \
-                     config['training']['lambda_perceptual'] * loss_perceptual + \
-                     config['training']['lambda_adv'] * loss_adv
-
-            # Check for NaN in generator loss
-            if torch.isnan(loss_g):
-                accelerator.print("NaN generator loss detected. Skipping this batch.")
                 optimizer_g.zero_grad()
+                
+                reconstructed_frames = model(current_frames, reference_frames)
+                
+                fake_validity = discriminator(reconstructed_frames)[0]
+                
+                loss_pixel = pixel_loss(reconstructed_frames, current_frames)
+                loss_perceptual = perceptual_loss(vgg_loss, reconstructed_frames, current_frames)
+                loss_g = -torch.mean(fake_validity) + config.training.lambda_pixel * loss_pixel + config.training.lambda_perceptual * loss_perceptual
+
+                if torch.isnan(loss_g):
+                    raise ValueError("NaN generator loss detected")
+
+                accelerator.backward(loss_g)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.training.clip_grad_norm)
+                optimizer_g.step()
+
+                total_loss_g += loss_g.item()
+                total_loss_d += loss_d.item()
+
+                progress_bar.update(1)
+                progress_bar.set_postfix({"G_Loss": f"{loss_g.item():.4f}", "D_Loss": f"{loss_d.item():.4f}"})
+
+                if accelerator.is_main_process:
+                    wandb.log({
+                        "batch_loss_g": loss_g.item(),
+                        "batch_loss_d": loss_d.item(),
+                        "batch": batch_idx + epoch * len(train_dataloader)
+                    })
+                nan_counter = 0
+
+            except ValueError as e:
+                nan_counter += 1
+                accelerator.print(f"NaN detected (count: {nan_counter}). {str(e)}. Attempting to flash forward.")
+                
+                if nan_counter >= max_consecutive_nans:
+                    accelerator.print("Too many consecutive NaNs. Stopping training.")
+                    return
+
+                for _ in range(flash_forward_steps):
+                    try:
+                        next(iter(train_dataloader))
+                    except StopIteration:
+                        accelerator.print("Reached end of dataset while flashing forward. Resetting dataloader.")
+                        train_dataloader = accelerator.prepare(DataLoader(train_dataloader.dataset, batch_size=config.training.batch_size, shuffle=True))
+                        break
+
+                progress_bar.update(flash_forward_steps)
                 continue
-            accelerator.backward(loss_g)
-            # Monitor gradients before optimizer step
-            # monitor_gradients(model, epoch, batch_idx)
-            optimizer_g.step()
-
-            # Discriminator step
-            optimizer_d.zero_grad()
-
-            loss_d = discriminator_loss(discriminator, reconstructed_frames.detach(), current_frames)
-
-            # R1 regularization
-            if batch_idx % config['training']['r1_interval'] == 0:
-                r1_penalty = r1_regularization(discriminator, current_frames)
-                loss_d += config['training']['r1_gamma'] * r1_penalty * config['training']['r1_interval']
-
-
-            # Check for NaN in discriminator loss
-            if torch.isnan(loss_d):
-                accelerator.print("NaN discriminator loss detected. Skipping this batch.")
-                optimizer_d.zero_grad()
-                continue
-            accelerator.backward(loss_d)
-            optimizer_d.step()
-
-            total_loss_g += loss_g.item()
-            total_loss_d += loss_d.item()
-
-            progress_bar.update(1)
-            progress_bar.set_postfix({"G_Loss": f"{loss_g.item():.4f}", "D_Loss": f"{loss_d.item():.4f}"})
-
-            if accelerator.is_main_process:
-                wandb.log({
-                    "batch_loss_g": loss_g.item(),
-                    "batch_loss_d": loss_d.item(),
-                    "batch": batch_idx + epoch * len(train_dataloader)
-                })
 
         progress_bar.close()
 
@@ -199,7 +236,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         avg_loss_d = total_loss_d / len(train_dataloader)
 
         if accelerator.is_main_process:
-            accelerator.print(f"Epoch [{epoch+1}/{config['training']['num_epochs']}], "
+            accelerator.print(f"Epoch [{epoch+1}/{config.training.num_epochs}], "
                               f"Avg G Loss: {avg_loss_g:.4f}, Avg D Loss: {avg_loss_d:.4f}")
 
             wandb.log({
@@ -208,7 +245,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 "avg_loss_d": avg_loss_d
             })
 
-        if (epoch + 1) % config['checkpoints']['interval'] == 0:
+        if (epoch + 1) % config.checkpoints.interval == 0:
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
             unwrapped_discriminator = accelerator.unwrap_model(discriminator)
@@ -218,36 +255,34 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 'discriminator_state_dict': unwrapped_discriminator.state_dict(),
                 'optimizer_g_state_dict': optimizer_g.state_dict(),
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
-            }, f"{config['checkpoints']['dir']}/checkpoint_{epoch+1}.pth")
+            }, f"{config.checkpoints.dir}/checkpoint_{epoch+1}.pth")
+
+        if epoch % config.logging.sample_interval == 0:
+            sample_path = f"recon_epoch_{epoch+1}.png"
+            sample_frames = sample_recon(model, next(iter(train_dataloader)), accelerator, sample_path, 
+                                        num_samples=config.logging.sample_size)
+            
+            wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
 
 
-        if epoch % config['logging']['sample_interval'] == 0:
-                sample_path = f"recon_epoch_{epoch+1}.png"
-                sample_frames = sample_recon(model, next(iter(train_dataloader)), accelerator, sample_path, 
-                                            num_samples=config['logging']['sample_size'])
-        
-                
-                # Log sample image to wandb
-                wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
 def main():
     try:
         config = load_config('config.yaml')
         torch.cuda.empty_cache()
-        wandb.init(project='IMF', config=config)
+        wandb.init(project='IMF', config=OmegaConf.to_container(config, resolve=True))
 
         accelerator = Accelerator(
-            mixed_precision=config['accelerator']['mixed_precision'],
-            cpu=config['accelerator']['cpu']
+            mixed_precision=config.accelerator.mixed_precision,
+            cpu=config.accelerator.cpu
         )
 
         model = IMFModel(
-            latent_dim=config['model']['latent_dim'],
-            base_channels=config['model']['base_channels'],
-            num_layers=config['model']['num_layers']
+            latent_dim=config.model.latent_dim,
+            base_channels=config.model.base_channels,
+            num_layers=config.model.num_layers
         )
         add_gradient_hooks(model)
-        discriminator = PatchDiscriminator(ndf=config['discriminator']['ndf'])
-        # discriminator.apply(init_weights)
+        discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
 
         transform = transforms.Compose([
             transforms.Resize((256, 256)),
@@ -256,13 +291,13 @@ def main():
         ])
 
         dataset = VideoDataset(
-            root_dir=config['dataset']['root_dir'],
+            root_dir=config.dataset.root_dir,
             transform=transform,
-            frame_skip=config['dataset']['frame_skip']
+            frame_skip=config.dataset.frame_skip
         )
         dataloader = DataLoader(
             dataset,
-            batch_size=config['training']['batch_size'],
+            batch_size=config.training.batch_size,
             num_workers=4,
             shuffle=True
         )

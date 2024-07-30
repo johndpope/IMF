@@ -546,17 +546,19 @@ class FrameDecoder(nn.Module):
             UpConvResBlock(512, 512),
             UpConvResBlock(1024, 256),
             UpConvResBlock(512, 128),
-            UpConvResBlock(256, 64)
+            UpConvResBlock(256, 64),
+            UpConvResBlock(64, 32)  # New block for 256x256 output
         ])
         
         self.feat_blocks = nn.ModuleList([
             nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
             nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
+            nn.Sequential(*[FeatResBlock(128) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(64) for _ in range(3)])  # New block for 256x256 output
         ])
         
         self.final_conv = nn.Sequential(
-            nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(32, 3, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
 
@@ -573,14 +575,20 @@ class FrameDecoder(nn.Module):
             
             if i < len(self.feat_blocks):
                 debug_print(f"    Processing feat_block {i+1}")
-                feat_input = features[-(i+2)]
-                debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
-                feat = self.feat_blocks[i](feat_input)
-                debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
-                
-                debug_print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
-                x = torch.cat([x, feat], dim=1)
-                debug_print(f"    After concatenation: {x.shape}")
+                if i < len(features) - 1:
+                    feat_input = features[-(i+2)]
+                    debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
+                    feat = self.feat_blocks[i](feat_input)
+                    debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
+                    
+                    debug_print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
+                    x = torch.cat([x, feat], dim=1)
+                    debug_print(f"    After concatenation: {x.shape}")
+                else:
+                    # For the last upsampling step, we don't have a corresponding feature map
+                    # so we just apply the FeatResBlock to the current x
+                    x = self.feat_blocks[i](x)
+                    debug_print(f"    After final feat_block: {x.shape}")
         
         debug_print("\n    Applying final convolution")
         x = self.final_conv(x)
@@ -665,8 +673,8 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        self.dense_feature_encoder = ResNetFeatureExtractor()
-        # self.dense_feature_encoder = DenseFeatureEncoder()
+        # self.dense_feature_encoder = ResNetFeatureExtractor()
+        self.dense_feature_encoder = DenseFeatureEncoder()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
