@@ -58,6 +58,8 @@ def adversarial_loss(discriminator, x_hat):
     fake_outputs = discriminator(x_hat)
     return sum(-torch.mean(output) for output in fake_outputs)
 
+def mse_loss(x_hat, x):
+    return F.mse_loss(x_hat, x)
 
 def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
@@ -150,11 +152,12 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             reconstructed_frames = model.frame_decoder(aligned_features)
             perceptual_l = perceptual_loss_fn(reconstructed_frames, current_frames)
             adv_l = adversarial_loss(discriminator, reconstructed_frames)
+            mse_l = mse_loss(reconstructed_frames, current_frames)
 
             current_frames.requires_grad_(False)
             reference_frames.requires_grad_(False)
             g_loss = (config.training.lambda_perceptual * perceptual_l +
-                      config.training.lambda_adv * adv_l)
+                      config.training.lambda_adv * adv_l +      config.training.lambda_mse * mse_l)
 
             accelerator.backward(g_loss)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -197,6 +200,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 "batch_g_loss": g_loss.item(),
                 "batch_d_loss": d_loss.item(),
                 "perceptual_l": perceptual_l.item(),
+                "mse_l": mse_l.item(),
                 "batch": batch_idx + epoch * len(train_dataloader)
             })
 

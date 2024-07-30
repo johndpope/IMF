@@ -28,11 +28,16 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
         reference_frames = F.interpolate(reference_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
         reconstructed_frames = F.interpolate(reconstructed_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
         
+        # Unnormalize reconstructed frames
+        reconstructed_frames = reconstructed_frames * 0.5 + 0.5
+        reconstructed_frames = torch.clamp(reconstructed_frames, 0, 1)
+        
+        # Unnormalize reference frames (only once)
+        reference_frames = reference_frames * 0.5 + 0.5
+        reference_frames = torch.clamp(reference_frames, 0, 1)
+        
         # Prepare frames for saving (2x4 grid)
         frames = torch.cat((reconstructed_frames, reference_frames), dim=0)
-        
-        # Unnormalize frames
-        frames = frames * 0.5 + 0.5
         
         # Ensure we have a valid output directory
         if output_path:
@@ -52,13 +57,12 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
         for i in range(num_samples):
             wandb_images.extend([
                 wandb.Image(reconstructed_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
-                wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i} (repeat)")
+                wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
             ])
         
         wandb.log({"Sample Reconstructions": wandb_images})
         
         return frames
-
 
 
 def monitor_gradients(model, epoch, batch_idx, log_interval=10):

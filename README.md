@@ -1,5 +1,12 @@
 # implicit-motion-function
 
+see current training here 
+https://wandb.ai/snoozie/IMF?nw=nwusersnoozie
+
+
+The frame_skip in VideoDataset - is only at 1. 
+
+
 ![Image](ok.png)
 
 
