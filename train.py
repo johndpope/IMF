@@ -9,13 +9,14 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from model import IMFModel, PatchDiscriminator, init_weights, debug_print
+from model import IMFModel, debug_print,PatchDiscriminator
 from VideoDataset import VideoDataset
 from torchvision.utils import save_image
 from helper import monitor_gradients, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
+from torch.nn.utils import spectral_norm
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -29,6 +30,14 @@ class VGGLoss(nn.Module):
     
     def forward(self, x):
         return self.vgg(x)
+
+class SNConv2d(nn.Conv2d):
+    def __init__(self, *args, **kwargs):
+        super(SNConv2d, self).__init__(*args, **kwargs)
+        self = spectral_norm(self)
+
+    def forward(self, input):
+        return super(SNConv2d, self).forward(input)
 
 def pixel_loss(x_hat, x):
     return nn.L1Loss()(x_hat, x)
@@ -51,8 +60,8 @@ def hinge_loss(real_outputs, fake_outputs):
     return real_loss + fake_loss
 
 def train(config, model, discriminator, train_dataloader, accelerator):
-    optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(0.5, 0.999))
-    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.learning_rate_d, betas=(0.5, 0.999))
+    optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
+    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
 
     model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
         model, discriminator, optimizer_g, optimizer_d, train_dataloader
@@ -63,6 +72,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
     style_mixing_prob = config.training.style_mixing_prob
     noise_magnitude = config.training.noise_magnitude
+    r1_gamma = config.training.r1_gamma
 
     for epoch in range(config.training.num_epochs):
         model.train()
@@ -110,8 +120,62 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 mix_tc = [tc] * len(model.implicit_motion_alignment)
                 mix_tr = [tr] * len(model.implicit_motion_alignment)
 
-            reconstructed_frames = model(current_frames, reference_frames, mix_tc, mix_tr)
 
+            debug_print(f"Mixed token shapes - mix_tc: {[t.shape for t in mix_tc]}, mix_tr: {[t.shape for t in mix_tr]}")
+
+            m_c, m_r = model.process_tokens(mix_tc, mix_tr)
+
+            fr = model.dense_feature_encoder(reference_frames)
+            debug_print(f"Dense feature encoder output shapes: {[f.shape for f in fr]}")
+
+            aligned_features = []
+            for i in range(len(model.implicit_motion_alignment)):
+                f_r_i = fr[i]
+                align_layer = model.implicit_motion_alignment[i]
+                m_c_i = m_c[i][i]  # Access the i-th element of the i-th sublist
+                m_r_i = m_r[i][i]  # Access the i-th element of the i-th sublist
+                debug_print(f"Layer {i} input shapes - f_r_i: {f_r_i.shape}, m_c_i: {m_c_i.shape}, m_r_i: {m_r_i.shape}")
+                aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                debug_print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
+                aligned_features.append(aligned_feature)
+
+            with torch.set_grad_enabled(True):
+                reconstructed_frames = model.frame_decoder(aligned_features)
+                debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")
+        
+  
+                # R1 regularization for better training stability  
+                if batch_idx % 16 == 0:
+                    current_frames.requires_grad_(True)
+                    reference_frames.requires_grad_(True)
+                    
+                    with torch.enable_grad():
+                        reconstructed_frames = model(current_frames, reference_frames)
+                        debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
+                        debug_print(f"Current frames shape before R1: {current_frames.shape}")
+                        
+                        r1_loss = torch.autograd.grad(
+                            outputs=reconstructed_frames.sum(), 
+                            inputs=[current_frames, reference_frames], 
+                            create_graph=True, 
+                            allow_unused=True
+                        )
+                        
+                        if r1_loss[0] is not None and r1_loss[1] is not None:
+                            r1_loss_current = r1_loss[0].pow(2).reshape(r1_loss[0].shape[0], -1).sum(1).mean()
+                            r1_loss_reference = r1_loss[1].pow(2).reshape(r1_loss[1].shape[0], -1).sum(1).mean()
+                            r1_loss_total = r1_loss_current + r1_loss_reference
+                            debug_print(f"r1_loss_current shape: {r1_loss_current.shape}")
+                            debug_print(f"r1_loss_reference shape: {r1_loss_reference.shape}")
+                            loss = loss + r1_gamma * 0.5 * r1_loss_total * 16
+                        else:
+                            debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
+
+
+
+                current_frames.requires_grad_(False)
+                reference_frames.requires_grad_(False)
+                
             pixel_l = pixel_loss(reconstructed_frames, current_frames)
             perceptual_l = perceptual_loss(vgg_loss, reconstructed_frames, current_frames)
             adv_l = adversarial_loss(discriminator, reconstructed_frames)
