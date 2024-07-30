@@ -23,7 +23,7 @@ class VideoDataset(Dataset):
         self.ctx = decord.cpu()
 
     def __len__(self):
-        return 1000  # You can adjust this value based on how many samples you want per epoch
+        return 10000  # You can adjust this value based on how many samples you want per epoch
 
     def augmentation(self, images, transform, state=None):
         if state is not None:
