@@ -139,47 +139,15 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 debug_print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
                 aligned_features.append(aligned_feature)
 
-            with torch.set_grad_enabled(True):
-                reconstructed_frames = model.frame_decoder(aligned_features)
-                debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")
-        
-  
-                # R1 regularization for better training stability  
-                if batch_idx % 16 == 0:
-                    current_frames.requires_grad_(True)
-                    reference_frames.requires_grad_(True)
-                    
-                    with torch.enable_grad():
-                        reconstructed_frames = model(current_frames, reference_frames)
-                        debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
-                        debug_print(f"Current frames shape before R1: {current_frames.shape}")
-                        
-                        r1_loss = torch.autograd.grad(
-                            outputs=reconstructed_frames.sum(), 
-                            inputs=[current_frames, reference_frames], 
-                            create_graph=True, 
-                            allow_unused=True
-                        )
-                        
-                        if r1_loss[0] is not None and r1_loss[1] is not None:
-                            r1_loss_current = r1_loss[0].pow(2).reshape(r1_loss[0].shape[0], -1).sum(1).mean()
-                            r1_loss_reference = r1_loss[1].pow(2).reshape(r1_loss[1].shape[0], -1).sum(1).mean()
-                            r1_loss_total = r1_loss_current + r1_loss_reference
-                            debug_print(f"r1_loss_current shape: {r1_loss_current.shape}")
-                            debug_print(f"r1_loss_reference shape: {r1_loss_reference.shape}")
-                            loss = loss + r1_gamma * 0.5 * r1_loss_total * 16
-                        else:
-                            debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
-
-
-
-                current_frames.requires_grad_(False)
-                reference_frames.requires_grad_(False)
-                
+          
+            reconstructed_frames = model.frame_decoder(aligned_features)
+            debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")              
             pixel_l = pixel_loss(reconstructed_frames, current_frames)
             perceptual_l = perceptual_loss(vgg_loss, reconstructed_frames, current_frames)
             adv_l = adversarial_loss(discriminator, reconstructed_frames)
 
+            current_frames.requires_grad_(False)
+            reference_frames.requires_grad_(False)
             g_loss = (config.training.lambda_pixel * pixel_l +
                       config.training.lambda_perceptual * perceptual_l +
                       config.training.lambda_adv * adv_l)
