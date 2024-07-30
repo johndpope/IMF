@@ -156,7 +156,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-            try:
+            # try:
                 # Train Discriminator
                 for _ in range(config.training.n_critic):
                     optimizer_d.zero_grad()
@@ -215,24 +215,24 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     })
                 nan_counter = 0
 
-            except ValueError as e:
-                nan_counter += 1
-                accelerator.print(f"NaN detected (count: {nan_counter}). {str(e)}. Attempting to flash forward (next movie).")
+            # except ValueError as e:
+            #     nan_counter += 1
+            #     accelerator.print(f"NaN detected (count: {nan_counter}). {str(e)}. Attempting to flash forward (next movie).")
                 
-                if nan_counter >= max_consecutive_nans:
-                    accelerator.print("Too many consecutive NaNs. Stopping training.")
-                    return
+            #     if nan_counter >= max_consecutive_nans:
+            #         accelerator.print("Too many consecutive NaNs. Stopping training.")
+            #         return
 
-                for _ in range(flash_forward_steps):
-                    try:
-                        next(iter(train_dataloader))
-                    except StopIteration:
-                        accelerator.print("Reached end of dataset while flashing forward. Resetting dataloader.")
-                        train_dataloader = accelerator.prepare(DataLoader(train_dataloader.dataset, batch_size=config.training.batch_size, shuffle=True))
-                        break
+            #     for _ in range(flash_forward_steps):
+            #         try:
+            #             next(iter(train_dataloader))
+            #         except StopIteration:
+            #             accelerator.print("Reached end of dataset while flashing forward. Resetting dataloader.")
+            #             train_dataloader = accelerator.prepare(DataLoader(train_dataloader.dataset, batch_size=config.training.batch_size, shuffle=True))
+            #             break
 
-                progress_bar.update(flash_forward_steps)
-                continue
+            #     progress_bar.update(flash_forward_steps)
+            #     continue
 
         progress_bar.close()
 
@@ -285,7 +285,10 @@ def main():
             base_channels=config.model.base_channels,
             num_layers=config.model.num_layers
         )
-        add_gradient_hooks(model)
+        # add_gradient_hooks(model)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+
         discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
 
         transform = transforms.Compose([

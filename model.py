@@ -16,6 +16,8 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from einops import rearrange
 from einops.layers.torch import Rearrange
 import torchvision.models as models
+import numpy as np
+
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -451,50 +453,61 @@ def positional_embedding_2d(b, h, w, dim):
     :param dim: embedding dimension
     :return: positional embeddings of shape (b, h*w, dim)
     """
-    debug_print(f"\n🔍 Positional Embedding 2D Diagnostics:")
-    debug_print(f"Input parameters: b={b}, h={h}, w={w}, dim={dim}")
+    # debug_print(f"\n🔍 Positional Embedding 2D Diagnostics:")
+    # debug_print(f"Input parameters: b={b}, h={h}, w={w}, dim={dim}")
 
-    y_embed = torch.arange(h, dtype=torch.float32).unsqueeze(1).expand(h, w)
-    x_embed = torch.arange(w, dtype=torch.float32).unsqueeze(0).expand(h, w)
-
-    debug_print(f"Initial y_embed shape: {y_embed.shape}")
-    debug_print(f"Initial x_embed shape: {x_embed.shape}")
-
-    y_embed = y_embed / (h - 1) * 2 - 1
-    x_embed = x_embed / (w - 1) * 2 - 1
-
-    debug_print(f"Normalized y_embed range: [{y_embed.min():.2f}, {y_embed.max():.2f}]")
-    debug_print(f"Normalized x_embed range: [{x_embed.min():.2f}, {x_embed.max():.2f}]")
-
-    pos_embed = torch.stack([x_embed, y_embed], dim=-1)  # (h, w, 2)
-    debug_print(f"Stacked pos_embed shape: {pos_embed.shape}")
-
-    def create_sinusoidal_embedding(x, dim):
-        half_dim = dim // 2
-        emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, dtype=torch.float32) * -emb)
-        emb = x[..., None] * emb[None, :]
-        emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
-        if dim % 2 == 1:  # if odd
-            emb = torch.cat([emb, torch.zeros_like(emb[..., :1])], dim=-1)
-        return emb
-
-    pos_embed = create_sinusoidal_embedding(pos_embed, dim)  # (h, w, 2, dim)
-    debug_print(f"After sinusoidal embedding, shape: {pos_embed.shape}")
-    debug_print(f"Sinusoidal embedding range: [{pos_embed.min():.2f}, {pos_embed.max():.2f}]")
-
-    # Reshape to (h*w, dim) by combining the x and y embeddings
-    pos_embed = pos_embed.view(h * w, 2 * dim)
+    if dim % 4 != 0:
+        raise ValueError("Embedding dimension must be divisible by 4")
     
-    # If necessary, adjust the dimension to match the required dim
-    if pos_embed.shape[1] != dim:
-        pos_embed = pos_embed[:, :dim]
+    d_model = dim // 2
+    
+    def get_angles(pos, i, d_model):
+        return pos / np.power(10000, (2 * i) / d_model)
+    
+    # Create position indices
+    y_pos = np.arange(h)[:, np.newaxis]
+    x_pos = np.arange(w)[np.newaxis, :]
+    
+    # debug_print(f"y_pos shape: {y_pos.shape}, x_pos shape: {x_pos.shape}")
+    
+    # Calculate angles for y and x separately
+    y_angles = np.array([get_angles(y_pos, i, d_model) for i in range(d_model // 2)])
+    x_angles = np.array([get_angles(x_pos, i, d_model) for i in range(d_model // 2)])
+    
+    # debug_print(f"y_angles shape: {y_angles.shape}, x_angles shape: {x_angles.shape}")
 
-    pos_embed = pos_embed.unsqueeze(0).expand(b, -1, -1)  # (b, h*w, dim)
-    debug_print(f"Final pos_embed shape: {pos_embed.shape}")
+    # Apply sin and cos
+    y_sin = np.sin(y_angles)
+    y_cos = np.cos(y_angles)
+    x_sin = np.sin(x_angles)
+    x_cos = np.cos(x_angles)
 
-    return pos_embed
+    # Reshape for broadcasting
+    y_sin = y_sin.transpose(1, 2, 0).reshape(h, 1, -1)
+    y_cos = y_cos.transpose(1, 2, 0).reshape(h, 1, -1)
+    x_sin = x_sin.transpose(1, 2, 0).reshape(1, w, -1)
+    x_cos = x_cos.transpose(1, 2, 0).reshape(1, w, -1)
 
+    # Combine y and x encodings
+    pos_encoding = np.concatenate([
+        np.repeat(y_sin, w, axis=1),
+        np.repeat(y_cos, w, axis=1),
+        np.repeat(x_sin, h, axis=0),
+        np.repeat(x_cos, h, axis=0)
+    ], axis=-1)
+    
+    pos_encoding = pos_encoding.reshape(h*w, dim)
+    
+    # debug_print(f"pos_encoding shape: {pos_encoding.shape}")
+    # debug_print(f"pos_encoding min: {pos_encoding.min()}, max: {pos_encoding.max()}")
+
+    # Reshape and tile for batch size
+    pos_encoding = pos_encoding[np.newaxis, :, :]
+    pos_encoding = np.tile(pos_encoding, (b, 1, 1))
+    # debug_print(f"Final pos_encoding shape: {pos_encoding.shape}")
+    # debug_print(f"Final pos_encoding min: {pos_encoding.min()}, max: {pos_encoding.max()}")
+
+    return torch.from_numpy(pos_encoding).float()
 
 class CrossAttention(nn.Module):
     def __init__(self, motion_dim, feature_dim, num_heads):
@@ -673,8 +686,8 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        # self.dense_feature_encoder = ResNetFeatureExtractor()
-        self.dense_feature_encoder = DenseFeatureEncoder()
+        self.dense_feature_encoder = ResNetFeatureExtractor()
+        # self.dense_feature_encoder = DenseFeatureEncoder()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
