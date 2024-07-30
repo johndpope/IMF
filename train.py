@@ -181,8 +181,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             tr = model.latent_token_encoder(reference_frames)
             debug_print(f"Latent token shapes - tc: {tc.shape}, tr: {tr.shape}")
 
-            noise_magnitude = 0.1
-            noise = torch.randn_like(tc) * noise_magnitude
+            noise = torch.randn_like(tc) * config.training.noise_magnitude
             tc = tc + noise
             tr = tr + noise
 
