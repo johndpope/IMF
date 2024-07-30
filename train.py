@@ -9,12 +9,14 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from model import IMFModel,PatchDiscriminator, init_weights
+from model import IMFModel,PatchDiscriminator, init_weights,debug_print
 from VideoDataset import VideoDataset
 from torchvision.utils import save_image
 from helper import monitor_gradients,add_gradient_hooks,sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
+import lpips
+
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -130,10 +132,19 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     )
 
     vgg_loss = VGGLoss().to(accelerator.device)
+    mse_loss = nn.MSELoss()
+    lpips_loss = lpips.LPIPS(net='alex').to(accelerator.device)
     flash_forward_steps = 100
     nan_counter = 0
     max_consecutive_nans = 5
 
+    # Add gradient monitoring
+    # add_gradient_hooks(model)
+    # add_gradient_hooks(discriminator)
+
+    style_mixing_prob = config.training.style_mixing_prob
+    noise_magnitude = config.training.noise_magnitude
+    r1_gamma = config.training.r1_gamma
     start_epoch = 0
     if os.path.isdir(config.checkpoints.dir):
         checkpoint_list = sorted([f for f in os.listdir(config.checkpoints.dir) if f.endswith('.pth')], reverse=True)
@@ -150,103 +161,140 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     for epoch in range(config.training.num_epochs):
         model.train()
         discriminator.train()
-        total_loss_g = 0
-        total_loss_d = 0
-
+        total_mse_loss = 0
+        total_perceptual_loss = 0
+        total_loss = 0
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-            # try:
-                # Train Discriminator
-                for _ in range(config.training.n_critic):
-                    optimizer_d.zero_grad()
+
+
+            debug_print(f"Batch {batch_idx} input shapes - current_frames: {current_frames.shape}, reference_frames: {reference_frames.shape}")
+
+            # Forward pass
+            reconstructed_frames = model(current_frames, reference_frames)
+            debug_print(f"Reconstructed frames shape: {reconstructed_frames.shape}")
+
+            # Add noise to latent tokens for improved training dynamics
+            tc = model.latent_token_encoder(current_frames)
+            tr = model.latent_token_encoder(reference_frames)
+            debug_print(f"Latent token shapes - tc: {tc.shape}, tr: {tr.shape}")
+
+            noise_magnitude = 0.1
+            noise = torch.randn_like(tc) * noise_magnitude
+            tc = tc + noise
+            tr = tr + noise
+
+            # Perform style mixing regularization
+            if torch.rand(()).item() < style_mixing_prob:
+                rand_tc = tc[torch.randperm(tc.size(0))]
+                rand_tr = tr[torch.randperm(tr.size(0))]
+
+                mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.implicit_motion_alignment))]
+                mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.implicit_motion_alignment))]
+            else:
+                mix_tc = [tc] * len(model.implicit_motion_alignment)
+                mix_tr = [tr] * len(model.implicit_motion_alignment)
+
+            debug_print(f"Mixed token shapes - mix_tc: {[t.shape for t in mix_tc]}, mix_tr: {[t.shape for t in mix_tr]}")
+
+            m_c, m_r = model.process_tokens(mix_tc, mix_tr)
+
+            fr = model.dense_feature_encoder(reference_frames)
+            debug_print(f"Dense feature encoder output shapes: {[f.shape for f in fr]}")
+
+            aligned_features = []
+            for i in range(len(model.implicit_motion_alignment)):
+                f_r_i = fr[i]
+                align_layer = model.implicit_motion_alignment[i]
+                m_c_i = m_c[i][i]  # Access the i-th element of the i-th sublist
+                m_r_i = m_r[i][i]  # Access the i-th element of the i-th sublist
+                debug_print(f"Layer {i} input shapes - f_r_i: {f_r_i.shape}, m_c_i: {m_c_i.shape}, m_r_i: {m_r_i.shape}")
+                aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                debug_print(f"Layer {i} aligned feature shape: {aligned_feature.shape}")
+                aligned_features.append(aligned_feature)
+
+            with torch.set_grad_enabled(True):
+                reconstructed_frames = model.frame_decoder(aligned_features)
+                debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")
+                mse = mse_loss(reconstructed_frames, current_frames)
+                perceptual = lpips_loss(reconstructed_frames, current_frames).mean()
+                loss = mse + 0.1 * perceptual
+
+    
+                 # R1 regularization for better training stability  
+                if batch_idx % 16 == 0:
+                    current_frames.requires_grad_(True)
+                    reference_frames.requires_grad_(True)
                     
-                    with torch.no_grad():
+                    with torch.enable_grad():
                         reconstructed_frames = model(current_frames, reference_frames)
-                    
-                    real_validity = discriminator(current_frames)[0]
-                    fake_validity = discriminator(reconstructed_frames.detach())[0]
-                    
-                    gradient_penalty = compute_gradient_penalty(discriminator, current_frames, reconstructed_frames)
-                    
-                    loss_d = -torch.mean(real_validity) + torch.mean(fake_validity) + config.training.lambda_gp * gradient_penalty
+                        debug_print(f"Reconstructed frames shape before R1: {reconstructed_frames.shape}")
+                        debug_print(f"Current frames shape before R1: {current_frames.shape}")
+                        
+                        r1_loss = torch.autograd.grad(
+                            outputs=reconstructed_frames.sum(), 
+                            inputs=[current_frames, reference_frames], 
+                            create_graph=True, 
+                            allow_unused=True
+                        )
+                        
+                        if r1_loss[0] is not None and r1_loss[1] is not None:
+                            r1_loss_current = r1_loss[0].pow(2).reshape(r1_loss[0].shape[0], -1).sum(1).mean()
+                            r1_loss_reference = r1_loss[1].pow(2).reshape(r1_loss[1].shape[0], -1).sum(1).mean()
+                            r1_loss_total = r1_loss_current + r1_loss_reference
+                            debug_print(f"r1_loss_current shape: {r1_loss_current.shape}")
+                            debug_print(f"r1_loss_reference shape: {r1_loss_reference.shape}")
+                            loss = loss + r1_gamma * 0.5 * r1_loss_total * 16
+                        else:
+                            debug_print("Warning: r1_loss is None. Skipping R1 regularization for this batch.")
 
-                    # Apply R1 regularization
-                    if batch_idx % config.training.r1_interval == 0:
-                        r1_penalty = r1_regularization(discriminator, current_frames)
-                        loss_d += config.training.r1_gamma * r1_penalty
+                    current_frames.requires_grad_(False)
+                    reference_frames.requires_grad_(False)
+            accelerator.backward(loss)
+             # Monitor gradients before optimizer step
+            # monitor_gradients(model, epoch, batch_idx)
+            #torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
-                    if torch.isnan(loss_d):
-                        raise ValueError("NaN discriminator loss detected")
 
-                    accelerator.backward(loss_d)
-                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
-                    optimizer_d.step()
+            optimizer_g.step()
+            optimizer_g.zero_grad()
 
-                # Train Generator
-                optimizer_g.zero_grad()
-                
-                reconstructed_frames = model(current_frames, reference_frames)
-                
-                fake_validity = discriminator(reconstructed_frames)[0]
-                
-                loss_pixel = pixel_loss(reconstructed_frames, current_frames)
-                loss_perceptual = perceptual_loss(vgg_loss, reconstructed_frames, current_frames)
-                loss_g = -torch.mean(fake_validity) + config.training.lambda_pixel * loss_pixel + config.training.lambda_perceptual * loss_perceptual
+            # Update exponential moving average of weights
+            with torch.no_grad():
+                for p_ema, p in zip(model.parameters(), accelerator.unwrap_model(model).parameters()):
+                    p_ema.copy_(p.lerp(p_ema, config.training.ema_decay))
 
-                if torch.isnan(loss_g):
-                    raise ValueError("NaN generator loss detected")
+            total_mse_loss += mse.item()
+            total_perceptual_loss += perceptual.item()
+            total_loss += loss.item()
+            
+            # Update progress bar
+            progress_bar.update(1)
+            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
 
-                accelerator.backward(loss_g)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.training.clip_grad_norm)
-                optimizer_g.step()
+            # Log batch loss to wandb
+            wandb.log({
+                "batch_mse_loss": mse.item(),
+                "batch_perceptual_loss": perceptual.item(),
+                "batch_total_loss": loss.item(),
+                "batch": batch_idx + epoch * len(train_dataloader)
+            })
 
-                total_loss_g += loss_g.item()
-                total_loss_d += loss_d.item()
-
-                progress_bar.update(1)
-                progress_bar.set_postfix({"G_Loss": f"{loss_g.item():.4f}", "D_Loss": f"{loss_d.item():.4f}"})
-
-                if accelerator.is_main_process:
-                    wandb.log({
-                        "batch_loss_g": loss_g.item(),
-                        "batch_loss_d": loss_d.item(),
-                        "batch": batch_idx + epoch * len(train_dataloader)
-                    })
-                nan_counter = 0
-
-            # except ValueError as e:
-            #     nan_counter += 1
-            #     accelerator.print(f"NaN detected (count: {nan_counter}). {str(e)}. Attempting to flash forward (next movie).")
-                
-            #     if nan_counter >= max_consecutive_nans:
-            #         accelerator.print("Too many consecutive NaNs. Stopping training.")
-            #         return
-
-            #     for _ in range(flash_forward_steps):
-            #         try:
-            #             next(iter(train_dataloader))
-            #         except StopIteration:
-            #             accelerator.print("Reached end of dataset while flashing forward. Resetting dataloader.")
-            #             train_dataloader = accelerator.prepare(DataLoader(train_dataloader.dataset, batch_size=config.training.batch_size, shuffle=True))
-            #             break
-
-            #     progress_bar.update(flash_forward_steps)
-            #     continue
 
         progress_bar.close()
 
-        avg_loss_g = total_loss_g / len(train_dataloader)
-        avg_loss_d = total_loss_d / len(train_dataloader)
+        avg_loss_g = total_loss / len(train_dataloader)
+        # avg_loss_d = total_loss_d / len(train_dataloader)
 
         if accelerator.is_main_process:
             accelerator.print(f"Epoch [{epoch+1}/{config.training.num_epochs}], "
-                              f"Avg G Loss: {avg_loss_g:.4f}, Avg D Loss: {avg_loss_d:.4f}")
+                              f"Avg G Loss: {avg_loss_g:.4f}") #  Avg D Loss: {avg_loss_d:.4f}
 
             wandb.log({
                 "epoch": epoch + 1,
                 "avg_loss_g": avg_loss_g,
-                "avg_loss_d": avg_loss_d
+                # "avg_loss_d": avg_loss_d
             })
 
         if (epoch + 1) % config.checkpoints.interval == 0:
