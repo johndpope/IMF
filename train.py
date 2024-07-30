@@ -17,6 +17,8 @@ from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
+from perceptual import PerceptualLoss
+
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -42,14 +44,6 @@ class SNConv2d(nn.Conv2d):
 def pixel_loss(x_hat, x):
     return nn.L1Loss()(x_hat, x)
 
-def perceptual_loss(vgg, x_hat, x):
-    losses = []
-    for i in range(4):
-        x_hat_features = vgg(x_hat[:, :, i::2, i::2])
-        x_features = vgg(x[:, :, i::2, i::2])
-        losses.append(F.l1_loss(x_hat_features, x_features))
-    return sum(losses)
-
 def adversarial_loss(discriminator, x_hat):
     fake_outputs = discriminator(x_hat)
     return sum(-torch.mean(output) for output in fake_outputs)
@@ -68,8 +62,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     )
 
     vgg_loss = VGGLoss().to(accelerator.device)
-    lpips_loss = lpips.LPIPS(net='alex').to(accelerator.device)
-
+    perceptual_loss_fn = PerceptualLoss(accelerator.device, weights={'vgg19': 20.0, 'vggface': 4.0, 'gaze': 5.0,'lpips':10.0})
+    
     style_mixing_prob = config.training.style_mixing_prob
     noise_magnitude = config.training.noise_magnitude
     r1_gamma = config.training.r1_gamma
@@ -79,9 +73,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         discriminator.train()
         total_g_loss = 0
         total_d_loss = 0
+        step_counter = 0
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
         for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
+            step_counter += 1 # Increment step counter
             # Train Discriminator
             for _ in range(config.training.n_critic):
                 optimizer_d.zero_grad()
@@ -142,15 +138,14 @@ def train(config, model, discriminator, train_dataloader, accelerator):
           
             reconstructed_frames = model.frame_decoder(aligned_features)
             debug_print(f"Final reconstructed frames shape: {reconstructed_frames.shape}")              
-            pixel_l = pixel_loss(reconstructed_frames, current_frames)
-            perceptual_l = perceptual_loss(vgg_loss, reconstructed_frames, current_frames)
+            # lpips_l = lpips_loss(reconstructed_frames, current_frames).mean()
+            perceptual_l = perceptual_loss_fn(reconstructed_frames, current_frames)
             adv_l = adversarial_loss(discriminator, reconstructed_frames)
 
             current_frames.requires_grad_(False)
             reference_frames.requires_grad_(False)
-            g_loss = (config.training.lambda_pixel * pixel_l +
-                      config.training.lambda_perceptual * perceptual_l +
-                      config.training.lambda_adv * adv_l)
+            g_loss = ( config.training.lambda_perceptual * perceptual_l +
+                config.training.lambda_adv * adv_l)
 
             accelerator.backward(g_loss)
             optimizer_g.step()
@@ -163,8 +158,16 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             wandb.log({
                 "batch_g_loss": g_loss.item(),
                 "batch_d_loss": d_loss.item(),
+                "perceptual_l": perceptual_l.item(),
                 "batch": batch_idx + epoch * len(train_dataloader)
             })
+
+            if step_counter % config.training.save_steps == 0:
+                sample_path = f"recon_epoch_{epoch+1}.png"
+                sample_frames = sample_recon(model, next(iter(train_dataloader)), accelerator, sample_path, 
+                                            num_samples=config.logging.sample_size)
+                
+                # wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
 
         progress_bar.close()
 
@@ -193,13 +196,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
             }, f"{config.checkpoints.dir}/checkpoint_{epoch+1}.pth")
 
-        if epoch % config.logging.sample_interval == 0:
-            sample_path = f"recon_epoch_{epoch+1}.png"
-            sample_frames = sample_recon(model, next(iter(train_dataloader)), accelerator, sample_path, 
-                                        num_samples=config.logging.sample_size)
-            
-            wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
-
+      
 def main():
     config = load_config('config.yaml')
     torch.cuda.empty_cache()
@@ -215,7 +212,10 @@ def main():
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers
     )
+    add_gradient_hooks(model)
+
     discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
+    add_gradient_hooks(discriminator)
 
     transform = transforms.Compose([
         transforms.Resize((256, 256)),

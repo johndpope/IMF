@@ -391,13 +391,13 @@ class ImplicitMotionAlignment(nn.Module):
         
         # Attention
         self.attend = nn.Softmax(dim=-1)
-        # Cross-attention
-        self.cross_attention = CrossAttention(motion_dim, feature_dim, num_heads)
-        
+
         # Transformer layers for refinement
         self.transformer_layers = nn.ModuleList([
             TransformerBlock(feature_dim, num_heads) for _ in range(num_layers)
         ])
+
+
 
     def forward(self, queries, keys, values):
         b, c_m, h_m, w_m = queries.shape
@@ -736,6 +736,7 @@ class IMFModel(nn.Module):
         
         self.frame_decoder = FrameDecoder()
 
+
     def forward(self, x_current, x_reference):
         # Enable gradient computation for input tensors
         x_current = x_current.requires_grad_()
@@ -778,6 +779,7 @@ class IMFModel(nn.Module):
             # Perform the alignment
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             
+    
             # Add the aligned feature to our list
             aligned_features.append(aligned_feature)
             
@@ -805,24 +807,14 @@ class IMFModel(nn.Module):
         return reconstructed_frame
 
     def process_tokens(self, t_c, t_r):
-            debug_print(f"process_tokens input types - t_c: {type(t_c)}, t_r: {type(t_r)}")
-            
-            if isinstance(t_c, list) and isinstance(t_r, list):
-                debug_print(f"process_tokens input shapes - t_c: {[tc.shape for tc in t_c]}, t_r: {[tr.shape for tr in t_r]}")
-                m_c = [self.latent_token_decoder(tc) for tc in t_c]
-                m_r = [self.latent_token_decoder(tr) for tr in t_r]
-            else:
-                debug_print(f"process_tokens input shapes - t_c: {t_c.shape}, t_r: {t_r.shape}")
-                m_c = self.latent_token_decoder(t_c)
-                m_r = self.latent_token_decoder(t_r)
-            
-            if isinstance(m_c[0], list):
-                debug_print(f"process_tokens output shapes - m_c: {[[mc_i.shape for mc_i in mc] for mc in m_c]}, m_r: {[[mr_i.shape for mr_i in mr] for mr in m_r]}")
-            else:
-                debug_print(f"process_tokens output shapes - m_c: {[m.shape for m in m_c]}, m_r: {[m.shape for m in m_r]}")
-            
-            return m_c, m_r
-
+        if isinstance(t_c, list) and isinstance(t_r, list):
+            m_c = [self.latent_token_decoder(tc) for tc in t_c]
+            m_r = [self.latent_token_decoder(tr) for tr in t_r]
+        else:
+            m_c = self.latent_token_decoder(t_c)
+            m_r = self.latent_token_decoder(t_r)
+        
+        return m_c, m_r
 
 
 
