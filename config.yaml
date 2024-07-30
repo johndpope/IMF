@@ -6,7 +6,7 @@ model:
 
 # Training parameters
 training:
-  batch_size: 8
+  batch_size: 4
   num_epochs: 100
   save_steps: 250
   learning_rate_g: 1.0e-4  # Reduced learning rate for generator
@@ -15,7 +15,7 @@ training:
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
   ema_decay: 0.999
   style_mixing_prob: 0.9
-  noise_magnitude: 0.1  
+  noise_magnitude: 0.1
   gradient_accumulation_steps: 4
   lambda_pixel: 10
   lambda_perceptual: 10
@@ -25,8 +25,8 @@ training:
   clip_grad_norm: 1.0  # Maximum norm for gradient clipping
   r1_gamma: 10
   r1_interval: 16
-  label_smoothing: 0.1 
-  
+  label_smoothing: 0.1
+
 # Dataset parameters
 dataset:
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666"
@@ -60,4 +60,4 @@ optimizer:
 
 # Loss function
 loss:
-  type: "wasserstein"  # Changed to Wasserstein loss for WGAN-GP
+  type: "wasserstein"  # Changed to Wasserstein loss for WGAN-GP%
