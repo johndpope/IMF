@@ -18,7 +18,7 @@ training:
   noise_magnitude: 0.1
   gradient_accumulation_steps: 4
   lambda_pixel: 10
-  lambda_perceptual: 10
+  lambda_perceptual: 30
   lambda_adv: 1
   lambda_gp: 10  # Gradient penalty coefficient
   n_critic: 5  # Number of discriminator updates per generator update
