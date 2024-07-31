@@ -11,6 +11,7 @@ import os
 import torch.nn.functional as F
 from model import IMFModel, debug_print,PatchDiscriminator
 from VideoDataset import VideoDataset
+from EMODataset import EMODataset
 from torchvision.utils import save_image
 from helper import monitor_gradients, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
@@ -211,6 +212,20 @@ def main():
         transform=transform,
         frame_skip=config.dataset.frame_skip
     )
+
+    dataset = EMODataset(
+        use_gpu=True,
+        remove_background=True,
+        width=256,
+        height=256,
+        sample_rate=24,
+        img_scale=(1.0, 1.0),
+        video_dir=config.dataset.root_dir,
+        json_file=config.training.json_file,
+        transform=transform,
+        apply_crop_warping=True
+    )
+
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
