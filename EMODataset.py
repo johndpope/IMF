@@ -289,8 +289,6 @@ class EMODataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         video_id = self.video_ids[index]
-        # Use next item in the list for video_id_star, wrap around if at the end
-        video_id_star = self.video_ids_star[(index + 1) % len(self.video_ids_star)]
         vid_pil_image_list = self.load_and_process_video(os.path.join(self.video_dir, f"{video_id}.mp4"))
 
         sample = {
