@@ -167,7 +167,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
-                if idx % random_idx == 0:
+                if idx % (random_idx + 1) == 0:
                     random_generated = x_reconstructed
 
             # Sample and save reconstructions
