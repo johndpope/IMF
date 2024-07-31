@@ -88,7 +88,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
             # 5. Frame Decoding
             x_reconstructed = model.frame_decoder(aligned_features)
-            print(f"x_reconstructed:{x_reconstructed.shape}")
+
             # B. Loss Calculation
             # 1. Pixel-wise Loss
             l_p = pixel_loss_fn(x_reconstructed, x_current)
