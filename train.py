@@ -20,14 +20,20 @@ import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
 from loss import VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
 
-
+# from torch.optim.lr_scheduler import ReduceLROnPlateau
 def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
     optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
+
+    # dynamic learning rate
+    scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
+    scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
 
     model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
         model, discriminator, optimizer_g, optimizer_d, train_dataloader
@@ -148,25 +154,36 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer_g.step()
 
+
+                total_g_loss += g_loss.item()
+                total_d_loss += d_loss.item()
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
-                # Logging
-                if accelerator.is_main_process:
-                    wandb.log({
-                        "batch_g_loss": g_loss.item(),
-                        "batch_d_loss": d_loss.item(),
-                        "pixel_loss": l_p.item(),
-                        "perceptual_loss": l_v.item(),
-                        "gan_loss": g_loss_gan.item(),
-                        "batch": batch_idx + epoch * len(train_dataloader)
-                    })
-
-                # Sample and save reconstructions
+               # Sample and save reconstructions
                 if batch_idx % config.training.save_steps == 0:
                     sample_path = f"recon_epoch_{epoch+1}_batch_{batch_idx}.png"
                     sample_recon(model, (x_current, x_reference), accelerator, sample_path, 
                                 num_samples=config.logging.sample_size)
+                    
+            # Calculate average losses for the epoch
+            avg_g_loss = total_g_loss / len(train_dataloader)
+            avg_d_loss = total_d_loss / len(train_dataloader)
+            # Step the schedulers
+            scheduler_g.step(avg_g_loss)
+            scheduler_d.step(avg_d_loss)
+            # Logging
+            if accelerator.is_main_process:
+                wandb.log({
+                    "batch_g_loss": g_loss.item(),
+                    "batch_d_loss": d_loss.item(),
+                    "pixel_loss": l_p.item(),
+                    "perceptual_loss": l_v.item(),
+                    "gan_loss": g_loss_gan.item(),
+                    "batch": batch_idx + epoch * len(train_dataloader)
+                })
+
+  
 
         progress_bar.close()
 
