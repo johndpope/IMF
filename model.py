@@ -454,6 +454,32 @@ class ResBlock(nn.Module):
         return out
 
 
+class TokenManipulationNetwork(nn.Module):
+    def __init__(self, token_dim, condition_dim, hidden_dim=256):
+        super().__init__()
+        self.token_encoder = nn.Sequential(
+            nn.Linear(token_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        self.condition_encoder = nn.Sequential(
+            nn.Linear(condition_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, token_dim)
+        )
+
+    def forward(self, token, condition):
+        token_encoded = self.token_encoder(token)
+        condition_encoded = self.condition_encoder(condition)
+        combined = torch.cat([token_encoded, condition_encoded], dim=-1)
+        edited_token = self.decoder(combined)
+        return edited_token
+
 
 
 '''
@@ -470,7 +496,7 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
+    def __init__(self, latent_dim=32, base_channels=64, num_layers=4, condition_dim=None):
         super().__init__()
         self.dense_feature_encoder = DenseFeatureEncoder()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
@@ -497,11 +523,14 @@ class IMFModel(nn.Module):
             ))
         
         self.frame_decoder = FrameDecoder()
-
-    def forward(self, x_current, x_reference):
-        x_current = x_current.requires_grad_()
-        x_reference = x_reference.requires_grad_()
         
+        # Add token manipulation network if condition_dim is provided
+        if condition_dim is not None:
+            self.token_manipulation = TokenManipulationNetwork(latent_dim, condition_dim)
+        else:
+            self.token_manipulation = None
+
+    def forward(self, x_current, x_reference, condition=None):
         # Dense feature encoding
         f_r = self.dense_feature_encoder(x_reference)
         
@@ -509,38 +538,23 @@ class IMFModel(nn.Module):
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
         
+        # Token manipulation if condition is provided
+        if condition is not None and self.token_manipulation is not None:
+            t_c = self.token_manipulation(t_c, condition)
+        
         # Latent token decoding
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
         
         # Implicit motion alignment
         aligned_features = []
-        num_layers = len(self.implicit_motion_alignment)
-
-        debug_print(f"🎣 IMF - Number of layers: {num_layers}")
-        debug_print(f"f_r shapes: {[f.shape for f in f_r]}")
-        debug_print(f"m_r shapes: {[m.shape for m in m_r]}")
-        debug_print(f"m_c shapes: {[m.shape for m in m_c]}")
-
-        for i in range(num_layers):
+        for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
             m_r_i = m_r[i]
             m_c_i = m_c[i]
             align_layer = self.implicit_motion_alignment[i]
-            
-            debug_print(f"\nProcessing layer {i+1}:")
-            debug_print(f"  f_r_i shape: {f_r_i.shape}")
-            debug_print(f"  m_r_i shape: {m_r_i.shape}")
-            debug_print(f"  m_c_i shape: {m_c_i.shape}")
-            
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
-            
-            debug_print(f"  Aligned feature shape: {aligned_feature.shape}")
-
-        debug_print("\nFinal aligned features shapes:")
-        for i, feat in enumerate(aligned_features):
-            debug_print(f"  Layer {i+1}: {feat.shape}")
 
         # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)

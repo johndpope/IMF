@@ -63,14 +63,22 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             source_frames = batch['frames']
             x_reference = source_frames[0]
             num_frames = batch['num_frames']
+            dmm_coeffs = batch['dmm_coeffs']
             random_idx = random.randint(0, num_frames - 1)
             random_generated = 0
             for idx in range(num_frames):
                 x_current = source_frames[idx]
-                    
+                current_coeff = dmm_coeffs[idx]
+
+                # Combine reference and current coefficients
+                condition = torch.cat([dmm_coeffs[0], current_coeff], dim=1)
+               
+
                 # A. Forward Pass
                 # 1. Dense Feature Encoding
-                f_r = model.dense_feature_encoder(x_reference)
+                # Forward pass
+                x_reconstructed = model(x_current, x_reference, condition)
+
 
                 # 2. Latent Token Encoding (with noise addition)
                 t_r = model.latent_token_encoder(x_reference)
@@ -229,7 +237,8 @@ def main():
     model = IMFModel(
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
-        num_layers=config.model.num_layers
+        num_layers=config.model.num_layers,
+        condition_dim=157 * 2  # 157 coeffs for reference frame + 157 for current frame
     )
     add_gradient_hooks(model)
 

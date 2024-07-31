@@ -20,6 +20,12 @@ import random
 # face warp
 from skimage.transform import PiecewiseAffineTransform, warp
 import face_recognition
+# 3dmm
+import face_alignment
+import deep_3dmm
+from deep_3dmm.utils.io import load_obj
+from deep_3dmm.datasets.augmentation import ToTensor, Normalize
+
 
 class EMODataset(Dataset):
     def __init__(self, use_gpu: False, sample_rate: int,  width: int, height: int, img_scale: Tuple[float, float], img_ratio: Tuple[float, float] = (0.9, 1.0), video_dir: str = ".", drop_ratio: float = 0.1, json_file: str = "", stage: str = 'stage1', transform: transforms.Compose = None, remove_background=False, use_greenscreen=False, apply_crop_warping=False):
@@ -45,6 +51,19 @@ class EMODataset(Dataset):
         self.ctx = cpu()
 
         self.video_ids = list(self.celebvhq_info['clips'].keys())
+
+
+
+        # Initialize face alignment
+        self.fa = face_alignment.FaceAlignment(face_alignment.LandmarksType._3D, flip_input=False)
+
+        # Initialize 3DMM
+        self.deep_3dmm = deep_3dmm.Deep3DMM()
+        self.deep_3dmm.eval()
+        self.deep_3dmm_transform = transforms.Compose([
+            ToTensor(),
+            Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
 
     def __len__(self) -> int:
         return len(self.video_ids)
@@ -154,28 +173,40 @@ class EMODataset(Dataset):
         else:
             return None, None
 
+    def extract_3dmm_coeffs(self, image):
+        # Detect landmarks
+        landmarks = self.fa.get_landmarks(np.array(image))[0]
 
+        # Prepare input for Deep3DMM
+        input_img = self.deep_3dmm_transform(image).unsqueeze(0)
+        input_lm = torch.from_numpy(landmarks).float().unsqueeze(0)
+
+        # Extract 3DMM coefficients
+        with torch.no_grad():
+            coeffs = self.deep_3dmm(input_img, input_lm)
+
+        return coeffs.squeeze(0)
+    
     def load_and_process_video(self, video_path: str) -> List[torch.Tensor]:
         # Extract video ID from the path
         video_id = Path(video_path).stem
-        output_dir =  Path(self.video_dir + "/" + video_id)
+        output_dir = Path(self.video_dir) / video_id
         output_dir.mkdir(exist_ok=True)
         
         processed_frames = []
         tensor_frames = []
+        dmm_coeffs = []
 
-        tensor_file_path = output_dir / f"{video_id}_tensors.npz"
+        tensor_file_path = output_dir / f"{video_id}_tensors_and_3dmm.npz"
 
         # Check if the tensor file exists
         if tensor_file_path.exists():
-            print(f"Loading processed tensors from file: {tensor_file_path}")
+            print(f"Loading processed tensors and 3DMM coefficients from file: {tensor_file_path}")
             with np.load(tensor_file_path) as data:
-                tensor_frames = [torch.tensor(data[key]) for key in data]
+                tensor_frames = [torch.tensor(data[f'frame_{i}']) for i in range(len(data) // 2)]
+                dmm_coeffs = [torch.tensor(data[f'dmm_{i}']) for i in range(len(data) // 2)]
         else:
-            if self.apply_crop_warping:
-                print(f"Warping + Processing and saving video frames to directory: {output_dir}")
-            else:
-                print(f"Processing and saving video frames to directory: {output_dir}")
+            print(f"Processing video frames and extracting 3DMM coefficients: {output_dir}")
             video_reader = VideoReader(video_path, ctx=self.ctx)
             for frame_idx in tqdm(range(len(video_reader)), desc="Processing Video Frames"):
                 frame = Image.fromarray(video_reader[frame_idx].numpy())
@@ -191,38 +222,39 @@ class EMODataset(Dataset):
                     ])
                     video_name = Path(video_path).stem
 
-                    # vanilla crop                    
-                    _,sweet_tensor_frame1 = self.warp_and_crop_face(tensor_frame, video_name, frame_idx, transform, apply_warp=False)
-                    # Save frame as PNG image
-                    # img = to_pil_image(tensor_frame1)
-                    # img.save(output_dir / f"{frame_idx:06d}.png")
-                    # tensor_frames.append(tensor_frame1)
+                    _, sweet_tensor_frame = self.warp_and_crop_face(tensor_frame, video_name, frame_idx, transform, apply_warp=False)
+                    
+                    if sweet_tensor_frame is not None:
+                        img = to_pil_image(sweet_tensor_frame)
+                        img.save(output_dir / f"s_{frame_idx:06d}.png")
+                        tensor_frames.append(sweet_tensor_frame)
 
-                    img = to_pil_image(sweet_tensor_frame1)
-                    img.save(output_dir / f"s_{frame_idx:06d}.png")
-                    tensor_frames.append(sweet_tensor_frame1)
-
-                    # vanilla crop + warp                  
-                    _,sweet_tensor_frame2 = self.warp_and_crop_face(tensor_frame, video_name, frame_idx, transform, apply_warp=True)
-                    # Save frame as PNG image
-                    # img = to_pil_image(tensor_frame2)
-                    # img.save(output_dir / f"w_{frame_idx:06d}.png")
-                    # tensor_frames.append(tensor_frame2)
-
-                    # Save frame as PNG image
-                    img = to_pil_image(sweet_tensor_frame2)
-                    img.save(output_dir / f"sw_{frame_idx:06d}.png")
-                    tensor_frames.append(sweet_tensor_frame2)
+                        # Extract 3DMM coefficients
+                        coeffs = self.extract_3dmm_coeffs(img)
+                        dmm_coeffs.append(coeffs)
+                    else:
+                        print(f"Warning: No face detected in frame {frame_idx}")
+                        # Use the original frame if no face is detected
+                        tensor_frames.append(tensor_frame)
+                        dmm_coeffs.append(torch.zeros(157))  # Assuming 157 is the size of 3DMM coeffs
                 else:
                     # Save frame as PNG image
                     image_frame.save(output_dir / f"{frame_idx:06d}.png")
                     tensor_frames.append(tensor_frame)
 
-            # Convert tensor frames to numpy arrays and save them
-            np.savez_compressed(tensor_file_path, *[tensor_frame.numpy() for tensor_frame in tensor_frames])
-            print(f"Processed tensors saved to file: {tensor_file_path}")
+                    # Extract 3DMM coefficients
+                    coeffs = self.extract_3dmm_coeffs(image_frame)
+                    dmm_coeffs.append(coeffs)
 
-        return tensor_frames
+            # Convert tensor frames and 3DMM coefficients to numpy arrays and save them
+            save_dict = {}
+            for i, (frame, coeff) in enumerate(zip(tensor_frames, dmm_coeffs)):
+                save_dict[f'frame_{i}'] = frame.numpy()
+                save_dict[f'dmm_{i}'] = coeff.numpy()
+            np.savez_compressed(tensor_file_path, **save_dict)
+            print(f"Processed tensors and 3DMM coefficients saved to file: {tensor_file_path}")
+
+        return tensor_frames, dmm_coeffs
 
     def augmentation(self, images, transform, state=None):
         if state is not None:
@@ -292,11 +324,12 @@ class EMODataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         video_id = self.video_ids[index]
-        vid_pil_image_list = self.load_and_process_video(os.path.join(self.video_dir, f"{video_id}.mp4"))
+        vid_pil_image_list, dmm_coeffs_list = self.load_and_process_video(os.path.join(self.video_dir, f"{video_id}.mp4"))
 
         sample = {
             "video_id": video_id,
             "frames": vid_pil_image_list,
-            "num_frames":  len(vid_pil_image_list)
+            "num_frames": len(vid_pil_image_list),
+            "dmm_coeffs": dmm_coeffs_list
         }
         return sample
