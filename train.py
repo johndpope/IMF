@@ -78,7 +78,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 # A. Forward Pass
                 # 1. Dense Feature Encoding
                 # Forward pass
-                x_reconstructed = model(x_current, x_reference, condition)
+                x_reconstructed = model(x_current, x_reference, None)
 
 
                 # 2. Latent Token Encoding (with noise addition)

@@ -24,9 +24,9 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
             reconstructed_frames = F.interpolate(reconstructed_frames, size=current_frames.shape[2:], mode='bilinear', align_corners=False)
         
         # Reduce size by half
-        current_frames = F.interpolate(current_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
-        reference_frames = F.interpolate(reference_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
-        reconstructed_frames = F.interpolate(reconstructed_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
+        # current_frames = F.interpolate(current_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
+        # reference_frames = F.interpolate(reference_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
+        # reconstructed_frames = F.interpolate(reconstructed_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
         
         # Unnormalize reconstructed frames
         # reconstructed_frames = reconstructed_frames * 0.5 + 0.5

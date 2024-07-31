@@ -22,7 +22,7 @@ from skimage.transform import PiecewiseAffineTransform, warp
 import face_recognition
 # 3dmm
 import mediapipe as mp
-
+import cv2
 
 
 class EMODataset(Dataset):
@@ -53,8 +53,19 @@ class EMODataset(Dataset):
 
 
          # Initialize MediaPipe Face Mesh
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
+        # self.mp_face_detection = mp.solutions.face_detection
+        # self.mp_face_mesh = mp.solutions.face_mesh
+        # # Initialize FaceDetection once here
+        # self.face_detection = self.mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        # self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
+
+        # self.face_detection = self.mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        # self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
+
+        # self.HEAD_POSE_LANDMARKS = [33, 263, 1, 61, 291, 199]
+    # def __del__(self):
+        # self.face_detection.close()
+        # self.face_mesh.close()
 
 
     def __len__(self) -> int:
@@ -171,17 +182,53 @@ class EMODataset(Dataset):
         
         # Process the image
         results = self.face_mesh.process(image_rgb)
+        print("results:",results)
+        img_h, img_w, _ = image.shape
+        face_3d = []
+        face_2d = []
+
+
+        if results.multi_face_landmarks:       
+            for face_landmarks in results.multi_face_landmarks:
+                key_landmark_positions=[]
+                for idx, lm in enumerate(face_landmarks.landmark):
+                    if idx in self.HEAD_POSE_LANDMARKS:
+                        x, y = int(lm.x * img_w), int(lm.y * img_h)
+                        face_2d.append([x, y])
+                        face_3d.append([x, y, lm.z])
+
+                        landmark_position = [x,y]
+                        key_landmark_positions.append(landmark_position)
+                # Convert to numpy arrays
+                face_2d = np.array(face_2d, dtype=np.float64)
+                face_3d = np.array(face_3d, dtype=np.float64)
+
+                # Camera matrix
+                focal_length = img_w  # Assuming fx = fy
+                cam_matrix = np.array(
+                    [[focal_length, 0, img_w / 2],
+                    [0, focal_length, img_h / 2],
+                    [0, 0, 1]]
+                )
+
+                # Distortion matrix
+                dist_matrix = np.zeros((4, 1), dtype=np.float64)
+
+                # Solve PnP to get rotation vector
+                success, rot_vec, trans_vec = cv2.solvePnP(
+                    face_3d, face_2d, cam_matrix, dist_matrix
+                )
+                yaw, pitch, roll = self.calculate_pose(key_landmark_positions)
+                print(f'Roll: {roll:.4f}, Pitch: {pitch:.4f}, Yaw: {yaw:.4f}')
+                self.draw_axis(image, yaw, pitch, roll)
+                debug_image_path = image_path.replace('.jpg', '_debug.jpg')  # Modify as needed
+                cv2.imwrite(debug_image_path, image)
+                print(f'Debug image saved to {debug_image_path}')
+                
+                ok = torch.tensor([roll, pitch, yaw])
+                return ok                 
         
-        if not results.multi_face_landmarks:
-            return torch.zeros(468, 3)  # Return zeros if no face is detected
-        
-        # Extract landmarks
-        face_landmarks = results.multi_face_landmarks[0]
-        
-        # Convert landmarks to tensor
-        landmarks_tensor = torch.tensor([[lm.x, lm.y, lm.z] for lm in face_landmarks.landmark])
-        
-        return landmarks_tensor
+        return torch.tensor([0,0,0])
     
     def load_and_process_video(self, video_path: str) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         video_id = Path(video_path).stem
@@ -206,7 +253,8 @@ class EMODataset(Dataset):
                 tensor_frame, image_frame = self.augmentation(frame, self.pixel_transform)
                 
                 # Extract face features
-                features = self.extract_face_features(image_frame)
+                features =   torch.tensor([0.0, 0.0, 0.0])
+                # features = self.extract_face_features(image_frame)
                 
                 tensor_frames.append(tensor_frame)
                 face_features.append(features)
