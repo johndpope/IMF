@@ -17,6 +17,9 @@ import cv2
 from pathlib import Path
 from torchvision.transforms.functional import to_pil_image, to_tensor
 import random
+# face warp
+from skimage.transform import PiecewiseAffineTransform, warp
+import face_recognition
 
 class EMODataset(Dataset):
     def __init__(self, use_gpu: False, sample_rate: int,  width: int, height: int, img_scale: Tuple[float, float], img_ratio: Tuple[float, float] = (0.9, 1.0), video_dir: str = ".", drop_ratio: float = 0.1, json_file: str = "", stage: str = 'stage1', transform: transforms.Compose = None, remove_background=False, use_greenscreen=False, apply_crop_warping=False):
