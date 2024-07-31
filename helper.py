@@ -7,6 +7,8 @@ import wandb
 import os
 from torchvision.utils import save_image
 import torch.nn.functional as F
+from torchsummary import summary
+from pixelwise import PixelwiseSeparateConv
 
 def sample_recon(model, data, accelerator, output_path, num_samples=2):
     model.eval()
@@ -130,3 +132,33 @@ def add_gradient_hooks(model):
     for name, param in model.named_parameters():
         if param.requires_grad:
             param.register_hook(hook_fn(name))
+
+
+
+
+def model_summary(model, input_size, batch_size=-1, device="cuda"):
+    def sizeof_fmt(num, suffix='B'):
+        for unit in ['','Ki','Mi','Gi','Ti','Pi','Ei','Zi']:
+            if abs(num) < 1024.0:
+                return "%3.1f%s%s" % (num, unit, suffix)
+            num /= 1024.0
+        return "%.1f%s%s" % (num, 'Yi', suffix)
+
+    def get_model_parameters_number(model):
+        params_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        return params_num
+
+    summary(model, input_size, batch_size=batch_size, device=device)
+    print('================================================================')
+    print(f"Total params: {get_model_parameters_number(model):,}")
+    print(f"Estimated total size: {sizeof_fmt(get_model_parameters_number(model)*4)}")
+    print('================================================================')
+
+def analyze_layers(model):
+    total_params = 0
+    for name, module in model.named_modules():
+        if isinstance(module, (nn.Conv2d, nn.Linear, PixelwiseSeparateConv)):
+            param_count = sum(p.numel() for p in module.parameters() if p.requires_grad)
+            total_params += param_count
+            print(f"{name}: {param_count:,} parameters")
+    print(f"Total trainable parameters: {total_params:,}")

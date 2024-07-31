@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,PatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset
 from torchvision.utils import save_image
-from helper import monitor_gradients, add_gradient_hooks, sample_recon
+from helper import model_summary,monitor_gradients, add_gradient_hooks, sample_recon,analyze_layers
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -235,6 +235,11 @@ def main():
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers
     )
+
+    # model diagnostics
+    model_summary(model, (3, 256, 256))
+    analyze_layers(model)
+
     add_gradient_hooks(model)
 
     discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
