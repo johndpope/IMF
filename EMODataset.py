@@ -293,6 +293,7 @@ class EMODataset(Dataset):
 
         sample = {
             "video_id": video_id,
-            "frames": vid_pil_image_list
+            "frames": vid_pil_image_list,
+            "num_frames":  len(vid_pil_image_list)
         }
         return sample
