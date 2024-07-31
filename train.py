@@ -23,6 +23,7 @@ from loss import VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
 
+
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
@@ -41,7 +42,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     )
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
+    # perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
+    # Initialize LPIPS loss
+    perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
     style_mixing_prob = config.training.style_mixing_prob
