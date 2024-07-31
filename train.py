@@ -160,11 +160,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
-               # Sample and save reconstructions
-                if batch_idx % config.training.save_steps == 0:
-                    sample_path = f"recon_epoch_{epoch+1}_batch_{batch_idx}.png"
-                    sample_recon(model, (x_current, x_reference), accelerator, sample_path, 
-                                num_samples=config.logging.sample_size)
+            # Sample and save reconstructions
+            if batch_idx % config.training.save_steps == 0:
+                sample_path = f"recon_epoch_{epoch+1}_batch_{batch_idx}.png"
+                sample_recon(model, (x_current, x_reference), accelerator, sample_path, 
+                            num_samples=config.logging.sample_size)
                     
             # Calculate average losses for the epoch
             avg_g_loss = total_g_loss / len(train_dataloader)
