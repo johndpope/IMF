@@ -21,6 +21,7 @@ from torch.nn.utils import spectral_norm
 import torchvision.models as models
 from loss import VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+import random
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -60,6 +61,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             source_frames = batch['frames']
             x_reference = source_frames[0]
             num_frames = batch['num_frames']
+            random_idx = random.randint(0, num_frames - 1)
+            random_generated = 0
             for idx in range(num_frames):
                 x_current = source_frames[idx]
                     
@@ -162,12 +165,14 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
+                if idx % random_idx == 0:
+                    random_generated = x_reconstructed
+
             # Sample and save reconstructions
             if batch_idx % config.training.save_steps == 0:
                 sample_path = f"recon_epoch_{epoch+1}_batch_{batch_idx}.png"
-                sample_recon(model, (x_current, x_reference), accelerator, sample_path, 
-                            num_samples=config.logging.sample_size)
-                    
+                sample_recon(model, (random_generated, x_reference), accelerator, sample_path, 
+                             num_samples=config.logging.sample_size)
             # Calculate average losses for the epoch
             avg_g_loss = total_g_loss / len(train_dataloader)
             avg_d_loss = total_d_loss / len(train_dataloader)
@@ -182,7 +187,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     "pixel_loss": l_p.item(),
                     "perceptual_loss": l_v.item(),
                     "gan_loss": g_loss_gan.item(),
-                    "batch": batch_idx + epoch * len(train_dataloader)
+                    "batch": batch_idx + epoch * len(train_dataloader),
+                    "lr_g": optimizer_g.param_groups[0]['lr'],
+                    "lr_d": optimizer_d.param_groups[0]['lr']
                 })
 
   
