@@ -18,7 +18,7 @@ from einops.layers.torch import Rearrange
 import numpy as np
 from vit import ImplicitMotionAlignment
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -533,7 +533,7 @@ class IMFModel(nn.Module):
             debug_print(f"  m_r_i shape: {m_r_i.shape}")
             debug_print(f"  m_c_i shape: {m_c_i.shape}")
             
-            aligned_feature, _ = align_layer(m_c_i, m_r_i, f_r_i)
+            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
             
             debug_print(f"  Aligned feature shape: {aligned_feature.shape}")
