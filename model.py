@@ -16,7 +16,7 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from einops import rearrange
 from einops.layers.torch import Rearrange
 import numpy as np
-from implicitmotion import ImplicitMotionAlignment
+from vit import ImplicitMotionAlignment
 
 DEBUG = False
 def debug_print(*args, **kwargs):

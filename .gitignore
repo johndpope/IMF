@@ -6,3 +6,5 @@ wandb/*
 *.log
 recon_epoch_1.png
 *.pth
+__pycache__/vit.cpython-311.pyc
+__pycache__/helper.cpython-311.pyc
