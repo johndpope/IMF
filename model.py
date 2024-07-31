@@ -83,14 +83,18 @@ class ResNetFeatureExtractor(nn.Module):
         return features
 
 class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, use_pixelwise=True):
         super().__init__()
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block = FeatResBlock(out_channels)
+        self.conv2 = Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block = FeatResBlock(out_channels, use_pixelwise)
+        
+        self.residual_conv = Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
+
         
         # Add a 1x1 convolution for the residual connection if channel sizes differ
         self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
@@ -347,13 +351,12 @@ class FrameDecoder(nn.Module):
         super().__init__()
         
         self.upconv_blocks = nn.ModuleList([
-            UpConvResBlock(512, 512),
-            UpConvResBlock(1024, 512),
-            UpConvResBlock(768, 256),
-            UpConvResBlock(384, 128),
-            UpConvResBlock(128, 64)
+            UpConvResBlock(512, 512, use_pixelwise=True),
+            UpConvResBlock(1024, 512, use_pixelwise=True),
+            UpConvResBlock(768, 256, use_pixelwise=True),
+            UpConvResBlock(384, 128, use_pixelwise=True),
+            UpConvResBlock(128, 64, use_pixelwise=True)
         ])
-        
         self.feat_blocks = nn.ModuleList([
             nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
             nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
