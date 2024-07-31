@@ -19,7 +19,8 @@ from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
-from loss import LPIPSPerceptualLoss,VGGLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
+from loss import LPIPSPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
+from vggloss import VGGLoss
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
 
