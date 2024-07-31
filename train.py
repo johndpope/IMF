@@ -53,6 +53,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         discriminator.train()
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
+        total_g_loss = 0
+        total_d_loss = 0
         for batch_idx,batch  in enumerate(train_dataloader):
 
             source_frames = batch['frames']
