@@ -256,7 +256,7 @@ def main():
         sample_rate=24,
         img_scale=(1.0, 1.0),
         video_dir=config.dataset.root_dir,
-        json_file=config.training.json_file,
+        json_file=config.dataset.json_file,
         transform=transform,
         apply_crop_warping=False
     )

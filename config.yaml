@@ -35,13 +35,15 @@ training:
   d_lr_adjust_frequency: 100  # Adjust D learning rate every 100 steps
   d_lr_adjust_factor: 2.0  # Factor to increase/decrease D learning rate
   target_d_loss_ratio: 0.6  # Target ratio of D loss to G loss
-  json_file: './data/overfit.json'
+
 
 # Dataset parameters
 dataset:
-  root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666"
-  frame_skip: 1
-
+  # celeb-hq torrent https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
+  root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666" # for overfitting M2Ohb0FAaJU_1.mp4 use https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
+  # json_file: './data/overfit.json' 
+  json_file: './data/celebvhq_info.json' # 35k
+  
 # Checkpointing
 checkpoints:
   dir: "./checkpoints"
