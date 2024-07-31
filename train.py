@@ -62,15 +62,16 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             source_frames = batch['frames']
             x_reference = source_frames[0]
             num_frames = batch['num_frames']
-            dmm_coeffs = batch['dmm_coeffs']
+            face_features = batch['face_features']
             random_idx = random.randint(0, num_frames - 1)
             random_generated = 0
             for idx in range(num_frames):
                 x_current = source_frames[idx]
-                current_coeff = dmm_coeffs[idx]
+                current_feature = face_features[idx]
 
-                # Combine reference and current coefficients
-                condition = torch.cat([dmm_coeffs[0], current_coeff], dim=1)
+                  # Combine reference and current face features
+                condition = torch.cat([face_features[0], current_feature], dim=1)
+              
                
 
                 # A. Forward Pass
@@ -237,7 +238,8 @@ def main():
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers,
-        condition_dim=157 * 2  # 157 coeffs for reference frame + 157 for current frame
+        # condition_dim=157 * 2  # 157 coeffs for reference frame + 157 for current frame
+        condition_dim= 468 * 3 * 2 # (468 landmarks, 3 coordinates (x, y, z) for both reference and current frames).
     )
     add_gradient_hooks(model)
 
