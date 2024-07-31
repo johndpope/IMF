@@ -19,11 +19,10 @@ from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
-from loss import LPIPSPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
-from vggloss import VGGLoss
+from loss import LPIPSPerceptualLoss,VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
-
+from vggloss import VGGLoss
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -43,7 +42,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     )
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = VGGLoss().to(accelerator.device)
+    perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
+    # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
     style_mixing_prob = config.training.style_mixing_prob
@@ -58,28 +58,21 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         total_g_loss = 0
         total_d_loss = 0
+        random_idx = 0
         for batch_idx,batch  in enumerate(train_dataloader):
 
+            
             source_frames = batch['frames']
-            x_reference = source_frames[0]
+            x_reference = source_frames[random_idx]
             num_frames = batch['num_frames']
-            face_features = batch['face_features']
-            random_idx = random.randint(0, num_frames - 1)
+            
             random_generated = 0
             for idx in range(num_frames):
                 x_current = source_frames[idx]
-                current_feature = face_features[idx]
-
-                  # Combine reference and current face features
-                condition = torch.cat([face_features[0], current_feature], dim=1)
-              
-               
-
+                    
                 # A. Forward Pass
                 # 1. Dense Feature Encoding
-                # Forward pass
-                x_reconstructed = model(x_current, x_reference, None)
-
+                f_r = model.dense_feature_encoder(x_reference)
 
                 # 2. Latent Token Encoding (with noise addition)
                 t_r = model.latent_token_encoder(x_reference)
@@ -176,8 +169,10 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
-                if idx % (random_idx + 1) == 0:
+                if idx == random_idx:
                     random_generated = x_reconstructed
+                random_idx +=1
+                
 
             # Sample and save reconstructions
             if batch_idx % config.training.save_steps == 0:
@@ -238,9 +233,7 @@ def main():
     model = IMFModel(
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
-        num_layers=config.model.num_layers,
-        # condition_dim=157 * 2  # 157 coeffs for reference frame + 157 for current frame
-        condition_dim= 468 * 3 * 2 # (468 landmarks, 3 coordinates (x, y, z) for both reference and current frames).
+        num_layers=config.model.num_layers
     )
     add_gradient_hooks(model)
 
