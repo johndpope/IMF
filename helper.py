@@ -46,7 +46,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
             
             # Save frames as a grid (2x4)
             save_image(accelerator.gather(frames), output_path, nrow=4, padding=2, normalize=False)
-            accelerator.print(f"Saved sample reconstructions to {output_path}")
+            # accelerator.print(f"Saved sample reconstructions to {output_path}")
         else:
             accelerator.print("Warning: No output path provided. Skipping image save.")
         
