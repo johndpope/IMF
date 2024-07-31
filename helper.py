@@ -29,8 +29,8 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
         reconstructed_frames = F.interpolate(reconstructed_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
         
         # Unnormalize reconstructed frames
-        reconstructed_frames = reconstructed_frames * 0.5 + 0.5
-        reconstructed_frames = torch.clamp(reconstructed_frames, 0, 1)
+        # reconstructed_frames = reconstructed_frames * 0.5 + 0.5
+        # reconstructed_frames = torch.clamp(reconstructed_frames, 0, 1)
         
 
         
