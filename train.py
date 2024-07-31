@@ -17,64 +17,11 @@ from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
-
-
+import torchvision.models as models
+from loss import VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
-
-def wasserstein_loss(real_outputs, fake_outputs):
-    """
-    Wasserstein loss for GANs.
-    """
-    real_loss = sum(-torch.mean(out) for out in real_outputs)
-    fake_loss = sum(torch.mean(out) for out in fake_outputs)
-    return real_loss + fake_loss
-
-def hinge_loss(real_outputs, fake_outputs):
-    """
-    Hinge loss for GANs.
-    """
-    real_loss = sum(torch.mean(F.relu(1 - out)) for out in real_outputs)
-    fake_loss = sum(torch.mean(F.relu(1 + out)) for out in fake_outputs)
-    return real_loss + fake_loss
-
-def vanilla_gan_loss(real_outputs, fake_outputs):
-    """
-    Vanilla GAN loss.
-    """
-    real_loss = sum(F.binary_cross_entropy_with_logits(out, torch.ones_like(out)) for out in real_outputs)
-    fake_loss = sum(F.binary_cross_entropy_with_logits(out, torch.zeros_like(out)) for out in fake_outputs)
-    return real_loss + fake_loss
-
-def gan_loss_fn(real_outputs, fake_outputs, loss_type):
-    """
-    Unified GAN loss function that can switch between different loss types.
-    """
-    if loss_type == "wasserstein":
-        return wasserstein_loss(real_outputs, fake_outputs)
-    elif loss_type == "hinge":
-        return hinge_loss(real_outputs, fake_outputs)
-    elif loss_type == "vanilla":
-        return vanilla_gan_loss(real_outputs, fake_outputs)
-    else:
-        raise ValueError(f"Unsupported loss type: {loss_type}")
-
-
-class VGGLoss(nn.Module):
-    def __init__(self):
-        super(VGGLoss, self).__init__()
-        self.vgg = torch.hub.load('pytorch/vision:v0.10.0', 'vgg19', pretrained=True).features[:36].eval()
-        for param in self.vgg.parameters():
-            param.requires_grad = False
-    
-    def forward(self, x):
-        return self.vgg(x)
-
-
-def adversarial_loss(discriminator, x_hat):
-    fake_outputs = discriminator(x_hat)
-    return sum(-torch.mean(output) for output in fake_outputs)
 
 
 def train(config, model, discriminator, train_dataloader, accelerator):
@@ -86,7 +33,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     )
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = VGGLoss().to(accelerator.device)
+    perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
     style_mixing_prob = config.training.style_mixing_prob
@@ -141,7 +88,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
             # 5. Frame Decoding
             x_reconstructed = model.frame_decoder(aligned_features)
-
+            print(f"x_reconstructed:{x_reconstructed.shape}")
             # B. Loss Calculation
             # 1. Pixel-wise Loss
             l_p = pixel_loss_fn(x_reconstructed, x_current)
@@ -170,10 +117,17 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             d_loss = d_loss + r1_gamma * r1_reg
 
 
+            # Clip gradients
+            torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+            
+            accelerator.backward(d_loss)
+            optimizer_d.step()
+
             # Train Generator
             optimizer_g.zero_grad()
             fake_outputs = discriminator(x_reconstructed)
-            g_loss_gan = -torch.mean(torch.cat(fake_outputs))
+            g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
+
 
             # 4. Total Loss
             g_loss = (config.training.lambda_pixel * l_p +
@@ -182,6 +136,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
             # C. Optimization
             accelerator.backward(g_loss)
+            # Clip gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer_g.step()
 
             progress_bar.update(1)

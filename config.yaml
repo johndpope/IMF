@@ -17,7 +17,7 @@ training:
   style_mixing_prob: 0.9
   noise_magnitude: 0.1
   gradient_accumulation_steps: 4
-  lambda_lpips: 10  # in paper lambda-pixel = 10 Adjust this value as needed
+  lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10 
   lambda_adv: 1 # adverserial = 1
   lambda_gp: 10  # Gradient penalty coefficient
