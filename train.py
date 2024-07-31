@@ -49,7 +49,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         for batch_idx,batch  in enumerate(train_dataloader):
 
-            source_frames = batch['source_frames']
+            source_frames = batch['frames']
             x_reference = source_frames[0]
             num_frames = batch['num_frames']
             for idx in range(num_frames):
