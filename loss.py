@@ -3,7 +3,41 @@ import torch.nn as nn
 import torchvision.models as models
 import torch.nn.functional as F
 from model import debug_print
+import lpips
 
+class LPIPSPerceptualLoss(nn.Module):
+    def __init__(self, net='alex', debug=True):
+        super(LPIPSPerceptualLoss, self).__init__()
+        self.debug = debug
+        self.lpips_model = lpips.LPIPS(net=net)
+        
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def forward(self, x, y):
+        debug_print(f"\nLPIPSPerceptualLoss Forward Pass:")
+        debug_print(f"Input shapes: x: {x.shape}, y: {y.shape}")
+        if x.dim() != 4 or y.dim() != 4:
+            raise ValueError(f"Expected 4D input tensors, got x: {x.dim()}D and y: {y.dim()}D")
+        
+        total_loss = 0
+        for i in range(4):  # Downsample 4 times (i ∈ [0, 3])
+            debug_print(f"\n  Scale {i+1}:")
+            if i > 0:
+                x = F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False)
+                y = F.interpolate(y, scale_factor=0.5, mode='bilinear', align_corners=False)
+
+            debug_print(f"    Current shapes: x: {x.shape}, y: {y.shape}")
+            
+            # Compute LPIPS loss
+            scale_loss = self.lpips_model(x, y).mean()
+            total_loss += scale_loss
+
+            debug_print(f"    Scale {i+1} LPIPS loss: {scale_loss.item():.6f}")
+
+        debug_print(f"\nTotal LPIPS loss: {total_loss.item():.6f}")
+        return total_loss
+    
 class VGGPerceptualLoss(nn.Module):
     def __init__(self, debug=True):
         super(VGGPerceptualLoss, self).__init__()
