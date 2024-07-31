@@ -18,7 +18,7 @@ from einops.layers.torch import Rearrange
 import numpy as np
 from vit import ImplicitMotionAlignment
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -472,26 +472,33 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        # self.dense_feature_encoder = ResNetFeatureExtractor()
         self.dense_feature_encoder = DenseFeatureEncoder()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
-        self.feature_dims = [64, 128, 256, 512, 512]
+        # Adjusted to match DenseFeatureEncoder output
+        self.feature_dims = [128, 256, 512, 512]
+        
+        # Adjusted to match LatentTokenDecoder output
+        self.motion_dims = [256, 512, 512, 512]
         
         # Initialize a list of ImplicitMotionAlignment modules
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
-            motion_dim = base_channels // (2 ** i) if i < 4 else base_channels // 8
-            self.implicit_motion_alignment.append(ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim))
-       
+            motion_dim = self.motion_dims[i]
+            self.implicit_motion_alignment.append(ImplicitMotionAlignment(
+                feature_dim=feature_dim,
+                motion_dim=motion_dim,
+                depth=2,
+                heads=8,
+                dim_head=64,
+                mlp_dim=1024
+            ))
         
         self.frame_decoder = FrameDecoder()
 
-
     def forward(self, x_current, x_reference):
-        # Enable gradient computation for input tensors
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
         
@@ -508,7 +515,6 @@ class IMFModel(nn.Module):
         
         # Implicit motion alignment
         aligned_features = []
-        # Get the number of layers we're working with
         num_layers = len(self.implicit_motion_alignment)
 
         debug_print(f"🎣 IMF - Number of layers: {num_layers}")
@@ -516,10 +522,8 @@ class IMFModel(nn.Module):
         debug_print(f"m_r shapes: {[m.shape for m in m_r]}")
         debug_print(f"m_c shapes: {[m.shape for m in m_c]}")
 
-        # Iterate through each layer
         for i in range(num_layers):
-            # Extract the corresponding features and alignment layer for this iteration
-            f_r_i = f_r[i]  
+            f_r_i = f_r[i]
             m_r_i = m_r[i]
             m_c_i = m_c[i]
             align_layer = self.implicit_motion_alignment[i]
@@ -529,11 +533,7 @@ class IMFModel(nn.Module):
             debug_print(f"  m_r_i shape: {m_r_i.shape}")
             debug_print(f"  m_c_i shape: {m_c_i.shape}")
             
-            # Perform the alignment
-            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            
-    
-            # Add the aligned feature to our list
+            aligned_feature, _ = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
             
             debug_print(f"  Aligned feature shape: {aligned_feature.shape}")
@@ -541,21 +541,9 @@ class IMFModel(nn.Module):
         debug_print("\nFinal aligned features shapes:")
         for i, feat in enumerate(aligned_features):
             debug_print(f"  Layer {i+1}: {feat.shape}")
-        
-        # Reshape aligned features back to 2D spatial form
-        reshaped_features = []
-        for i, feat in enumerate(aligned_features):
-            b, hw, c = feat.shape
-            h = w = int(math.sqrt(hw))
-            reshaped_feat = feat.transpose(1, 2).view(b, c, h, w)
-            reshaped_features.append(reshaped_feat)
-
-        debug_print("Reshaped features shapes:")
-        for i, feat in enumerate(reshaped_features):
-            debug_print(f"  Layer {i+1}: {feat.shape}")
 
         # Frame decoding
-        reconstructed_frame = self.frame_decoder(reshaped_features)
+        reconstructed_frame = self.frame_decoder(aligned_features)
 
         return reconstructed_frame
 
