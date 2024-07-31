@@ -472,7 +472,7 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder()
+        self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
@@ -646,3 +646,30 @@ def init_weights(m):
     elif classname.find('BatchNorm') != -1:
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
+
+
+class TokenManipulationNetwork(nn.Module):
+    def __init__(self, token_dim, condition_dim, hidden_dim=256):
+        super().__init__()
+        self.token_encoder = nn.Sequential(
+            nn.Linear(token_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        self.condition_encoder = nn.Sequential(
+            nn.Linear(condition_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, token_dim)
+        )
+
+    def forward(self, token, condition):
+        token_encoded = self.token_encoder(token)
+        condition_encoded = self.condition_encoder(condition)
+        combined = torch.cat([token_encoded, condition_encoded], dim=-1)
+        edited_token = self.decoder(combined)
+        return edited_token
