@@ -230,7 +230,7 @@ def main():
         video_dir=config.dataset.root_dir,
         json_file=config.training.json_file,
         transform=transform,
-        apply_crop_warping=True
+        apply_crop_warping=False
     )
 
     dataloader = DataLoader(
