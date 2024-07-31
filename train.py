@@ -250,7 +250,7 @@ def main():
 
     dataset = EMODataset(
         use_gpu=True,
-        remove_background=True,
+        remove_background=False,
         width=256,
         height=256,
         sample_rate=24,
