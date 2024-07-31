@@ -17,12 +17,37 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 import numpy as np
 from vit import ImplicitMotionAlignment
+from pixelwise import PixelwiseSeparateConv,SNPixelwiseSeparateConv
 
 DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
 
+
+
+class StyleConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
+        super().__init__()
+        self.conv = PixelwiseSeparateConv(in_channels, out_channels, kernel_size, padding=kernel_size//2)
+        self.style_mod = nn.Linear(style_dim, in_channels)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) if upsample else nn.Identity()
+        self.activation = nn.LeakyReLU(0.2, inplace=True)
+
+    def forward(self, x, style):
+        debug_print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
+        style = self.style_mod(style).unsqueeze(2).unsqueeze(3)
+        debug_print(f"After style modulation: {style.shape}")
+        x = x * style
+        debug_print(f"After multiplication: {x.shape}")
+        x = self.conv(x)
+        debug_print(f"After conv: {x.shape}")
+        x = self.upsample(x)
+        debug_print(f"After upsample: {x.shape}")
+        x = self.activation(x)
+        debug_print(f"StyleConv output shape: {x.shape}")
+        return x
+    
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
 class ResNetFeatureExtractor(nn.Module):
     def __init__(self, pretrained=True):
@@ -87,15 +112,16 @@ class UpConvResBlock(nn.Module):
 
 
 class DownConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, use_pixelwise=False):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
+        self.conv1 = Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        self.feat_res_block2 = FeatResBlock(out_channels)
+        self.conv2 = Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block1 = FeatResBlock(out_channels, use_pixelwise)
+        self.feat_res_block2 = FeatResBlock(out_channels, use_pixelwise)
 
     def forward(self, x):
         debug_print(f"DownConvResBlock input shape: {x.shape}")
@@ -133,7 +159,7 @@ class DenseFeatureEncoder(nn.Module):
     def __init__(self, in_channels=3):
         super().__init__()
         self.initial_conv = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=7, stride=1, padding=3),
+            PixelwiseSeparateConv(in_channels, 64, kernel_size=7, stride=1, padding=3),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True)
         )
@@ -217,27 +243,7 @@ class LatentTokenEncoder(nn.Module):
         return t
 
     
-class StyleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2)
-        self.style_mod = nn.Linear(style_dim, in_channels)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) if upsample else nn.Identity()
-        self.activation = nn.LeakyReLU(0.2, inplace=True)
 
-    def forward(self, x, style):
-        debug_print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
-        style = self.style_mod(style).unsqueeze(2).unsqueeze(3)
-        debug_print(f"After style modulation: {style.shape}")
-        x = x * style
-        debug_print(f"After multiplication: {x.shape}")
-        x = self.conv(x)
-        debug_print(f"After conv: {x.shape}")
-        x = self.upsample(x)
-        debug_print(f"After upsample: {x.shape}")
-        x = self.activation(x)
-        debug_print(f"StyleConv output shape: {x.shape}")
-        return x
 
 
 '''
@@ -307,12 +313,13 @@ class LatentTokenDecoder(nn.Module):
 
 
 class FeatResBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels, use_pixelwise=False):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
+        self.conv1 = Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm2d(channels)
         self.relu2 = nn.ReLU(inplace=True)
 
@@ -601,34 +608,27 @@ class PatchDiscriminator(nn.Module):
     def __init__(self, input_nc=3, ndf=64):
         super(PatchDiscriminator, self).__init__()
         
+        def discriminator_block(in_channels, out_channels, normalization=True):
+            layers = [SNPixelwiseSeparateConv(in_channels, out_channels, kernel_size=4, stride=2, padding=1)]
+            if normalization:
+                layers.append(nn.InstanceNorm2d(out_channels))
+            layers.append(nn.LeakyReLU(0.2, inplace=True))
+            return layers
+        
         self.scale1 = nn.Sequential(
-            SNConv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+            *discriminator_block(input_nc, ndf, normalization=False),
+            *discriminator_block(ndf, ndf * 2),
+            *discriminator_block(ndf * 2, ndf * 4),
+            *discriminator_block(ndf * 4, ndf * 8),
+            SNPixelwiseSeparateConv(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
         )
         
         self.scale2 = nn.Sequential(
-            SNConv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+            *discriminator_block(input_nc, ndf, normalization=False),
+            *discriminator_block(ndf, ndf * 2),
+            *discriminator_block(ndf * 2, ndf * 4),
+            *discriminator_block(ndf * 4, ndf * 8),
+            SNPixelwiseSeparateConv(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
         )
 
     def forward(self, x):
