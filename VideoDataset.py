@@ -46,7 +46,7 @@ class VideoDataset(Dataset):
             return self.__getitem__(idx)
         
         current_frame_idx = random.randint(0, max_frame_idx)
-        reference_frame_idx = current_frame_idx + self.frame_skip
+        reference_frame_idx = 1 # the reference frame is constant, current_frame_idx + self.frame_skip
         
         current_frame = Image.fromarray(vr[current_frame_idx].numpy())  
         reference_frame = Image.fromarray(vr[reference_frame_idx].numpy())  
