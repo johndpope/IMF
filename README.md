@@ -1,5 +1,12 @@
 # implicit-motion-function
 
+see current training here 
+https://wandb.ai/snoozie/IMF
+
+
+The frame_skip in VideoDataset - is only at 1. 
+
+
 ![Image](ok.png)
 
 
@@ -22,7 +29,6 @@
 
 - Current frame: x_current
 - Reference frame: x_reference
-- Both typically 256x256 or larger
 
 ## 3. Training Loop
 
