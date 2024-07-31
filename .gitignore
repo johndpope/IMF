@@ -5,3 +5,4 @@ wandb/run-20240728_081457-ny56b2s7/run-ny56b2s7.wandb
 wandb/*
 *.log
 recon_epoch_1.png
+*.pth

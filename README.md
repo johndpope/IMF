@@ -1,7 +1,7 @@
 # implicit-motion-function
 
 see current training here 
-https://wandb.ai/snoozie/IMF?nw=nwusersnoozie
+https://wandb.ai/snoozie/IMF
 
 
 The frame_skip in VideoDataset - is only at 1. 
@@ -10,7 +10,95 @@ The frame_skip in VideoDataset - is only at 1.
 ![Image](ok.png)
 
 
+# IMF (Implicit Motion Function) Training Outline
 
+## 1. Network Architecture
+
+### A. Encoders
+- Dense Feature Encoder (EF): Multi-scale feature extraction
+- Latent Token Encoder (ET): Compact latent representation
+
+### B. Implicit Motion Function (IMF)
+- Latent Token Decoder (IMFD): Motion feature generation
+- Implicit Motion Alignment (IMFA): Feature alignment
+
+### C. Decoder
+- Frame Decoder (DF): Reconstructs the current frame
+
+## 2. Input Processing
+
+- Current frame: x_current
+- Reference frame: x_reference
+
+## 3. Training Loop
+
+For each iteration:
+
+### A. Forward Pass
+
+1. Dense Feature Encoding:
+   - Extract multi-scale features f_r from x_reference using EF
+
+2. Latent Token Encoding:
+   - Generate t_r = ET(x_reference)
+   - Generate t_c = ET(x_current)
+
+3. Latent Token Decoding:
+   - Generate motion features m_r = IMFD(t_r)
+   - Generate motion features m_c = IMFD(t_c)
+
+4. Implicit Motion Alignment:
+   - For each scale:
+     - Align features: aligned_feature = IMFA(m_c, m_r, f_r)
+
+5. Frame Decoding:
+   - Reconstruct current frame: x_reconstructed = DF(aligned_features)
+
+### B. Loss Calculation
+
+1. Pixel-wise Loss:
+   - L_p = ||x_reconstructed - x_current||_1
+
+2. Perceptual Loss:
+   - L_v = VGG_loss(x_reconstructed, x_current)
+
+3. GAN Loss:
+   - L_G = -E[D(x_reconstructed)]
+   - L_D = E[max(0, 1 - D(x_current)) + max(0, 1 + D(x_reconstructed))]
+
+4. Total Loss:
+   - L_total = λ_p * L_p + λ_v * L_v + λ_G * L_G
+
+### C. Optimization
+
+1. Update Generator (IMF model):
+   - Backpropagate L_total
+   - Update parameters using Adam optimizer
+
+2. Update Discriminator:
+   - Backpropagate L_D
+   - Update parameters using Adam optimizer
+
+## 4. Key Techniques
+
+- Style modulation in Latent Token Decoder (similar to StyleGAN2)
+- Cross-attention and Transformer blocks in Implicit Motion Alignment
+- Multi-scale feature processing
+- Adaptive discriminator augmentation (ADA) for small datasets
+
+## 5. Logging and Evaluation
+
+- Save model checkpoints regularly
+- Generate sample reconstructions using both current and reference frames
+- Compute and log reconstruction quality metrics (e.g., PSNR, SSIM)
+- Track and visualize individual loss components
+
+## 6. Hardware Utilization
+
+- Leverage mixed-precision training (FP16)
+- Implement multi-GPU training using distributed data parallelism
+
+This outline captures the essence of IMF training, incorporating the key components and processes described in the IMF paper. The actual implementation involves careful tuning of hyperparameters and optimization techniques to achieve the best results.
 
 
 **Intuition:**

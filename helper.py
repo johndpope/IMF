@@ -32,9 +32,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=2):
         reconstructed_frames = reconstructed_frames * 0.5 + 0.5
         reconstructed_frames = torch.clamp(reconstructed_frames, 0, 1)
         
-        # Unnormalize reference frames (only once)
-        reference_frames = reference_frames * 0.5 + 0.5
-        reference_frames = torch.clamp(reference_frames, 0, 1)
+
         
         # Prepare frames for saving (2x4 grid)
         frames = torch.cat((reconstructed_frames, reference_frames), dim=0)

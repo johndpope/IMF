@@ -15,7 +15,6 @@ import math
 import torch.nn.utils.spectral_norm as spectral_norm
 from einops import rearrange
 from einops.layers.torch import Rearrange
-import torchvision.models as models
 import numpy as np
 
 
