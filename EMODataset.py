@@ -17,12 +17,42 @@ import cv2
 from pathlib import Path
 from torchvision.transforms.functional import to_pil_image, to_tensor
 import random
+import torch.nn.functional as F
 # face warp
 from skimage.transform import PiecewiseAffineTransform, warp
 import face_recognition
 # 3dmm
 import mediapipe as mp
 import cv2
+def gpu_padded_collate(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+    assert isinstance(batch, list), "Batch should be a list"
+    
+    # Determine the maximum number of frames across all videos in the batch
+    max_frames = max(len(item['frames']) for item in batch)
+    
+    # Determine the maximum dimensions across all frames in the batch
+    max_height = max(max(frame.shape[1] for frame in item['frames']) for item in batch)
+    max_width = max(max(frame.shape[2] for frame in item['frames']) for item in batch)
+    
+    # Pad and stack frames for each item in the batch
+    padded_frames = []
+    for item in batch:
+        frames = item['frames']
+        # Pad each frame to max_height and max_width
+        padded_item_frames = [F.pad(frame, (0, max_width - frame.shape[2], 0, max_height - frame.shape[1])) for frame in frames]
+        # Pad the number of frames to max_frames
+        while len(padded_item_frames) < max_frames:
+            padded_item_frames.append(torch.zeros_like(padded_item_frames[0]))
+        # Stack frames for this item
+        padded_frames.append(torch.stack(padded_item_frames))
+    
+    # Stack all padded frame tensors in the batch
+    frames_tensor = torch.stack(padded_frames)
+    
+    # Assert the correct shape of the output tensor
+    assert frames_tensor.ndim == 5, "Frames tensor should be 5D (batch, frames, channels, height, width)"
+    
+    return {'frames': frames_tensor}
 
 
 class EMODataset(Dataset):
