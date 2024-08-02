@@ -102,10 +102,10 @@ def train_no_gan(config, model, train_dataloader, accelerator):
                     x_reconstructed = model.frame_decoder(aligned_features)
                     mse = mse_loss(x_reconstructed, x_current)
                     perceptual = lpips_loss(x_reconstructed, x_current).mean()
-                    loss = mse + 1.0 * perceptual
+                    loss = mse + 0.1 * perceptual
 
                     accelerator.backward(loss)
-                    optimizer.step()
+                    optimizer.step()f
                     optimizer.zero_grad()
 
                     # Update exponential moving average of weights
