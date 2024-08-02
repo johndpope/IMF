@@ -16,40 +16,16 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from einops import rearrange
 from einops.layers.torch import Rearrange
 import numpy as np
-from dense_encoders import SwinV2FeatureExtractor
+from dense_encoders import SwinV2FeatureExtractor,SwinV2LatentTokenEncoder
 from vit import ImplicitMotionAlignment
+from latent_encoder import ImprovedLatentTokenDecoder
+
+# from CIPS import CIPSFrameDecoder
 DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
 
-class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block = FeatResBlock(out_channels)
-        
-        # Add a 1x1 convolution for the residual connection if channel sizes differ
-        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
-
-    def forward(self, x):
-        residual = self.upsample(x)
-        if self.residual_conv:
-            residual = self.residual_conv(residual)
-        
-        out = self.upsample(x)
-        out = self.conv1(out)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = out + residual
-        out = self.relu(out)
-        out = self.feat_res_block(out)
-        return out
 
 
 class DownConvResBlock(nn.Module):
@@ -64,19 +40,19 @@ class DownConvResBlock(nn.Module):
         self.feat_res_block2 = FeatResBlock(out_channels)
 
     def forward(self, x):
-        debug_print(f"DownConvResBlock input shape: {x.shape}")
+        # debug_print(f"DownConvResBlock input shape: {x.shape}")
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        debug_print(f"After conv1, bn1, relu: {out.shape}")
+        # debug_print(f"After conv1, bn1, relu: {out.shape}")
         out = self.avgpool(out)
-        debug_print(f"After avgpool: {out.shape}")
+        # debug_print(f"After avgpool: {out.shape}")
         out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
+        # debug_print(f"After conv2: {out.shape}")
         out = self.feat_res_block1(out)
-        debug_print(f"After feat_res_block1: {out.shape}")
+        # debug_print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
-        debug_print(f"DownConvResBlock output shape: {out.shape}")
+        # debug_print(f"DownConvResBlock output shape: {out.shape}")
         return out
 
 
@@ -302,46 +278,34 @@ It uses concatenation (Concat in the image) to combine the upsampled features wi
 The channel dimensions decrease as we go up the network: 512 → 512 → 256 → 128 → 64.
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
+
 class FrameDecoder(nn.Module):
-    def __init__(self):
+    def __init__(self, feature_dims=[256, 512, 1024, 1024]):
         super().__init__()
         
         self.upconv_blocks = nn.ModuleList([
-            UpConvResBlock(512, 512),
-            UpConvResBlock(1024, 512),
-            UpConvResBlock(768, 256),
-            UpConvResBlock(384, 128),
-            UpConvResBlock(128, 64)
+            UpConvResBlock(feature_dims[3], feature_dims[2]),
+            UpConvResBlock(feature_dims[2] * 2, feature_dims[1]),
+            UpConvResBlock(feature_dims[1] * 2, feature_dims[0]),
+            UpConvResBlock(feature_dims[0] * 2, feature_dims[0] // 2),
+            UpConvResBlock(feature_dims[0] // 2, feature_dims[0] // 4)
         ])
         
         self.feat_blocks = nn.ModuleList([
-            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
+            nn.Sequential(*[FeatResBlock(feature_dims[2]) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(feature_dims[1]) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(feature_dims[0]) for _ in range(3)])
         ])
         
         self.final_conv = nn.Sequential(
-            nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(feature_dims[0] // 4, 3, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
 
     def forward(self, features):
         debug_print(f"🎒 FrameDecoder input shapes: {[f.shape for f in features]}")
 
-        # Reshape features
-        reshaped_features = []
-        for feat in features:
-            if len(feat.shape) == 3:  # (batch, hw, channels)
-                b, hw, c = feat.shape
-                h = w = int(math.sqrt(hw))
-                reshaped_feat = feat.permute(0, 2, 1).view(b, c, h, w)
-            else:  # Already in (batch, channels, height, width) format
-                reshaped_feat = feat
-            reshaped_features.append(reshaped_feat)
-
-        debug_print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
-
-        x = reshaped_features[-1]  # Start with the smallest feature map
+        x = features[-1]  # Start with the smallest feature map
         debug_print(f"    Initial x shape: {x.shape}")
         
         for i in range(len(self.upconv_blocks)):
@@ -351,7 +315,7 @@ class FrameDecoder(nn.Module):
             
             if i < len(self.feat_blocks):
                 debug_print(f"    Processing feat_block {i+1}")
-                feat_input = reshaped_features[-(i+2)]
+                feat_input = features[-(i+2)]
                 debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
                 feat = self.feat_blocks[i](feat_input)
                 debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
@@ -365,6 +329,34 @@ class FrameDecoder(nn.Module):
         debug_print(f"    FrameDecoder final output shape: {x.shape}")
 
         return x
+
+class UpConvResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block = FeatResBlock(out_channels)
+        
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
+
+    def forward(self, x):
+        residual = self.upsample(x)
+        if self.residual_conv:
+            residual = self.residual_conv(residual)
+        
+        out = self.upsample(x)
+        out = self.conv1(out)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = out + residual
+        out = self.relu(out)
+        out = self.feat_res_block(out)
+        return out
+
 '''
 The upsample parameter is replaced with downsample to match the diagram.
 The first convolution now has a stride of 2 when downsampling.
@@ -465,22 +457,21 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4, condition_dim=None):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder() #- original from paper - there's no features in it
+        # self.dense_feature_encoder = DenseFeatureEncoder() #- original from paper - there's no features in it
         # self.dense_feature_encoder = ViTFeatureExtractor() - google
-        # self.dense_feature_encoder = SwinV2FeatureExtractor()
+
+        self.dense_feature_encoder = SwinV2FeatureExtractor()
+        # self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
+        self.latent_token_encoder = SwinV2LatentTokenEncoder(latent_dim=latent_dim)
+
+        self.latent_token_decoder = ImprovedLatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
+        # Update these to match SwinV2 output
+        self.feature_dims = [256, 512, 1024, 1024]
         
-        # self.dense_feature_encoder = ResNetFeatureExtractor()
-        self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
-        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
+        # Adjust these to match your LatentTokenDecoder output
+        self.motion_dims = [128, 256, 512, 512]  # Example values, adjust as needed
         
-        # Adjusted to match DenseFeatureEncoder output
-        self.feature_dims = [128, 256, 512, 512]
-        
-        # Adjusted to match LatentTokenDecoder output
-        self.motion_dims = [256, 512, 512, 512]
-        
-        # Initialize a list of ImplicitMotionAlignment modules
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
@@ -503,22 +494,26 @@ class IMFModel(nn.Module):
             self.token_manipulation = None
 
     def forward(self, x_current, x_reference, condition=None):
-        # Dense feature encoding
+        print(f"🚀 IMFModel forward pass:")
+        print(f"  Input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
+
         f_r = self.dense_feature_encoder(x_reference)
-        
-        # Latent token encoding
+        print(f"  Dense feature encoder output shapes: {[f.shape for f in f_r]}")
+
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
-        
-        # Token manipulation if condition is provided
+        print(f"  Latent token encoder outputs: t_r: {t_r.shape}, t_c: {t_c.shape}")
+
         if condition is not None and self.token_manipulation is not None:
             t_c = self.token_manipulation(t_c, condition)
-        
-        # Latent token decoding
+            print(f"  After token manipulation: t_c: {t_c.shape}")
+
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
-        
-        # Implicit motion alignment
+        print(f"  Latent token decoder outputs:")
+        print(f"    m_r shapes: {[m.shape for m in m_r]}")
+        print(f"    m_c shapes: {[m.shape for m in m_c]}")
+
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
@@ -527,9 +522,10 @@ class IMFModel(nn.Module):
             align_layer = self.implicit_motion_alignment[i]
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
+            print(f"  Aligned feature {i+1} shape: {aligned_feature.shape}")
 
-        # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)
+        print(f"  Reconstructed frame shape: {reconstructed_frame.shape}")
 
         return reconstructed_frame
 

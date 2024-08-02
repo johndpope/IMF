@@ -5,6 +5,7 @@ from transformers import ViTModel, ViTConfig
 from timm import create_model
 from transformers import Swinv2Model, Swinv2Config
 import torchvision.models as models
+from torchvision.models import swin_v2_b
 
 
 DEBUG = True
@@ -12,56 +13,74 @@ def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
         
-class SwinV2FeatureExtractor(nn.Module):
-    def __init__(self, output_channels=[128, 256, 512, 512]):
+
+from torchvision.models import swin_v2_s, Swin_V2_S_Weights
+
+class SwinV2LatentTokenEncoder(nn.Module):
+    def __init__(self, latent_dim=32):
         super().__init__()
-        debug_print(f"Initializing SwinV2FeatureExtractor with output_channels: {output_channels}")
+        # Load pre-trained Swin V2 Small model
+        self.swin_v2 = swin_v2_s(weights=Swin_V2_S_Weights.DEFAULT)
         
-        # Load a pre-trained Swin Transformer V2 model
-        self.swin = Swinv2Model.from_pretrained("microsoft/swinv2-base-patch4-window8-256")
+        # Remove the classification head
+        self.swin_v2.head = nn.Identity()
         
-        # Freeze the Swin parameters
-        for param in self.swin.parameters():
-            param.requires_grad = False
+        # Add a custom head to match the desired latent dimension
+        self.latent_head = nn.Sequential(
+            nn.Linear(768, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, latent_dim)
+        )
+
+    def forward(self, x):
+        # SwinV2 forward pass
+        features = self.swin_v2(x)
         
-        # Get the correct number of channels for each stage
-        self.swin_channels = [128, 256, 512, 1024]  # Adjusted based on the error message
-        debug_print(f"Swin channels: {self.swin_channels}")
+        # Custom head to produce latent vector
+        latent = self.latent_head(features)
         
-        # Add additional convolutional layers to adjust channel dimensions
-        self.adjust1 = nn.Conv2d(self.swin_channels[0], output_channels[0], kernel_size=1)
-        self.adjust2 = nn.Conv2d(self.swin_channels[1], output_channels[1], kernel_size=1)
-        self.adjust3 = nn.Conv2d(self.swin_channels[2], output_channels[2], kernel_size=1)
-        self.adjust4 = nn.Conv2d(self.swin_channels[3], output_channels[3], kernel_size=1)
+        return latent
+class SwinV2FeatureExtractor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.swin = swin_v2_b(pretrained=True)
+        
+        # Remove the avgpool and fc layers
+        self.swin.avgpool = nn.Identity()
+        self.swin.head = nn.Identity()
 
     def forward(self, x):
         debug_print(f"👟 SwinV2FeatureExtractor input shape: {x.shape}")
         
-        # Get the features from Swin Transformer V2
-        outputs = self.swin(x, output_hidden_states=True)
-        hidden_states = outputs.hidden_states
-        
-        # We'll use the output of the 1st, 2nd, 3rd, and 4th (final) stages
-        selected_stages = [1, 3, 5, 7]  # Adjusted to get the correct feature maps
         features = []
         
-        for i, stage in enumerate(selected_stages):
-            # Get the hidden state and reshape it to 2D
-            hidden_state = hidden_states[stage]
-            B, N, C = hidden_state.shape
-            H = W = int(N ** 0.5)
-            hidden_state = hidden_state.reshape(B, H, W, C).permute(0, 3, 1, 2)
-            
-            debug_print(f"Stage {stage} shape: {hidden_state.shape}")
-            
-            # Apply the adjustment layer
-            adjusted_feature = getattr(self, f'adjust{i+1}')(hidden_state)
-            debug_print(f"After adjust{i+1}: {adjusted_feature.shape}")
-            features.append(adjusted_feature)
+        # Pass through the patch embedding
+        x = self.swin.features[0](x)
+        x = self.swin.features[1](x)
         
-        debug_print(f"SwinV2FeatureExtractor output: {len(features)} features")
-        for i, feat in enumerate(features):
-            debug_print(f"  Feature {i+1} shape: {feat.shape}")
+        # Stage 1
+        x = self.swin.features[2](x)
+        features.append(x.permute(0, 3, 1, 2))
+        debug_print(f"Stage 1 shape: {features[-1].shape}")
+        
+        # Stage 2
+        x = self.swin.features[3](x)
+        x = self.swin.features[4](x)
+        features.append(x.permute(0, 3, 1, 2))
+        debug_print(f"Stage 2 shape: {features[-1].shape}")
+        
+        # Stage 3
+        x = self.swin.features[5](x)
+        x = self.swin.features[6](x)
+        features.append(x.permute(0, 3, 1, 2))
+        debug_print(f"Stage 3 shape: {features[-1].shape}")
+        
+        # Stage 4
+        x = self.swin.features[7](x)
+        features.append(x.permute(0, 3, 1, 2))
+        debug_print(f"Stage 4 shape: {features[-1].shape}")
         
         return features
 class SwinFeatureExtractor(nn.Module):
