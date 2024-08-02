@@ -119,8 +119,9 @@ class DenseFeatureEncoder(nn.Module):
         debug_print(f"    After initial conv: {x.shape}")
         for i, block in enumerate(self.down_blocks):
             x = block(x)
-            debug_print(f"    After down_block {i+1}: {x.shape}")
+            
             if i >= 1:  # Start collecting features from the second block
+                debug_print(f"    After down_block {i+1}: {x.shape}")
                 features.append(x)
         debug_print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
@@ -464,9 +465,9 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4, condition_dim=None):
         super().__init__()
-        # self.dense_feature_encoder = DenseFeatureEncoder() - original from paper - there's no features in it
+        self.dense_feature_encoder = DenseFeatureEncoder() #- original from paper - there's no features in it
         # self.dense_feature_encoder = ViTFeatureExtractor() - google
-        self.dense_feature_encoder = SwinV2FeatureExtractor()
+        # self.dense_feature_encoder = SwinV2FeatureExtractor()
         
         
         # self.dense_feature_encoder = ResNetFeatureExtractor()
