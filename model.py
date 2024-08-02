@@ -25,8 +25,9 @@ def debug_print(*args, **kwargs):
 
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
 class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, pretrained=True):
+    def __init__(self, pretrained=True, output_channels=[128, 256, 512, 512]):
         super().__init__()
+        debug_print(f"Initializing ResNetFeatureExtractor with output_channels: {output_channels}")
         # Load a pre-trained ResNet model
         resnet = models.resnet50(pretrained=pretrained)
         
@@ -38,25 +39,49 @@ class ResNetFeatureExtractor(nn.Module):
         self.layer4 = resnet.layer4
 
         # Add additional convolutional layers to adjust channel dimensions
-        self.adjust1 = nn.Conv2d(256, 128, kernel_size=1)
-        self.adjust2 = nn.Conv2d(512, 256, kernel_size=1)
-        self.adjust3 = nn.Conv2d(1024, 512, kernel_size=1)
-        self.adjust4 = nn.Conv2d(2048, 512, kernel_size=1)
+        self.adjust1 = nn.Conv2d(256, output_channels[0], kernel_size=1)
+        self.adjust2 = nn.Conv2d(512, output_channels[1], kernel_size=1)
+        self.adjust3 = nn.Conv2d(1024, output_channels[2], kernel_size=1)
+        self.adjust4 = nn.Conv2d(2048, output_channels[3], kernel_size=1)
 
     def forward(self, x):
+        debug_print(f"👟 ResNetFeatureExtractor input shape: {x.shape}")
         features = []
+        
         x = self.layer0(x)
+        debug_print(f"After layer0: {x.shape}")
+        
         x = self.layer1(x)
-        features.append(self.adjust1(x))  # 128 channels, 64x64
+        debug_print(f"After layer1: {x.shape}")
+        feature1 = self.adjust1(x)
+        debug_print(f"After adjust1: {feature1.shape}")
+        features.append(feature1)
+        
         x = self.layer2(x)
-        features.append(self.adjust2(x))  # 256 channels, 32x32
+        debug_print(f"After layer2: {x.shape}")
+        feature2 = self.adjust2(x)
+        debug_print(f"After adjust2: {feature2.shape}")
+        features.append(feature2)
+        
         x = self.layer3(x)
-        features.append(self.adjust3(x))  # 512 channels, 16x16
+        debug_print(f"After layer3: {x.shape}")
+        feature3 = self.adjust3(x)
+        debug_print(f"After adjust3: {feature3.shape}")
+        features.append(feature3)
+        
         x = self.layer4(x)
-        features.append(self.adjust4(x))  # 512 channels, 8x8
+        debug_print(f"After layer4: {x.shape}")
+        feature4 = self.adjust4(x)
+        debug_print(f"After adjust4: {feature4.shape}")
+        features.append(feature4)
+        
+        debug_print(f"ResNetFeatureExtractor output: {len(features)} features")
+        for i, feat in enumerate(features):
+            debug_print(f"  Feature {i+1} shape: {feat.shape}")
         
         return features
-
+        
+        return features
 class UpConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -499,6 +524,7 @@ class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4, condition_dim=None):
         super().__init__()
         self.dense_feature_encoder = DenseFeatureEncoder()
+        # self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         

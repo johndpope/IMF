@@ -65,7 +65,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             source_frames = batch['frames']
             batch_size, num_frames, channels, height, width = source_frames.shape
 
-            for ref_idx in range(num_frames):
+            for ref_idx in range(0, num_frames, config.training.every_xref_frames):  # Step by 16 for reference frames
+
                 x_reference = source_frames[:, ref_idx]
 
                 for current_idx in range(num_frames):

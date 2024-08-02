@@ -6,6 +6,7 @@ model:
 
 # Training parameters
 training:
+  every_xref_frames: 16
   batch_size: 2
   num_epochs: 100
   save_steps: 25
