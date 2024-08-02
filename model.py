@@ -27,33 +27,58 @@ def debug_print(*args, **kwargs):
         print(*args, **kwargs)
 
 
+class PixelwiseSeparateConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, 
+                                   stride=stride, padding=padding, groups=in_channels)
+        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        return x
+
+class SNPixelwiseSeparateConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        self.depthwise = spectral_norm(nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, 
+                                                 stride=stride, padding=padding, groups=in_channels))
+        self.pointwise = spectral_norm(nn.Conv2d(in_channels, out_channels, kernel_size=1))
+
+    def forward(self, x):
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        return x
 
 class DownConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, use_pixelwise=False):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
+        self.conv1 = Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        self.feat_res_block2 = FeatResBlock(out_channels)
+        self.conv2 = Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block1 = FeatResBlock(out_channels, use_pixelwise)
+        self.feat_res_block2 = FeatResBlock(out_channels, use_pixelwise)
 
     def forward(self, x):
-        # debug_print(f"DownConvResBlock input shape: {x.shape}")
+        debug_print(f"DownConvResBlock input shape: {x.shape}")
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        # debug_print(f"After conv1, bn1, relu: {out.shape}")
+        debug_print(f"After conv1, bn1, relu: {out.shape}")
         out = self.avgpool(out)
-        # debug_print(f"After avgpool: {out.shape}")
+        debug_print(f"After avgpool: {out.shape}")
         out = self.conv2(out)
-        # debug_print(f"After conv2: {out.shape}")
+        debug_print(f"After conv2: {out.shape}")
         out = self.feat_res_block1(out)
-        # debug_print(f"After feat_res_block1: {out.shape}")
+        debug_print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
-        # debug_print(f"DownConvResBlock output shape: {out.shape}")
+        debug_print(f"DownConvResBlock output shape: {out.shape}")
         return out
+
 
 
 '''
@@ -163,7 +188,7 @@ class LatentTokenEncoder(nn.Module):
 class StyleConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
         super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2)
+        self.conv = PixelwiseSeparateConv(in_channels, out_channels, kernel_size, padding=kernel_size//2)
         self.style_mod = nn.Linear(style_dim, in_channels)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) if upsample else nn.Identity()
         self.activation = nn.LeakyReLU(0.2, inplace=True)
@@ -250,12 +275,13 @@ class LatentTokenDecoder(nn.Module):
 
 
 class FeatResBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels, use_pixelwise=False):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
+        self.conv1 = Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm2d(channels)
         self.relu2 = nn.ReLU(inplace=True)
 
@@ -331,15 +357,20 @@ class FrameDecoder(nn.Module):
         return x
 
 class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, use_pixelwise=True):
         super().__init__()
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block = FeatResBlock(out_channels)
+        self.conv2 = Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block = FeatResBlock(out_channels, use_pixelwise)
         
+        self.residual_conv = Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
+
+        
+        # Add a 1x1 convolution for the residual connection if channel sizes differ
         self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
 
     def forward(self, x):
@@ -356,6 +387,7 @@ class UpConvResBlock(nn.Module):
         out = self.relu(out)
         out = self.feat_res_block(out)
         return out
+
 
 '''
 The upsample parameter is replaced with downsample to match the diagram.
