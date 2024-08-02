@@ -6,7 +6,7 @@ model:
 
 # Training parameters
 training:
-  batch_size: 4
+  batch_size: 2
   num_epochs: 100
   save_steps: 25
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
@@ -41,7 +41,7 @@ training:
 dataset:
   # celeb-hq torrent https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666" # for overfitting M2Ohb0FAaJU_1.mp4 use https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
-  json_file: './data/overfit.json' 
+  json_file: './data/celebvhq_info.json' 
   # json_file: './data/celebvhq_info.json' # 35k
   max_frames: 50
 

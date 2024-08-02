@@ -23,7 +23,7 @@ class VideoDataset(Dataset):
         self.ctx = decord.cpu()
 
     def __len__(self):
-        return 10000  # You can adjust this value based on how many samples you want per epoch
+        return len(self.video_files)  # You can adjust this value based on how many samples you want per epoch
 
     def augmentation(self, images, transform, state=None):
         if state is not None:
@@ -67,59 +67,3 @@ class VideoDataset(Dataset):
             idx -= num_frames
         raise IndexError("Index out of range")
 
-class SingleVideoIterableDataset(IterableDataset):
-    def __init__(self, root_dir, transform=None, frame_skip=1, shuffle=True):
-        self.root_dir = root_dir
-        self.frame_skip = frame_skip
-        self.shuffle = shuffle
-        self.video_files = [os.path.join(subdir, file)
-                            for subdir, dirs, files in os.walk(root_dir)
-                            for file in files if file.endswith('.mp4')]
-        random.shuffle(self.video_files)
-
-        # Use custom transform for tensors
-        self.transform = transform if transform is not None else TensorTransform((256, 256))
-
-    def __iter__(self):
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
-            iter_start = 0
-            iter_end = len(self.video_files)
-        else:
-            per_worker = int(math.ceil(len(self.video_files) / float(worker_info.num_workers)))
-            worker_id = worker_info.id
-            iter_start = worker_id * per_worker
-            iter_end = min(iter_start + per_worker, len(self.video_files))
-
-        for video_idx in range(iter_start, iter_end):
-            video_path = self.video_files[video_idx]
-            print(f"Processing video: {video_path}")
-            vr = VideoReader(video_path, ctx=cpu(0))
-            frame_indices = list(range(len(vr) - self.frame_skip))
-            if self.shuffle:
-                random.shuffle(frame_indices)
-
-            for frame_idx in frame_indices:
-                current_frame_idx = frame_idx
-                reference_frame_idx = frame_idx + self.frame_skip
-
-                current_frame = vr[current_frame_idx].asnumpy()
-                reference_frame = vr[reference_frame_idx].asnumpy()
-                
-                print(f"Raw frame shapes - Current: {current_frame.shape}, Reference: {reference_frame.shape}")
-
-                current_frame = torch.from_numpy(current_frame).float().permute(2, 0, 1)
-                reference_frame = torch.from_numpy(reference_frame).float().permute(2, 0, 1)
-
-                print(f"Tensor shapes after permute - Current: {current_frame.shape}, Reference: {reference_frame.shape}")
-
-                # Apply transforms
-                current_frame = self.transform(current_frame)
-                reference_frame = self.transform(reference_frame)
-
-                print(f"Final tensor shapes - Current: {current_frame.shape}, Reference: {reference_frame.shape}")
-
-                yield current_frame, reference_frame
-
-    def __len__(self):
-        return len(self.video_files) * 1000  # Approximation
