@@ -106,39 +106,39 @@ class ImprovedLatentTokenDecoder(nn.Module):
         ])
 
     def forward(self, t):
-        print(f"👻 ImprovedLatentTokenDecoder latent t shape: {t.shape}")
-        print(f"Input latent t stats: mean={t.mean().item():.4f}, std={t.std().item():.4f}")
+        #print(f"👻 ImprovedLatentTokenDecoder latent t shape: {t.shape}")
+        #print(f"Input latent t stats: mean={t.mean().item():.4f}, std={t.std().item():.4f}")
 
         batch_size = t.shape[0]
         x = self.const.repeat(batch_size, 1, 1, 1)
-        print(f"Initial const x shape: {x.shape}")
-        print(f"Initial const x stats: mean={x.mean().item():.4f}, std={x.std().item():.4f}")
+        #print(f"Initial const x shape: {x.shape}")
+        #print(f"Initial const x stats: mean={x.mean().item():.4f}, std={x.std().item():.4f}")
 
         styles = self.style_mapping(t).view(batch_size, -1, t.shape[1])
-        print(f"Mapped styles shape: {styles.shape}")
-        print(f"Mapped styles stats: mean={styles.mean().item():.4f}, std={styles.std().item():.4f}")
+        #print(f"Mapped styles shape: {styles.shape}")
+        #print(f"Mapped styles stats: mean={styles.mean().item():.4f}, std={styles.std().item():.4f}")
 
         features = []
         for i, layer in enumerate(self.style_conv_layers):
             if isinstance(layer, ImprovedStyleConv):
                 style = styles[:, min(i, styles.shape[1]-1)]
-                print(f"Layer {i} (StyleConv) - Input shape: {x.shape}, Style shape: {style.shape}")
+                #print(f"Layer {i} (StyleConv) - Input shape: {x.shape}, Style shape: {style.shape}")
                 x = layer(x, style)
             else:  # AttentionBlock
-                print(f"Layer {i} (AttentionBlock) - Input shape: {x.shape}")
+                #print(f"Layer {i} (AttentionBlock) - Input shape: {x.shape}")
                 x = layer(x)
             
-            print(f"Layer {i} output shape: {x.shape}")
-            print(f"Layer {i} output stats: mean={x.mean().item():.4f}, std={x.std().item():.4f}")
+            #print(f"Layer {i} output shape: {x.shape}")
+            #print(f"Layer {i} output stats: mean={x.mean().item():.4f}, std={x.std().item():.4f}")
             
             if i in [3, 6, 9, 12]:
                 features.append(x)
-                print(f"Added feature {len(features)} with shape: {x.shape}")
+                #print(f"Added feature {len(features)} with shape: {x.shape}")
 
-        print("Final features:")
-        for i, feat in enumerate(features[::-1]):
-            print(f"Feature {i+1} shape: {feat.shape}")
-            print(f"Feature {i+1} stats: mean={feat.mean().item():.4f}, std={feat.std().item():.4f}")
+        #print("Final features:")
+        # for i, feat in enumerate(features[::-1]):
+            #print(f"Feature {i+1} shape: {feat.shape}")
+            #print(f"Feature {i+1} stats: mean={feat.mean().item():.4f}, std={feat.std().item():.4f}")
 
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
 

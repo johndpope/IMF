@@ -21,7 +21,7 @@ from vit import ImplicitMotionAlignment
 from latent_encoder import ImprovedLatentTokenDecoder
 
 # from CIPS import CIPSFrameDecoder
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)

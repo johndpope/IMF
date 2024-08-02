@@ -8,7 +8,7 @@ import torchvision.models as models
 from torchvision.models import swin_v2_b
 
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)

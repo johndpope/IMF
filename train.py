@@ -75,13 +75,15 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     
                     x_current = source_frames[:, current_idx]
 
-                    # A. Forward Pass
-                    # 1. Dense Feature Encoding
-                    f_r = model.dense_feature_encoder(x_reference)
+                    with torch.no_grad():
 
-                    # 2. Latent Token Encoding (with noise addition)
-                    t_r = model.latent_token_encoder(x_reference)
-                    t_c = model.latent_token_encoder(x_current)
+                        # A. Forward Pass
+                        # 1. Dense Feature Encoding
+                        f_r = model.dense_feature_encoder(x_reference)
+
+                        # 2. Latent Token Encoding (with noise addition)
+                        t_r = model.latent_token_encoder(x_reference)
+                        t_c = model.latent_token_encoder(x_current)
 
                     # Add noise to latent tokens
                     noise_r = torch.randn_like(t_r) * noise_magnitude
@@ -234,6 +236,8 @@ def main():
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers
     )
+    model.dense_feature_encoder.eval()
+    model.latent_token_encoder.eval()
     add_gradient_hooks(model)
 
     discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
