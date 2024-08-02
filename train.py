@@ -102,7 +102,7 @@ def train_no_gan(config, model, train_dataloader, accelerator):
                     reconstructed_frames = model.frame_decoder(aligned_features)
                     mse = mse_loss(reconstructed_frames, x_current)
                     perceptual = lpips_loss(reconstructed_frames, x_current).mean()
-                    loss = mse + config.training.perceptual_weight * perceptual
+                    loss = mse + 1.0 * perceptual
 
                     accelerator.backward(loss)
                     optimizer.step()
