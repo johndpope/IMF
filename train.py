@@ -30,7 +30,7 @@ def load_config(config_path):
 
 
 def train_no_gan(config, model, train_dataloader, accelerator):
-    optimizer = AdamW(model.parameters(), lr=config.training.learning_rate, weight_decay=1e-4)
+    optimizer = AdamW(model.parameters(), lr=config.training.learning_rate_g, weight_decay=1e-4)
     model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
 
     # Set up exponential moving average of model weights
