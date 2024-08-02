@@ -397,7 +397,8 @@ def main():
         collate_fn=gpu_padded_collate 
     )
 
-    train_no_gan(config, model, discriminator, dataloader, accelerator)
+    # train_gan(config, model, discriminator, dataloader, accelerator)
+    train_no_gan(config, model, dataloader, accelerator)
 
 if __name__ == "__main__":
     main()
