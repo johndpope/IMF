@@ -80,20 +80,20 @@ def train_no_gan(config, model, train_dataloader, accelerator):
                         rand_tc = tc[torch.randperm(tc.size(0))]
                         rand_tr = tr[torch.randperm(tr.size(0))]
 
-                        mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.imf.implicit_motion_alignment))]
-                        mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.imf.implicit_motion_alignment))]
+                        mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.implicit_motion_alignment))]
+                        mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.implicit_motion_alignment))]
                     else:
-                        mix_tc = [tc] * len(model.imf.implicit_motion_alignment)
-                        mix_tr = [tr] * len(model.imf.implicit_motion_alignment)
+                        mix_tc = [tc] * len(model.implicit_motion_alignment)
+                        mix_tr = [tr] * len(model.implicit_motion_alignment)
 
-                    m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
+                    m_c, m_r = model.process_tokens(mix_tc, mix_tr)
 
-                    fr = model.imf.dense_feature_encoder(x_reference)
+                    fr = model.dense_feature_encoder(x_reference)
 
                     aligned_features = []
-                    for i in range(len(model.imf.implicit_motion_alignment)):
+                    for i in range(len(model.implicit_motion_alignment)):
                         f_r_i = fr[i]
-                        align_layer = model.imf.implicit_motion_alignment[i]
+                        align_layer = model.implicit_motion_alignment[i]
                         m_c_i = m_c[i][i]
                         m_r_i = m_r[i][i]
                         aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
