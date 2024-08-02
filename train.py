@@ -99,9 +99,9 @@ def train_no_gan(config, model, train_dataloader, accelerator):
                         aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
                         aligned_features.append(aligned_feature)
 
-                    reconstructed_frames = model.frame_decoder(aligned_features)
-                    mse = mse_loss(reconstructed_frames, x_current)
-                    perceptual = lpips_loss(reconstructed_frames, x_current).mean()
+                    x_reconstructed = model.frame_decoder(aligned_features)
+                    mse = mse_loss(x_reconstructed, x_current)
+                    perceptual = lpips_loss(x_reconstructed, x_current).mean()
                     loss = mse + 1.0 * perceptual
 
                     accelerator.backward(loss)
@@ -126,7 +126,10 @@ def train_no_gan(config, model, train_dataloader, accelerator):
                         "batch_total_loss": loss.item(),
                         "batch": batch_idx + epoch * len(train_dataloader)
                     })
-
+               # Sample and save reconstructions
+                sample_path = f"recon_epoch_{epoch+1}_batch_{ref_idx}.png"
+                sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                            num_samples=config.logging.sample_size)
         progress_bar.close()
         avg_mse_loss = total_mse_loss / len(train_dataloader)
         avg_perceptual_loss = total_perceptual_loss / len(train_dataloader)
