@@ -28,6 +28,129 @@ def load_config(config_path):
     return OmegaConf.load(config_path)
 
 
+
+def train_no_gan(config, model, train_dataloader, accelerator):
+    optimizer = AdamW(model.parameters(), lr=config.training.learning_rate, weight_decay=1e-4)
+    model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
+
+    # Set up exponential moving average of model weights
+    ema_model = accelerator.unwrap_model(model).to(accelerator.device)
+    ema_model.load_state_dict(accelerator.unwrap_model(model).state_dict())
+
+    mse_loss = nn.MSELoss()
+    lpips_loss = lpips.LPIPS(net='alex').to(accelerator.device)
+
+    os.makedirs(config.checkpoints.dir, exist_ok=True)
+
+    start_epoch = 0
+    # Checkpoint restoration logic here (omitted for brevity)
+
+    for epoch in range(start_epoch, config.training.num_epochs):
+        model.train()
+        total_mse_loss = 0
+        total_perceptual_loss = 0
+        total_loss = 0
+        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}", 
+                            disable=not accelerator.is_local_main_process)
+        
+        for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
+            # Forward pass
+            reconstructed_frames = model(current_frames, reference_frames)
+
+            # Add noise to latent tokens for improved training dynamics
+            tc = model.latent_token_encoder(current_frames)
+            tr = model.latent_token_encoder(reference_frames)
+
+            noise = torch.randn_like(tc) * config.training.noise_magnitude
+            tc = tc + noise
+            tr = tr + noise
+
+            # Perform style mixing regularization
+            if torch.rand(()).item() < config.training.style_mixing_prob:
+                rand_tc = tc[torch.randperm(tc.size(0))]
+                rand_tr = tr[torch.randperm(tr.size(0))]
+
+                mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.imf.implicit_motion_alignment))]
+                mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.imf.implicit_motion_alignment))]
+            else:
+                mix_tc = [tc] * len(model.imf.implicit_motion_alignment)
+                mix_tr = [tr] * len(model.imf.implicit_motion_alignment)
+
+            m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
+
+            fr = model.imf.dense_feature_encoder(reference_frames)
+
+            aligned_features = []
+            for i in range(len(model.imf.implicit_motion_alignment)):
+                f_r_i = fr[i]
+                align_layer = model.imf.implicit_motion_alignment[i]
+                m_c_i = m_c[i][i]
+                m_r_i = m_r[i][i]
+                aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                aligned_features.append(aligned_feature)
+
+            reconstructed_frames = model.frame_decoder(aligned_features)
+            mse = mse_loss(reconstructed_frames, current_frames)
+            perceptual = lpips_loss(reconstructed_frames, current_frames).mean()
+            loss = mse + config.training.perceptual_weight * perceptual
+
+            accelerator.backward(loss)
+            optimizer.step()
+            optimizer.zero_grad()
+
+            # Update exponential moving average of weights
+            with torch.no_grad():
+                for p_ema, p in zip(ema_model.parameters(), accelerator.unwrap_model(model).parameters()):
+                    p_ema.copy_(p.lerp(p_ema, config.training.ema_decay))
+
+            total_mse_loss += mse.item()
+            total_perceptual_loss += perceptual.item()
+            total_loss += loss.item()
+            
+            progress_bar.update(1)
+            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
+
+            wandb.log({
+                "batch_mse_loss": mse.item(),
+                "batch_perceptual_loss": perceptual.item(),
+                "batch_total_loss": loss.item(),
+                "batch": batch_idx + epoch * len(train_dataloader)
+            })
+
+        progress_bar.close()
+        avg_mse_loss = total_mse_loss / len(train_dataloader)
+        avg_perceptual_loss = total_perceptual_loss / len(train_dataloader)
+        avg_loss = total_loss / len(train_dataloader)
+        accelerator.print(f"Epoch [{epoch+1}/{config.training.num_epochs}], "
+                          f"MSE: {avg_mse_loss:.4f}, "
+                          f"LPIPS: {avg_perceptual_loss:.4f}, "
+                          f"Avg: {avg_loss:.4f}")
+        wandb.log({
+            "epoch": epoch + 1,
+            "avg_mse_loss": avg_mse_loss,
+            "avg_perceptual_loss": avg_perceptual_loss,
+            "avg_total_loss": avg_loss,
+        })
+
+        # Checkpoint saving
+        if (epoch + 1) % config.checkpoints.interval == 0:
+            accelerator.wait_for_everyone()
+            unwrapped_model = accelerator.unwrap_model(model)
+            accelerator.save({
+                'epoch': epoch,
+                'model_state_dict': unwrapped_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }, f"{config.checkpoints.dir}/checkpoint_{epoch+1}.pth")
+
+        if epoch % config.logging.sample_interval == 0:
+            sample_path = f"recon_epoch_{epoch+1}.png"
+            sample_recon(ema_model, next(iter(train_dataloader)), accelerator, sample_path, 
+                         num_samples=config.logging.sample_size)
+            wandb.log({"sample_reconstruction": wandb.Image(sample_path)})
+
+    return ema_model
+
+
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
@@ -274,7 +397,7 @@ def main():
         collate_fn=gpu_padded_collate 
     )
 
-    train(config, model, discriminator, dataloader, accelerator)
+    train_no_gan(config, model, discriminator, dataloader, accelerator)
 
 if __name__ == "__main__":
     main()
