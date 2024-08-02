@@ -53,69 +53,79 @@ def train_no_gan(config, model, train_dataloader, accelerator):
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}", 
                             disable=not accelerator.is_local_main_process)
         
-        for batch_idx, (current_frames, reference_frames) in enumerate(train_dataloader):
-            # Forward pass
-            reconstructed_frames = model(current_frames, reference_frames)
+        for batch_idx, batch in enumerate(train_dataloader):
+            source_frames = batch['frames']
+            batch_size, num_frames, channels, height, width = source_frames.shape
 
-            # Add noise to latent tokens for improved training dynamics
-            tc = model.latent_token_encoder(current_frames)
-            tr = model.latent_token_encoder(reference_frames)
+            for ref_idx in range(0, num_frames, config.training.every_xref_frames):  # Step by 16 for reference frames
 
-            noise = torch.randn_like(tc) * config.training.noise_magnitude
-            tc = tc + noise
-            tr = tr + noise
+                x_reference = source_frames[:, ref_idx]
 
-            # Perform style mixing regularization
-            if torch.rand(()).item() < config.training.style_mixing_prob:
-                rand_tc = tc[torch.randperm(tc.size(0))]
-                rand_tr = tr[torch.randperm(tr.size(0))]
+                for current_idx in range(num_frames):
+                    if current_idx == ref_idx:
+                        continue  # Skip when current frame is the reference frame
+                    
+                    x_current = source_frames[:, current_idx]
 
-                mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.imf.implicit_motion_alignment))]
-                mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.imf.implicit_motion_alignment))]
-            else:
-                mix_tc = [tc] * len(model.imf.implicit_motion_alignment)
-                mix_tr = [tr] * len(model.imf.implicit_motion_alignment)
+                    # Add noise to latent tokens for improved training dynamics
+                    tc = model.latent_token_encoder(x_current)
+                    tr = model.latent_token_encoder(x_reference)
 
-            m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
+                    noise = torch.randn_like(tc) * config.training.noise_magnitude
+                    tc = tc + noise
+                    tr = tr + noise
 
-            fr = model.imf.dense_feature_encoder(reference_frames)
+                    # Perform style mixing regularization
+                    if torch.rand(()).item() < config.training.style_mixing_prob:
+                        rand_tc = tc[torch.randperm(tc.size(0))]
+                        rand_tr = tr[torch.randperm(tr.size(0))]
 
-            aligned_features = []
-            for i in range(len(model.imf.implicit_motion_alignment)):
-                f_r_i = fr[i]
-                align_layer = model.imf.implicit_motion_alignment[i]
-                m_c_i = m_c[i][i]
-                m_r_i = m_r[i][i]
-                aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                aligned_features.append(aligned_feature)
+                        mix_tc = [rand_tc if torch.rand(()).item() < 0.5 else tc for _ in range(len(model.imf.implicit_motion_alignment))]
+                        mix_tr = [rand_tr if torch.rand(()).item() < 0.5 else tr for _ in range(len(model.imf.implicit_motion_alignment))]
+                    else:
+                        mix_tc = [tc] * len(model.imf.implicit_motion_alignment)
+                        mix_tr = [tr] * len(model.imf.implicit_motion_alignment)
 
-            reconstructed_frames = model.frame_decoder(aligned_features)
-            mse = mse_loss(reconstructed_frames, current_frames)
-            perceptual = lpips_loss(reconstructed_frames, current_frames).mean()
-            loss = mse + config.training.perceptual_weight * perceptual
+                    m_c, m_r = model.imf.process_tokens(mix_tc, mix_tr)
 
-            accelerator.backward(loss)
-            optimizer.step()
-            optimizer.zero_grad()
+                    fr = model.imf.dense_feature_encoder(x_reference)
 
-            # Update exponential moving average of weights
-            with torch.no_grad():
-                for p_ema, p in zip(ema_model.parameters(), accelerator.unwrap_model(model).parameters()):
-                    p_ema.copy_(p.lerp(p_ema, config.training.ema_decay))
+                    aligned_features = []
+                    for i in range(len(model.imf.implicit_motion_alignment)):
+                        f_r_i = fr[i]
+                        align_layer = model.imf.implicit_motion_alignment[i]
+                        m_c_i = m_c[i][i]
+                        m_r_i = m_r[i][i]
+                        aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                        aligned_features.append(aligned_feature)
 
-            total_mse_loss += mse.item()
-            total_perceptual_loss += perceptual.item()
-            total_loss += loss.item()
-            
-            progress_bar.update(1)
-            progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
+                    reconstructed_frames = model.frame_decoder(aligned_features)
+                    mse = mse_loss(reconstructed_frames, x_current)
+                    perceptual = lpips_loss(reconstructed_frames, x_current).mean()
+                    loss = mse + config.training.perceptual_weight * perceptual
 
-            wandb.log({
-                "batch_mse_loss": mse.item(),
-                "batch_perceptual_loss": perceptual.item(),
-                "batch_total_loss": loss.item(),
-                "batch": batch_idx + epoch * len(train_dataloader)
-            })
+                    accelerator.backward(loss)
+                    optimizer.step()
+                    optimizer.zero_grad()
+
+                    # Update exponential moving average of weights
+                    with torch.no_grad():
+                        for p_ema, p in zip(ema_model.parameters(), accelerator.unwrap_model(model).parameters()):
+                            p_ema.copy_(p.lerp(p_ema, config.training.ema_decay))
+
+                    total_mse_loss += mse.item()
+                    total_perceptual_loss += perceptual.item()
+                    total_loss += loss.item()
+                    
+                    progress_bar.update(1)
+                    progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
+
+                    wandb.log({
+                        "batch_mse_loss": mse.item(),
+                        "batch_perceptual_loss": perceptual.item(),
+                        "batch_total_loss": loss.item(),
+                        "batch": batch_idx + epoch * len(train_dataloader)
+                    })
 
         progress_bar.close()
         avg_mse_loss = total_mse_loss / len(train_dataloader)
