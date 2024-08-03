@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class AdaIN(nn.Module):
     def __init__(self):
         super().__init__()
@@ -14,6 +15,10 @@ class AdaIN(nn.Module):
         
         x = F.instance_norm(x)
         x = x * std + mean
+        
+        print(f"AdaIN output shape: {x.shape}")
+        print(f"AdaIN output stats: min={x.min().item():.4f}, max={x.max().item():.4f}, mean={x.mean().item():.4f}, std={x.std().item():.4f}")
+        
         return x
 
 class AdaINResBlock(nn.Module):
@@ -36,6 +41,8 @@ class AdaINResBlock(nn.Module):
         
         style_params = self.style_mlp(style).chunk(2, dim=1)
         
+        print(f"AdaINResBlock input shape: {x.shape}")
+        
         out = self.conv1(x)
         out = self.adain1(out, style_params[0])
         out = self.activation(out)
@@ -44,7 +51,15 @@ class AdaINResBlock(nn.Module):
         out = self.adain2(out, style_params[1])
         out = self.activation(out)
         
-        return out + residual
+        out = out + residual
+        
+        print(f"AdaINResBlock output shape: {out.shape}")
+        print(f"AdaINResBlock output stats: min={out.min().item():.4f}, max={out.max().item():.4f}, mean={out.mean().item():.4f}, std={out.std().item():.4f}")
+        
+        assert not torch.isnan(out).any(), "NaN values detected in AdaINResBlock output"
+        assert not torch.isinf(out).any(), "Inf values detected in AdaINResBlock output"
+        
+        return out
 
 class AdaINLatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, style_dim=32, const_dim=64):
@@ -71,10 +86,14 @@ class AdaINLatentTokenDecoder(nn.Module):
         x = self.const.repeat(batch_size, 1, 1, 1)
         style = self.style_mlp(t)
         
+        print(f"🎑  AdaINLatentTokenDecoder Initial const shape: {x.shape}")
+        print(f"Style shape: {style.shape}")
+        
         features = []
-        for block, upsample in zip(self.adain_blocks, self.upsamples):
+        for i, (block, upsample) in enumerate(zip(self.adain_blocks, self.upsamples)):
             x = block(x, style)
             x = upsample(x)
             features.append(x)
+            print(f"Feature {i+1} shape: {x.shape}")
         
         return features[::-1]  # Return features in order [m4, m3, m2, m1]

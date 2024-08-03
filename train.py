@@ -30,12 +30,23 @@ def load_config(config_path):
 
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 def train(config, model, discriminator, train_dataloader, accelerator):
+    # Initial setup (same as before)
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
     optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
 
-    # dynamic learning rate
-    scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
-    scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
+    # Warm-up parameters
+    warmup_epochs = config.training.warmup_epochs
+    warmup_factor = config.training.warmup_factor
+
+    # Learning rate schedulers with warm-up
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return warmup_factor + (1 - warmup_factor) * (epoch / warmup_epochs)
+        return 1.0
+        
+    scheduler_g = torch.optim.lr_scheduler.LambdaLR(optimizer_g, lr_lambda)
+    scheduler_d = torch.optim.lr_scheduler.LambdaLR(optimizer_d, lr_lambda)
+
 
     model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
         model, discriminator, optimizer_g, optimizer_d, train_dataloader

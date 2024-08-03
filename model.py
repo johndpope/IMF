@@ -17,6 +17,8 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 import numpy as np
 from vit import ImplicitMotionAlignment
+from adain import AdaINLatentTokenDecoder
+
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -526,8 +528,8 @@ class IMFModel(nn.Module):
         self.dense_feature_encoder = DenseFeatureEncoder()
         # self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
-        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
-        #     self.latent_token_decoder = AdaINLatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
+        # self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
+        self.latent_token_decoder = AdaINLatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
         # Adjusted to match DenseFeatureEncoder output
         self.feature_dims = [128, 256, 512, 512]
