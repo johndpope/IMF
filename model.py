@@ -527,6 +527,7 @@ class IMFModel(nn.Module):
         # self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
+        #     self.latent_token_decoder = AdaINLatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
         # Adjusted to match DenseFeatureEncoder output
         self.feature_dims = [128, 256, 512, 512]

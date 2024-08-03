@@ -23,7 +23,7 @@ from loss import LPIPSPerceptualLoss,VGGPerceptualLoss,wasserstein_loss,hinge_lo
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
 from vggloss import VGGLoss
-
+from modules.model import Vgg19, ImagePyramide, Transform
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
@@ -46,9 +46,14 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
+       # Initialize VGG loss and Image Pyramid
+    vgg = Vgg19().to(accelerator.device)
+    pyramid = ImagePyramide(config.training.scales, 3).to(accelerator.device)  # Assuming 3 channels for RGB images
+
     style_mixing_prob = config.training.style_mixing_prob
     noise_magnitude = config.training.noise_magnitude
     r1_gamma = config.training.r1_gamma  # R1 regularization strength
+    r1_interval = config.training.r1_interval 
 
 
     for epoch in range(config.training.num_epochs):
@@ -117,17 +122,23 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # 5. Frame Decoding
                     x_reconstructed = model.frame_decoder(aligned_features)
 
-                    # B. Loss Calculation
-                    # 1. Pixel-wise Loss
+                    # Create image pyramids
+                    pyramide_real = pyramid(x_current)
+                    pyramide_generated = pyramid(x_reconstructed)
+
+                    # Loss calculation
                     l_p = pixel_loss_fn(x_reconstructed, x_current)
 
-                    # 2. Perceptual Loss
-                    l_v = perceptual_loss_fn(x_reconstructed, x_current)
+                    l_v = 0
+                    for scale in config.training.scales:
+                        x_vgg = vgg(pyramide_generated[f'prediction_{scale}'])
+                        y_vgg = vgg(pyramide_real[f'prediction_{scale}'])
+                        for i, weight in enumerate(config.loss.weights['perceptual']):
+                            l_v += weight * torch.abs(x_vgg[i] - y_vgg[i].detach()).mean()
 
-                    # 3. GAN Loss
-                    # Train Discriminator
+                    # Discriminator update
                     optimizer_d.zero_grad()
-                    
+
                     # R1 regularization
                     x_current.requires_grad = True
                     real_outputs = discriminator(x_current)
@@ -137,42 +148,37 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                             outputs=real_output.sum(), inputs=x_current, create_graph=True
                         )[0]
                         r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
-                    
+
                     fake_outputs = discriminator(x_reconstructed.detach())
-                    d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
-
-                    # Add R1 regularization to the discriminator loss
-                    d_loss = d_loss + r1_gamma * r1_reg
-
-
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
                     
+                    d_loss_real = torch.mean(F.relu(1.0 - real_outputs[0])) + torch.mean(F.relu(1.0 - real_outputs[1]))
+                    d_loss_fake = torch.mean(F.relu(1.0 + fake_outputs[0])) + torch.mean(F.relu(1.0 + fake_outputs[1]))
+                    d_loss = 0.5 * (d_loss_real + d_loss_fake)
+
+                    # Apply R1 regularization every r1_interval steps
+                    if batch_idx % r1_interval == 0:
+                        d_loss = d_loss + r1_gamma * 0.5 * r1_reg
+
                     accelerator.backward(d_loss)
                     optimizer_d.step()
 
-                    # Train Generator
+                    # Generator update
                     optimizer_g.zero_grad()
                     fake_outputs = discriminator(x_reconstructed)
-                    g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
+                    g_loss_gan = -torch.mean(fake_outputs[0]) - torch.mean(fake_outputs[1])
 
-
-                    # 4. Total Loss
                     g_loss = (config.training.lambda_pixel * l_p +
-                            config.training.lambda_perceptual * l_v +
-                            config.training.lambda_adv * g_loss_gan)
+                              config.training.lambda_perceptual * l_v +
+                              config.training.lambda_adv * g_loss_gan)
 
-                    # C. Optimization
                     accelerator.backward(g_loss)
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer_g.step()
-
 
                     total_g_loss += g_loss.item()
                     total_d_loss += d_loss.item()
                     progress_bar.update(1)
                     progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+
                 # Sample and save reconstructions
                 sample_path = f"recon_epoch_{epoch+1}_batch_{ref_idx}.png"
                 sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
