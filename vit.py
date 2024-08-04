@@ -126,53 +126,48 @@ class CrossAttentionModule(nn.Module):
         self.pos_encoding_k = PositionalEncoding(motion_dim)
 
     def forward(self, ml_c, ml_r, fl_r):
-        print("CrossAttentionModule: Starting forward pass")
         print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
 
         B, C_m, H, W = ml_c.shape
         _, C_f, _, _ = fl_r.shape
-        L = H * W
+        dim_spatial = H * W
 
-        # Flatten spatial dimensions
-        ml_c = ml_c.view(B, C_m, L)
-        ml_r = ml_r.view(B, C_m, L)
-        fl_r = fl_r.view(B, C_f, L)
+        # Flatten spatial dimensions and transpose
+        q = torch.flatten(ml_c, start_dim=2).transpose(-1, -2)
+        k = torch.flatten(ml_r, start_dim=2).transpose(-1, -2)
+        v = torch.flatten(fl_r, start_dim=2).transpose(-1, -2)
+        print(f"After flattening: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Permute dimensions
-        ml_c = ml_c.permute(2, 0, 1)
-        ml_r = ml_r.permute(2, 0, 1)
-        fl_r = fl_r.permute(2, 0, 1)
-        print(f"Shapes after permutation: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        # Add positional encodings
+        q = q + self.pos_encoding_q(q)
+        k = k + self.pos_encoding_k(k)
+        print(f"After adding positional encoding: q: {q.shape}, k: {k.shape}")
 
-        # Generate and add positional encodings
-        p_q = self.pos_encoding_q(ml_c)
-        p_k = self.pos_encoding_k(ml_r)
-        ml_c = ml_c + p_q
-        ml_r = ml_r + p_k
-        print(f"Shapes after adding positional encodings: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}")
+        # Linear projections
+        q = self.to_q(q).view(B, dim_spatial, self.heads, self.dim_head).transpose(1, 2)
+        k = self.to_k(k).view(B, dim_spatial, self.heads, self.dim_head).transpose(1, 2)
+        v = self.to_v(v).view(B, dim_spatial, self.heads, self.dim_head).transpose(1, 2)
+        print(f"After linear projections: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Compute Q, K, V
-        q = self.to_q(ml_c).view(L, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
-        k = self.to_k(ml_r).view(L, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
-        v = self.to_v(fl_r).view(L, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
-        print(f"Shapes of Q, K, V: q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        # Compute attention
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        attn = F.softmax(dots, dim=-1)
+        print(f"Attention shape: {attn.shape}")
 
-        # Compute attention weights and output
-        attention_weights = F.softmax(torch.matmul(q, k.transpose(-1, -2)) * self.scale, dim=-1)
-        print(f"Shape of attention weights: {attention_weights.shape}")
-        V_prime = torch.matmul(attention_weights, v)
-        print(f"Shape of V_prime after attention: {V_prime.shape}")
-        V_prime = V_prime.permute(0, 2, 1, 3).contiguous().view(B, L, self.heads * self.dim_head)
-        V_prime = self.to_out(V_prime)
-        print(f"Shape of V_prime after linear projection: {V_prime.shape}")
+        # Apply attention to values
+        out = torch.matmul(attn, v)
+        print(f"After applying attention: {out.shape}")
 
-        # Reshape output to match input shape
-        output = V_prime.permute(0, 2, 1).view(B, C_f, H, W)
-        print(f"Final output shape: {output.shape}")
+        # Reshape and project back to original feature dimension
+        out = out.transpose(1, 2).contiguous().view(B, dim_spatial, self.heads * self.dim_head)
+        out = self.to_out(out)
+        print(f"After reshaping and final projection: {out.shape}")
 
-        print("CrossAttentionModule: Finished forward pass")
-        return output
+        # Reshape back to original spatial dimensions
+        out = out.transpose(-1, -2).view(B, C_f, H, W)
+        print(f"Final output shape: {out.shape}")
 
+        return out
 
 
 # Example usage
