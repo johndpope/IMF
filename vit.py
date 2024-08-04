@@ -57,8 +57,12 @@ class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, depth=2, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
         self.cross_attention = CrossAttentionModule(feature_dim, motion_dim, heads, dim_head)
+        # x4
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(feature_dim, heads, dim_head, mlp_dim) for _ in range(depth)
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim)
         ])
 
     def forward(self, ml_c, ml_r, fl_r):
