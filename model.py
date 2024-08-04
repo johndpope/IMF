@@ -601,7 +601,7 @@ class IMFModel(nn.Module):
         self.dense_feature_encoder = DenseFeatureEncoder()
 
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
-        self.latent_token_decoder = LatentTokenDecoder(style_dim=latent_dim)
+        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
         self.feature_dims = [128, 256, 512, 512]  # values
