@@ -18,7 +18,7 @@ from einops.layers.torch import Rearrange
 import numpy as np
 from vit import ImplicitMotionAlignment
 import random
-
+from stylegan import EqualConv2d,EqualLinear
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -244,73 +244,60 @@ ReLU activations are applied both after adding the residual and at the end of th
 The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
 '''
 
-class ConvLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        return self.relu(self.bn(self.conv(x)))
 
 
 class LatentTokenEncoder(nn.Module):
     def __init__(self, dm=32):
-        super().__init__()
-        self.conv_layer = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
-        
-        self.res_blocks = nn.ModuleList([
-            ResBlock(64, 64),
-            ResBlock(64, 128, downsample=True),
-            ResBlock(128, 256, downsample=True),
-            ResBlock(256, 512, downsample=True),
-            ResBlock(512, 512),
-            ResBlock(512, 512),
-            ResBlock(512, 512)
-        ])
-        
-        self.equal_conv = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.squeeze = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc_layers = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, dm)
-        )
+        super(LatentTokenEncoder, self).__init__()
+        self.conv1 = EqualConv2d(3, 64, kernel_size=7, stride=1, padding=3)
+        self.activation = nn.LeakyReLU(0.2)
 
+        self.res1 = ResBlock(64, 64, downsample=True)  # ResBlock-64, ↓2
+        self.res2 = ResBlock(64, 128, downsample=True)  # ResBlock-128, ↓2
+        self.res3 = ResBlock(128, 256, downsample=True)  # ResBlock-256, ↓2
+        
+        # 3× ResBlock-512, ↓2
+        self.res4 = ResBlock(256, 512, downsample=True)
+        self.res5 = ResBlock(512, 512, downsample=True)
+        self.res6 = ResBlock(512, 512, downsample=True)
+        
+        self.equalconv = EqualConv2d(512, 512, kernel_size=3, stride=1, padding=1)
+
+        
+        # 4× EqualLinear-512
+        self.linear1 = EqualLinear(512, 512)
+        self.linear2 = EqualLinear(512, 512)
+        self.linear3 = EqualLinear(512, 512)
+        self.linear4 = EqualLinear(512, 512)
+        
+        self.final_linear = EqualLinear(512, dm) # EqualLinear-dm
+
+    
     def forward(self, x):
-        # Assert that input dimensions are 256x256
-        assert x.shape[2] == 256 and x.shape[3] == 256, f"Input image should be 256x256, but got {x.shape[2]}x{x.shape[3]}"
+        x = self.activation(self.conv1(x))
         
-        debug_print(f"LatentTokenEncoder input shape: {x.shape}")
+        x = self.res1(x)
+        x = self.res2(x)
+        x = self.res3(x)
+        x = self.res4(x)
+        x = self.res5(x)
+        x = self.res6(x)
         
-        x = self.conv_layer(x)
-        debug_print(f"After initial conv layer: {x.shape}")
-
-        for i, res_block in enumerate(self.res_blocks):
-            x = res_block(x)
-            debug_print(f"After ResBlock {i+1}: {x.shape}")
-
-        x = self.equal_conv(x)
-        debug_print(f"After EqualConv: {x.shape}")
-
-        x = self.squeeze(x)
-        debug_print(f"After squeeze: {x.shape}")
-
-        x = x.view(x.size(0), -1)
-        debug_print(f"After flatten: {x.shape}")
-
-        x = self.fc_layers(x)
-        debug_print(f"LatentTokenEncoder output shape: {x.shape}")
+        x = self.equalconv(x)
+        
+        # Global average pooling instead of flattening
+        x = x.mean([2, 3])
+        
+        x = self.activation(self.linear1(x))
+        x = self.activation(self.linear2(x))
+        x = self.activation(self.linear3(x))
+        x = self.activation(self.linear4(x))
+        
+        x = self.final_linear(x)
         
         return x
-    
+
+
 class StyleConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
         super().__init__()

@@ -120,81 +120,80 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             # Gradient accumulation setup
             accumulation_steps = config.training.gradient_accumulation_steps
             effective_batch_size = batch_size * accumulation_steps
+            ref_idx = 0 # Currently, we follow previous papers and also use the first frame for fair comparison.
+            # for ref_idx in range(0, num_frames, config.training.every_xref_frames):
+            x_reference = source_frames[:, ref_idx] 
+            for current_idx in range(num_frames):
+                if current_idx == ref_idx:
+                    continue
+                
+                x_current = source_frames[:, current_idx]
 
-            for ref_idx in range(0, num_frames, config.training.every_xref_frames):
-                x_reference = source_frames[:, ref_idx]
+                x_reconstructed, diagnostics = model(x_current, x_reference)
 
-                for current_idx in range(num_frames):
-                    if current_idx == ref_idx:
-                        continue
-                    
-                    x_current = source_frames[:, current_idx]
+                l_p = pixel_loss_fn(x_reconstructed, x_current)
 
-                    x_reconstructed, diagnostics = model(x_current, x_reference)
+                pyramide_real = pyramid(x_current)
+                pyramide_generated = pyramid(x_reconstructed)
+                l_v = 0
+                for scale in config.training.scales:
+                    x_vgg = vgg(pyramide_generated[f'prediction_{scale}'])
+                    y_vgg = vgg(pyramide_real[f'prediction_{scale}'])
+                    for i, weight in enumerate(config.loss.weights['perceptual']):
+                        l_v += weight * torch.abs(x_vgg[i] - y_vgg[i].detach()).mean()
 
-                    l_p = pixel_loss_fn(x_reconstructed, x_current)
+                # Train Discriminator
+                x_current.requires_grad = True
+                real_outputs = discriminator(x_current)
+                fake_outputs = discriminator(x_reconstructed.detach())
+                d_loss = multiscale_discriminator_loss(real_outputs, fake_outputs, loss_type='lsgan')
 
-                    pyramide_real = pyramid(x_current)
-                    pyramide_generated = pyramid(x_reconstructed)
-                    l_v = 0
-                    for scale in config.training.scales:
-                        x_vgg = vgg(pyramide_generated[f'prediction_{scale}'])
-                        y_vgg = vgg(pyramide_real[f'prediction_{scale}'])
-                        for i, weight in enumerate(config.loss.weights['perceptual']):
-                            l_v += weight * torch.abs(x_vgg[i] - y_vgg[i].detach()).mean()
+                # Conditional application of R1 regularization
+                if config.training.use_r1_reg and batch_idx % config.training.r1_interval == 0:
+                    r1_reg = 0
+                    for real_output in real_outputs:
+                        grad_real = torch.autograd.grad(
+                            outputs=real_output.sum(), inputs=x_current, create_graph=True
+                        )[0]
+                        r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+                    d_loss = d_loss + config.training.r1_gamma * r1_reg
 
-                    # Train Discriminator
-                    x_current.requires_grad = True
-                    real_outputs = discriminator(x_current)
-                    fake_outputs = discriminator(x_reconstructed.detach())
-                    d_loss = multiscale_discriminator_loss(real_outputs, fake_outputs, loss_type='lsgan')
+                d_loss = d_loss / accumulation_steps
+                accelerator.backward(d_loss)
 
-                    # Conditional application of R1 regularization
-                    if config.training.use_r1_reg and batch_idx % config.training.r1_interval == 0:
-                        r1_reg = 0
-                        for real_output in real_outputs:
-                            grad_real = torch.autograd.grad(
-                                outputs=real_output.sum(), inputs=x_current, create_graph=True
-                            )[0]
-                            r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
-                        d_loss = d_loss + config.training.r1_gamma * r1_reg
+                # Train Generator
+                fake_outputs = discriminator(x_reconstructed)
+                g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
 
-                    d_loss = d_loss / accumulation_steps
-                    accelerator.backward(d_loss)
+                g_loss = (config.training.lambda_pixel * l_p +
+                            config.training.lambda_perceptual * l_v +
+                            config.training.lambda_adv * g_loss_gan)
 
-                    # Train Generator
-                    fake_outputs = discriminator(x_reconstructed)
-                    g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
+                g_loss = g_loss / accumulation_steps
+                accelerator.backward(g_loss)
 
-                    g_loss = (config.training.lambda_pixel * l_p +
-                              config.training.lambda_perceptual * l_v +
-                              config.training.lambda_adv * g_loss_gan)
+                total_g_loss += g_loss.item() * accumulation_steps
+                total_d_loss += d_loss.item() * accumulation_steps
 
-                    g_loss = g_loss / accumulation_steps
-                    accelerator.backward(g_loss)
+                if (batch_idx + 1) % accumulation_steps == 0 or batch_idx == len(train_dataloader) - 1:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+                    optimizer_g.step()
+                    optimizer_d.step()
+                    optimizer_g.zero_grad()
+                    optimizer_d.zero_grad()
 
-                    total_g_loss += g_loss.item() * accumulation_steps
-                    total_d_loss += d_loss.item() * accumulation_steps
+                    # Update EMA model
+                    ema.update_model_average(ema_model, model)
 
-                    if (batch_idx + 1) % accumulation_steps == 0 or batch_idx == len(train_dataloader) - 1:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
-                        optimizer_g.step()
-                        optimizer_d.step()
-                        optimizer_g.zero_grad()
-                        optimizer_d.zero_grad()
+                progress_bar.update(1)
+                progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
-                        # Update EMA model
-                        ema.update_model_average(ema_model, model)
-
-                    progress_bar.update(1)
-                    progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
-
-                # Sample and save reconstructions
-                if batch_idx % config.training.save_steps == 0:
-                    sample_path = f"recon_epoch_{epoch+1}_batch_{batch_idx}.png"
-                    sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
-                                num_samples=config.logging.sample_size)
+            # Sample and save reconstructions
+            if batch_idx % config.training.save_steps == 0:
+                sample_path = f"recon_epoch_{epoch+1}_batch_{batch_idx}.png"
+                sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                            num_samples=config.logging.sample_size)
 
          # Calculate average losses for the epoch
         avg_g_loss = total_g_loss / len(train_dataloader)

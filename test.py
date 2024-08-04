@@ -9,7 +9,7 @@ def test_latent_token_encoder():
     input_size = 256
     dm = 32  # "The latent token dimension is dm = 32 for all experiments except for ablation studies."
 
-    et = LatentTokenEncoder(in_channels=input_channels, dm=dm)
+    et = LatentTokenEncoder(dm=dm)
     x = torch.randn(batch_size, input_channels, input_size, input_size)
 
     output = et(x)
