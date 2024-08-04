@@ -156,6 +156,55 @@ DownConvResBlock-512
 It outputs multiple feature maps (f¹ᵣ, f²ᵣ, f³ᵣ, f⁴ᵣ) as shown in the image. These are collected in the features list and returned.
 
 Each DownConvResBlock performs downsampling using a strided convolution, maintains a residual connection, and applies BatchNorm and ReLU activations, which is consistent with typical ResNet architectures.'''
+
+
+class FeatResBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += residual
+        out = self.relu(out)
+        return out
+
+class DownConvResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block1 = FeatResBlock(out_channels)
+        self.feat_res_block2 = FeatResBlock(out_channels)
+
+    def forward(self, x):
+        debug_print(f"DownConvResBlock input shape: {x.shape}")
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        debug_print(f"After conv1, bn1, relu: {out.shape}")
+        out = self.avgpool(out)
+        debug_print(f"After avgpool: {out.shape}")
+        out = self.conv2(out)
+        debug_print(f"After conv2: {out.shape}")
+        out = self.feat_res_block1(out)
+        debug_print(f"After feat_res_block1: {out.shape}")
+        out = self.feat_res_block2(out)
+        debug_print(f"DownConvResBlock output shape: {out.shape}")
+        return out
+
 class DenseFeatureEncoder(nn.Module):
     def __init__(self, in_channels=3):
         super().__init__()
@@ -194,74 +243,35 @@ The shortcut connection now uses a 3x3 convolution with stride 2 when downsampli
 ReLU activations are applied both after adding the residual and at the end of the block.
 The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
 '''
-class TEResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu2 = nn.ReLU(inplace=True)
-        
-        if downsample or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.shortcut = nn.Identity()
 
-        self.downsample = downsample
-        self.in_channels = in_channels
-        self.out_channels = out_channels
+class ConvLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        debug_print(f"ResBlock input shape: {x.shape}")
-        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+        return self.relu(self.bn(self.conv(x)))
 
-        residual = self.shortcut(x)
-        debug_print(f"After shortcut: {residual.shape}")
-        
-        out = self.conv1(x)
-        debug_print(f"After conv1: {out.shape}")
-        out = self.bn1(out)
-        out = self.relu1(out)
-        debug_print(f"After bn1 and relu1: {out.shape}")
-        
-        out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
-        out = self.bn2(out)
-        debug_print(f"After bn2: {out.shape}")
-        
-        out += residual
-        debug_print(f"After adding residual: {out.shape}")
-        
-        out = self.relu2(out)
-        debug_print(f"ResBlock output shape: {out.shape}")
-        
-        return out
-        
+
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, in_channels=3, latent_dim=32):
+    def __init__(self, in_channels=3, dm=512):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
+        self.conv_layer = nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1)
         
-        self.resblock1 = TEResBlock(64, 64, downsample=False)
-        self.resblock2 = TEResBlock(64, 128, downsample=True)
-        self.resblock3 = TEResBlock(128, 256, downsample=True)
-        
-        self.resblock4 = nn.Sequential(
-            TEResBlock(256, 512, downsample=True),
-            TEResBlock(512, 512, downsample=False),
-            TEResBlock(512, 512, downsample=False)
-        )
+        self.res_blocks = nn.ModuleList([
+            ResBlock(64, 64),
+            ResBlock(64, 128, downsample=True),
+            ResBlock(128, 256, downsample=True),
+            ResBlock(256, 512, downsample=True),
+            ResBlock(512, 512),
+            ResBlock(512, 512),
+            ResBlock(512, 512)
+        ])
         
         self.equal_conv = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
-        
+        self.squeeze = nn.AdaptiveAvgPool2d((1, 1))
         self.fc_layers = nn.Sequential(
             nn.Linear(512, 512),
             nn.ReLU(inplace=True),
@@ -271,33 +281,32 @@ class LatentTokenEncoder(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(512, 512),
             nn.ReLU(inplace=True),
-            nn.Linear(512, latent_dim)
+            nn.Linear(512, dm)
         )
 
     def forward(self, x):
-        debug_print(f"💳 LatentTokenEncoder input shape: {x.shape}")
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        debug_print(f"    After first conv, bn, relu: {x.shape}")
-        x = self.resblock1(x)
-        debug_print(f"    After resblock1: {x.shape}")
-        x = self.resblock2(x)
-        debug_print(f"    After resblock2: {x.shape}")
-        x = self.resblock3(x)
-        debug_print(f"    After resblock3: {x.shape}")
-        x = self.resblock4(x)
-        debug_print(f"    After resblock4: {x.shape}")
-        x = self.equal_conv(x)
-        debug_print(f"    After equal_conv: {x.shape}")
-        x = self.adaptive_pool(x)
-        debug_print(f"    After adaptive_pool: {x.shape}")
-        x = x.view(x.size(0), -1)
-        debug_print(f"    After flatten: {x.shape}")
-        t = self.fc_layers(x)
-        debug_print(f"    1xdm=32 LatentTokenEncoder output shape: {t.shape}")
-        return t
+        debug_print(f"LatentTokenEncoder input shape: {x.shape}")
+        
+        x = self.conv_layer(x)
+        debug_print(f"After initial conv layer: {x.shape}")
 
+        for i, res_block in enumerate(self.res_blocks):
+            x = res_block(x)
+            debug_print(f"After ResBlock {i+1}: {x.shape}")
+
+        x = self.equal_conv(x)
+        debug_print(f"After EqualConv: {x.shape}")
+
+        x = self.squeeze(x)
+        debug_print(f"After squeeze: {x.shape}")
+
+        x = x.view(x.size(0), -1)
+        debug_print(f"After flatten: {x.shape}")
+
+        x = self.fc_layers(x)
+        debug_print(f"LatentTokenEncoder output shape: {x.shape}")
+        
+        return x
     
 class StyleConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
@@ -581,7 +590,8 @@ class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         self.dense_feature_encoder = DenseFeatureEncoder()
-        self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
+
+        self.latent_token_encoder = LatentTokenEncoder(in_channels=256, dm=latent_dim) # 256 for image size
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
 
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
