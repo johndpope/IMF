@@ -256,9 +256,9 @@ class ConvLayer(nn.Module):
 
 
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, in_channels=3, dm=512):
+    def __init__(self, dm=32):
         super().__init__()
-        self.conv_layer = nn.Conv2d(in_channels, 64, kernel_size=3, stride=1, padding=1)
+        self.conv_layer = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
         
         self.res_blocks = nn.ModuleList([
             ResBlock(64, 64),
@@ -285,6 +285,9 @@ class LatentTokenEncoder(nn.Module):
         )
 
     def forward(self, x):
+        # Assert that input dimensions are 256x256
+        assert x.shape[2] == 256 and x.shape[3] == 256, f"Input image should be 256x256, but got {x.shape[2]}x{x.shape[3]}"
+        
         debug_print(f"LatentTokenEncoder input shape: {x.shape}")
         
         x = self.conv_layer(x)
@@ -591,7 +594,7 @@ class IMFModel(nn.Module):
         super().__init__()
         self.dense_feature_encoder = DenseFeatureEncoder()
 
-        self.latent_token_encoder = LatentTokenEncoder(in_channels=256, dm=latent_dim) # 256 for image size
+        self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
 
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
