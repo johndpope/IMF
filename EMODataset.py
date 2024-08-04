@@ -17,9 +17,43 @@ import cv2
 from pathlib import Path
 from torchvision.transforms.functional import to_pil_image, to_tensor
 import random
+import torch.nn.functional as F
 # face warp
 from skimage.transform import PiecewiseAffineTransform, warp
 import face_recognition
+# 3dmm
+import mediapipe as mp
+import cv2
+def gpu_padded_collate(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+    assert isinstance(batch, list), "Batch should be a list"
+    
+    # Determine the maximum number of frames across all videos in the batch
+    max_frames = max(len(item['frames']) for item in batch)
+    
+    # Determine the maximum dimensions across all frames in the batch
+    max_height = max(max(frame.shape[1] for frame in item['frames']) for item in batch)
+    max_width = max(max(frame.shape[2] for frame in item['frames']) for item in batch)
+    
+    # Pad and stack frames for each item in the batch
+    padded_frames = []
+    for item in batch:
+        frames = item['frames']
+        # Pad each frame to max_height and max_width
+        padded_item_frames = [F.pad(frame, (0, max_width - frame.shape[2], 0, max_height - frame.shape[1])) for frame in frames]
+        # Pad the number of frames to max_frames
+        while len(padded_item_frames) < max_frames:
+            padded_item_frames.append(torch.zeros_like(padded_item_frames[0]))
+        # Stack frames for this item
+        padded_frames.append(torch.stack(padded_item_frames))
+    
+    # Stack all padded frame tensors in the batch
+    frames_tensor = torch.stack(padded_frames)
+    
+    # Assert the correct shape of the output tensor
+    assert frames_tensor.ndim == 5, "Frames tensor should be 5D (batch, frames, channels, height, width)"
+    
+    return {'frames': frames_tensor}
+
 
 class EMODataset(Dataset):
     def __init__(self, use_gpu: False, sample_rate: int,  width: int, height: int, img_scale: Tuple[float, float], img_ratio: Tuple[float, float] = (0.9, 1.0), video_dir: str = ".", drop_ratio: float = 0.1, json_file: str = "", stage: str = 'stage1', transform: transforms.Compose = None, remove_background=False, use_greenscreen=False, apply_crop_warping=False):
@@ -45,6 +79,24 @@ class EMODataset(Dataset):
         self.ctx = cpu()
 
         self.video_ids = list(self.celebvhq_info['clips'].keys())
+
+
+
+         # Initialize MediaPipe Face Mesh
+        # self.mp_face_detection = mp.solutions.face_detection
+        # self.mp_face_mesh = mp.solutions.face_mesh
+        # # Initialize FaceDetection once here
+        # self.face_detection = self.mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        # self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
+
+        # self.face_detection = self.mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+        # self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
+
+        # self.HEAD_POSE_LANDMARKS = [33, 263, 1, 61, 291, 199]
+    # def __del__(self):
+        # self.face_detection.close()
+        # self.face_mesh.close()
+
 
     def __len__(self) -> int:
         return len(self.video_ids)
@@ -154,75 +206,101 @@ class EMODataset(Dataset):
         else:
             return None, None
 
+    def extract_face_features(self, image):
+        # Convert the image to RGB (MediaPipe requires RGB input)
+        image_rgb = cv2.cvtColor(np.array(image), cv2.COLOR_BGR2RGB)
+        
+        # Process the image
+        results = self.face_mesh.process(image_rgb)
+        print("results:",results)
+        img_h, img_w, _ = image.shape
+        face_3d = []
+        face_2d = []
 
-    def load_and_process_video(self, video_path: str) -> List[torch.Tensor]:
-        # Extract video ID from the path
+
+        if results.multi_face_landmarks:       
+            for face_landmarks in results.multi_face_landmarks:
+                key_landmark_positions=[]
+                for idx, lm in enumerate(face_landmarks.landmark):
+                    if idx in self.HEAD_POSE_LANDMARKS:
+                        x, y = int(lm.x * img_w), int(lm.y * img_h)
+                        face_2d.append([x, y])
+                        face_3d.append([x, y, lm.z])
+
+                        landmark_position = [x,y]
+                        key_landmark_positions.append(landmark_position)
+                # Convert to numpy arrays
+                face_2d = np.array(face_2d, dtype=np.float64)
+                face_3d = np.array(face_3d, dtype=np.float64)
+
+                # Camera matrix
+                focal_length = img_w  # Assuming fx = fy
+                cam_matrix = np.array(
+                    [[focal_length, 0, img_w / 2],
+                    [0, focal_length, img_h / 2],
+                    [0, 0, 1]]
+                )
+
+                # Distortion matrix
+                dist_matrix = np.zeros((4, 1), dtype=np.float64)
+
+                # Solve PnP to get rotation vector
+                success, rot_vec, trans_vec = cv2.solvePnP(
+                    face_3d, face_2d, cam_matrix, dist_matrix
+                )
+                yaw, pitch, roll = self.calculate_pose(key_landmark_positions)
+                print(f'Roll: {roll:.4f}, Pitch: {pitch:.4f}, Yaw: {yaw:.4f}')
+                self.draw_axis(image, yaw, pitch, roll)
+                debug_image_path = image_path.replace('.jpg', '_debug.jpg')  # Modify as needed
+                cv2.imwrite(debug_image_path, image)
+                print(f'Debug image saved to {debug_image_path}')
+                
+                ok = torch.tensor([roll, pitch, yaw])
+                return ok                 
+        
+        return torch.tensor([0,0,0])
+    
+    def load_and_process_video(self, video_path: str) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         video_id = Path(video_path).stem
-        output_dir =  Path(self.video_dir + "/" + video_id)
+        output_dir = Path(self.video_dir) / video_id
         output_dir.mkdir(exist_ok=True)
         
-        processed_frames = []
         tensor_frames = []
+        face_features = []
 
-        tensor_file_path = output_dir / f"{video_id}_tensors.npz"
+        tensor_file_path = output_dir / f"{video_id}_tensors_and_features.npz"
 
-        # Check if the tensor file exists
         if tensor_file_path.exists():
-            print(f"Loading processed tensors from file: {tensor_file_path}")
+            print(f"Loading processed tensors and face features from file: {tensor_file_path}")
             with np.load(tensor_file_path) as data:
-                tensor_frames = [torch.tensor(data[key]) for key in data]
+                tensor_frames = [torch.tensor(data[f'frame_{i}']) for i in range(len(data) // 2)]
+                face_features = [torch.tensor(data[f'features_{i}']) for i in range(len(data) // 2)]
         else:
-            if self.apply_crop_warping:
-                print(f"Warping + Processing and saving video frames to directory: {output_dir}")
-            else:
-                print(f"Processing and saving video frames to directory: {output_dir}")
+            print(f"Processing video frames and extracting face features: {output_dir}")
             video_reader = VideoReader(video_path, ctx=self.ctx)
             for frame_idx in tqdm(range(len(video_reader)), desc="Processing Video Frames"):
                 frame = Image.fromarray(video_reader[frame_idx].numpy())
-                state = torch.get_rng_state()
-                # here we run the color jitter / random flip
-                tensor_frame, image_frame = self.augmentation(frame, self.pixel_transform, state)
-                processed_frames.append(image_frame)
+                tensor_frame, image_frame = self.augmentation(frame, self.pixel_transform)
+                
+                # Extract face features
+                features =   torch.tensor([0.0, 0.0, 0.0])
+                # features = self.extract_face_features(image_frame)
+                
+                tensor_frames.append(tensor_frame)
+                face_features.append(features)
 
-                if self.apply_crop_warping:
-                    transform = transforms.Compose([
-                        transforms.Resize((256, 256)), 
-                        transforms.ToTensor(),
-                    ])
-                    video_name = Path(video_path).stem
+                # Save frame as PNG image
+                image_frame.save(output_dir / f"{frame_idx:06d}.png")
 
-                    # vanilla crop                    
-                    _,sweet_tensor_frame1 = self.warp_and_crop_face(tensor_frame, video_name, frame_idx, transform, apply_warp=False)
-                    # Save frame as PNG image
-                    # img = to_pil_image(tensor_frame1)
-                    # img.save(output_dir / f"{frame_idx:06d}.png")
-                    # tensor_frames.append(tensor_frame1)
+            # Save tensors and features
+            save_dict = {}
+            for i, (frame, feature) in enumerate(zip(tensor_frames, face_features)):
+                save_dict[f'frame_{i}'] = frame.numpy()
+                save_dict[f'features_{i}'] = feature.numpy()
+            np.savez_compressed(tensor_file_path, **save_dict)
+            print(f"Processed tensors and face features saved to file: {tensor_file_path}")
 
-                    img = to_pil_image(sweet_tensor_frame1)
-                    img.save(output_dir / f"s_{frame_idx:06d}.png")
-                    tensor_frames.append(sweet_tensor_frame1)
-
-                    # vanilla crop + warp                  
-                    _,sweet_tensor_frame2 = self.warp_and_crop_face(tensor_frame, video_name, frame_idx, transform, apply_warp=True)
-                    # Save frame as PNG image
-                    # img = to_pil_image(tensor_frame2)
-                    # img.save(output_dir / f"w_{frame_idx:06d}.png")
-                    # tensor_frames.append(tensor_frame2)
-
-                    # Save frame as PNG image
-                    img = to_pil_image(sweet_tensor_frame2)
-                    img.save(output_dir / f"sw_{frame_idx:06d}.png")
-                    tensor_frames.append(sweet_tensor_frame2)
-                else:
-                    # Save frame as PNG image
-                    image_frame.save(output_dir / f"{frame_idx:06d}.png")
-                    tensor_frames.append(tensor_frame)
-
-            # Convert tensor frames to numpy arrays and save them
-            np.savez_compressed(tensor_file_path, *[tensor_frame.numpy() for tensor_frame in tensor_frames])
-            print(f"Processed tensors saved to file: {tensor_file_path}")
-
-        return tensor_frames
+        return tensor_frames, face_features
 
     def augmentation(self, images, transform, state=None):
         if state is not None:
@@ -292,11 +370,12 @@ class EMODataset(Dataset):
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         video_id = self.video_ids[index]
-        vid_pil_image_list = self.load_and_process_video(os.path.join(self.video_dir, f"{video_id}.mp4"))
+        vid_pil_image_list, face_features_list = self.load_and_process_video(os.path.join(self.video_dir, f"{video_id}.mp4"))
 
         sample = {
             "video_id": video_id,
             "frames": vid_pil_image_list,
-            "num_frames":  len(vid_pil_image_list)
+            "num_frames": len(vid_pil_image_list),
+            "face_features": face_features_list
         }
         return sample

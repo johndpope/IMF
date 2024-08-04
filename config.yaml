@@ -35,7 +35,9 @@ training:
   d_lr_adjust_frequency: 100  # Adjust D learning rate every 100 steps
   d_lr_adjust_factor: 2.0  # Factor to increase/decrease D learning rate
   target_d_loss_ratio: 0.6  # Target ratio of D loss to G loss
-
+  every_xref_frames: 16
+  
+  scales: [1, 0.5, 0.25, 0.125]
 
 # Dataset parameters
 dataset:
@@ -73,3 +75,7 @@ optimizer:
 # Loss function
 loss:
   type: "wasserstein"  # Changed to Wasserstein loss for WGAN-GP
+  weights:
+      perceptual: [10, 10, 10, 10, 10]
+      equivariance_shift: 10
+      equivariance_affine: 10
