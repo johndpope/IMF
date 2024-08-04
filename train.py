@@ -27,6 +27,35 @@ from modules.model import Vgg19, ImagePyramide, Transform
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
+class PixelLoss(nn.Module):
+    def __init__(self):
+        super(PixelLoss, self).__init__()
+
+    def forward(self, x_hat, x):
+        """
+        Compute the pixel-wise L1 loss between the synthesized frame and the current frame.
+        
+        Args:
+        x_hat (torch.Tensor): The synthesized frame
+        x (torch.Tensor): The current frame
+        
+        Returns:
+        torch.Tensor: The computed pixel-wise loss
+        """
+        return torch.mean(torch.abs(x_hat - x))
+
+
+def multiscale_discriminator_loss(real_preds, fake_preds, loss_type='lsgan'):
+    if loss_type == 'lsgan':
+        real_loss = sum(torch.mean((real_pred - 1)**2) for real_pred in real_preds)
+        fake_loss = sum(torch.mean(fake_pred**2) for fake_pred in fake_preds)
+    elif loss_type == 'vanilla':
+        real_loss = sum(F.binary_cross_entropy_with_logits(real_pred, torch.ones_like(real_pred)) for real_pred in real_preds)
+        fake_loss = sum(F.binary_cross_entropy_with_logits(fake_pred, torch.zeros_like(fake_pred)) for fake_pred in fake_preds)
+    else:
+        raise NotImplementedError(f'Loss type {loss_type} is not implemented.')
+    
+    return ((real_loss + fake_loss) * 0.5).requires_grad_()
 
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 def train(config, model, discriminator, train_dataloader, accelerator):
@@ -44,8 +73,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     gan_loss_type = config.loss.type
     perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
     # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
-    pixel_loss_fn = nn.L1Loss()
-    
+    # pixel_loss_fn = nn.L1Loss()
+    pixel_loss_fn = PixelLoss()
 
 
     # Initialize VGG loss and Image Pyramid
@@ -156,7 +185,10 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                         r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
                     
                     fake_outputs = discriminator(x_reconstructed.detach())
-                    d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
+          
+
+                    # Calculate adversarial losses
+                    d_loss = multiscale_discriminator_loss(real_outputs, fake_outputs, loss_type='lsgan')
 
                     # Add R1 regularization to the discriminator loss
                     d_loss = d_loss + r1_gamma * r1_reg
