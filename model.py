@@ -578,8 +578,8 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4, condition_dim=None):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder()
-        # self.dense_feature_encoder = ResNetFeatureExtractor()
+        # self.dense_feature_encoder = DenseFeatureEncoder()
+        self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
