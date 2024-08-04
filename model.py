@@ -557,7 +557,7 @@ class IMFModel(nn.Module):
             self.implicit_motion_alignment.append(ImplicitMotionAlignment(
                 feature_dim=feature_dim,
                 motion_dim=motion_dim,
-                depth=2,
+             
                 heads=8,
                 dim_head=64,
                 mlp_dim=1024

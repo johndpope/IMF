@@ -26,6 +26,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, dim, heads, dim_head, mlp_dim):
         super().__init__()
         self.attention = nn.MultiheadAttention(dim, heads)
+        # ffn
         self.mlp = nn.Sequential(
             nn.Linear(dim, mlp_dim),
             nn.GELU(),
@@ -54,11 +55,16 @@ class TransformerBlock(nn.Module):
         return output
 
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth=2, heads=8, dim_head=64, mlp_dim=1024):
+    def __init__(self, feature_dim, motion_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
         self.cross_attention = CrossAttentionModule(feature_dim, motion_dim, heads, dim_head)
+        
+        # x4
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(feature_dim, heads, dim_head, mlp_dim) for _ in range(depth)
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim)
         ])
 
     def forward(self, ml_c, ml_r, fl_r):
