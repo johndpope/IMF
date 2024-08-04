@@ -9,7 +9,7 @@ from torchvision.utils import save_image
 import torch.nn.functional as F
 
 
-def sample_recon(model, data, accelerator, output_path, num_samples=4):
+def sample_recon(model, data, accelerator, output_path, num_samples=1):
     model.eval()
     with torch.no_grad():
         x_reconstructed, x_reference = data

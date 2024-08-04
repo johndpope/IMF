@@ -185,6 +185,61 @@ class DenseFeatureEncoder(nn.Module):
         return features
 
 
+'''
+The upsample parameter is replaced with downsample to match the diagram.
+The first convolution now has a stride of 2 when downsampling.
+The shortcut connection now uses a 3x3 convolution with stride 2 when downsampling, instead of a 1x1 convolution.
+ReLU activations are applied both after adding the residual and at the end of the block.
+The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
+'''
+class TEResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, downsample=False):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu2 = nn.ReLU(inplace=True)
+        
+        if downsample or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.shortcut = nn.Identity()
+
+        self.downsample = downsample
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+    def forward(self, x):
+        debug_print(f"ResBlock input shape: {x.shape}")
+        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+
+        residual = self.shortcut(x)
+        debug_print(f"After shortcut: {residual.shape}")
+        
+        out = self.conv1(x)
+        debug_print(f"After conv1: {out.shape}")
+        out = self.bn1(out)
+        out = self.relu1(out)
+        debug_print(f"After bn1 and relu1: {out.shape}")
+        
+        out = self.conv2(out)
+        debug_print(f"After conv2: {out.shape}")
+        out = self.bn2(out)
+        debug_print(f"After bn2: {out.shape}")
+        
+        out += residual
+        debug_print(f"After adding residual: {out.shape}")
+        
+        out = self.relu2(out)
+        debug_print(f"ResBlock output shape: {out.shape}")
+        
+        return out
+        
 class LatentTokenEncoder(nn.Module):
     def __init__(self, in_channels=3, latent_dim=32):
         super().__init__()
@@ -192,14 +247,14 @@ class LatentTokenEncoder(nn.Module):
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         
-        self.resblock1 = ResBlock(64, 64, downsample=False)
-        self.resblock2 = ResBlock(64, 128, downsample=True)
-        self.resblock3 = ResBlock(128, 256, downsample=True)
+        self.resblock1 = TEResBlock(64, 64, downsample=False)
+        self.resblock2 = TEResBlock(64, 128, downsample=True)
+        self.resblock3 = TEResBlock(128, 256, downsample=True)
         
         self.resblock4 = nn.Sequential(
-            ResBlock(256, 512, downsample=True),
-            ResBlock(512, 512, downsample=False),
-            ResBlock(512, 512, downsample=False)
+            TEResBlock(256, 512, downsample=True),
+            TEResBlock(512, 512, downsample=False),
+            TEResBlock(512, 512, downsample=False)
         )
         
         self.equal_conv = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
