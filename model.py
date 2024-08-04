@@ -298,29 +298,7 @@ class LatentTokenEncoder(nn.Module):
         return x
 
 
-class StyledConv(nn.Module):
-    def __init__(self, in_channels, out_channels, style_dim, upsample=False):
-        super(StyledConv, self).__init__()
-        self.upsample = upsample
-        if upsample:
-            self.conv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
-        else:
-            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.style = nn.Linear(style_dim, out_channels)
 
-    def forward(self, x, style):
-        style = self.style(style).unsqueeze(2).unsqueeze(3)
-        if self.upsample:
-            x = self.conv(x)
-        else:
-            x = F.interpolate(x, scale_factor=2, mode='nearest')
-            x = self.conv(x)
-        x = self.bn(x)
-        x = x * style
-        x = self.relu(x)
-        return x
 
 
 '''
@@ -351,25 +329,72 @@ Unlike keypoint-based methods that use Gaussian heatmaps converted from keypoint
 Our latent tokens are directly learned by the encoder, rather than being restricted to coordinates with a limited value range.
 '''
 
+class ModulatedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, demodulate=True):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size))
+        self.stride = stride
+        self.padding = padding
+        self.demodulate = demodulate
+
+    def forward(self, x, style):
+        batch, in_channel, height, width = x.shape
+        style = style.view(batch, 1, in_channel, 1, 1)
+        
+        # Weight modulation
+        weight = self.weight.unsqueeze(0) * style
+        
+        if self.demodulate:
+            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
+            weight = weight * demod.view(batch, self.weight.size(0), 1, 1, 1)
+
+        weight = weight.view(
+            batch * self.weight.size(0), in_channel, self.weight.size(2), self.weight.size(3)
+        )
+
+        x = x.view(1, batch * in_channel, height, width)
+        out = F.conv2d(x, weight, padding=self.padding, groups=batch)
+        _, _, height, width = out.shape
+        out = out.view(batch, self.weight.size(0), height, width)
+
+        return out
+
+class StyledConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, style_dim, upsample=False, demodulate=True):
+        super().__init__()
+        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, demodulate=demodulate)
+        self.style = nn.Linear(style_dim, in_channels)
+        self.upsample = upsample
+        self.activation = nn.LeakyReLU(0.2)
+
+    def forward(self, x, latent):
+        if self.upsample:
+            x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+        
+        style = self.style(latent)
+        x = self.conv(x, style)
+        x = self.activation(x)
+        return x
+
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
         self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
         
         self.style_conv_layers = nn.ModuleList([
-            StyledConv(const_dim, 512, latent_dim),
-            StyledConv(512, 512, latent_dim, upsample=True),
-            StyledConv(512, 512, latent_dim),
-            StyledConv(512, 512, latent_dim),
-            StyledConv(512, 512, latent_dim, upsample=True),
-            StyledConv(512, 512, latent_dim),
-            StyledConv(512, 512, latent_dim),
-            StyledConv(512, 512, latent_dim, upsample=True),
-            StyledConv(512, 512, latent_dim),
-            StyledConv(512, 512, latent_dim),
-            StyledConv(512, 256, latent_dim, upsample=True),
-            StyledConv(256, 256, latent_dim),
-            StyledConv(256, 256, latent_dim)
+            StyledConv(const_dim, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 256, 3, latent_dim, upsample=True),
+            StyledConv(256, 256, 3, latent_dim),
+            StyledConv(256, 256, 3, latent_dim)
         ])
 
     def forward(self, t):
