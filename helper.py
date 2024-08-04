@@ -8,34 +8,23 @@ import os
 from torchvision.utils import save_image
 import torch.nn.functional as F
 
+
 def sample_recon(model, data, accelerator, output_path, num_samples=4):
     model.eval()
     with torch.no_grad():
-        current_frames, reference_frames = data
-        batch_size = current_frames.size(0)
+        x_reconstructed, x_reference = data
+        batch_size = x_reconstructed.size(0)
         num_samples = min(num_samples, batch_size)
-        current_frames, reference_frames = current_frames[:num_samples], reference_frames[:num_samples]
         
-        # Get reconstructed frames from IMF
-        reconstructed_frames = model(current_frames, reference_frames)
+        # Select a subset of images if batch_size > num_samples
+        x_reconstructed = x_reconstructed[:num_samples]
+        x_reference = x_reference[:num_samples]
         
-        # Ensure reconstructed_frames have the same size as reference_frames
-        if reconstructed_frames.shape != current_frames.shape:
-            reconstructed_frames = F.interpolate(reconstructed_frames, size=current_frames.shape[2:], mode='bilinear', align_corners=False)
+        # Clamp x_reconstructed to ensure values are in [0, 1] range
+        x_reconstructed_clamped = torch.clamp(x_reconstructed, 0, 1)
         
-        # Reduce size by half
-        # current_frames = F.interpolate(current_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
-        # reference_frames = F.interpolate(reference_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
-        # reconstructed_frames = F.interpolate(reconstructed_frames, scale_factor=0.5, mode='bilinear', align_corners=False)
-        
-        # Unnormalize reconstructed frames
-        # reconstructed_frames = reconstructed_frames * 0.5 + 0.5
-        # reconstructed_frames = torch.clamp(reconstructed_frames, 0, 1)
-        
-
-        
-        # Prepare frames for saving (2x4 grid)
-        frames = torch.cat((reconstructed_frames, reference_frames), dim=0)
+        # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
+        frames = torch.cat((x_reconstructed_clamped, x_reference), dim=0)
         
         # Ensure we have a valid output directory
         if output_path:
@@ -44,9 +33,9 @@ def sample_recon(model, data, accelerator, output_path, num_samples=4):
                 output_dir = '.'
             os.makedirs(output_dir, exist_ok=True)
             
-            # Save frames as a grid (2x4)
-            save_image(accelerator.gather(frames), output_path, nrow=4, padding=2, normalize=False)
-            # accelerator.print(f"Saved sample reconstructions to {output_path}")
+            # Save frames as a grid (2 rows, num_samples columns)
+            save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
+            accelerator.print(f"Saved sample reconstructions to {output_path}")
         else:
             accelerator.print("Warning: No output path provided. Skipping image save.")
         
@@ -54,14 +43,13 @@ def sample_recon(model, data, accelerator, output_path, num_samples=4):
         wandb_images = []
         for i in range(num_samples):
             wandb_images.extend([
-                wandb.Image(reconstructed_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
-                wandb.Image(reference_frames[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
+                wandb.Image(x_reconstructed_clamped[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
+                wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
             ])
         
         wandb.log({"Sample Reconstructions": wandb_images})
         
         return frames
-
 
 def monitor_gradients(model, epoch, batch_idx, log_interval=10):
     """
