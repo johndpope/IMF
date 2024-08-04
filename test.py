@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from model import LatentTokenEncoder,DenseFeatureEncoder
+from model import LatentTokenEncoder, LatentTokenDecoder, DenseFeatureEncoder
 # 
 # Test  latent_token_encoder
 def test_latent_token_encoder():
@@ -17,13 +17,13 @@ def test_latent_token_encoder():
     print(f"\nDebugging ET output shape: {output.shape}")
 
     # Assert the output is a 2D tensor (latent token)
-    assert len(output.shape) == 2, f"ET output should be a 2D tensor (batch_size, dm), but got shape {output.shape}"
-    assert output.shape[0] == batch_size, f"First dimension should be batch_size ({batch_size}), but got {output.shape[0]}"
+    assert len(output.shape) == 2, f"❌ET output should be a 2D tensor (batch_size, dm), but got shape {output.shape}"
+    assert output.shape[0] == batch_size, f"❌First dimension should be batch_size ({batch_size}), but got {output.shape[0]}"
 
     # Assert that dm is within the expected range
-    assert 32 <= output.shape[1] <= 1024, f"dm should be between 32 and 1024, got {output.shape[1]}"
+    assert 32 <= output.shape[1] <= 1024, f"❌dm should be between 32 and 1024, got {output.shape[1]}"
 
-    print("All assertions for Latent Token Encoder (ET) passed!")
+    print("✅ All assertions for Latent Token Encoder (ET) passed!")
 
 # Test the adjusted DenseFeatureEncoder
 def test_dense_feature_encoder():
@@ -41,7 +41,7 @@ def test_dense_feature_encoder():
         print(f"Output {i} shape: {output.shape}")
     
     # Assert the number of outputs (fr1, fr2, fr3, fr4)
-    assert len(outputs) == 4, f"EF should produce 4 outputs, but got {len(outputs)}"
+    assert len(outputs) == 4, f"❌ EF should produce 4 outputs, but got {len(outputs)}"
     
     # Assert the dimensions of each output
     expected_shapes = [
@@ -52,12 +52,64 @@ def test_dense_feature_encoder():
     ]
     
     for i, (output, expected_shape) in enumerate(zip(outputs, expected_shapes)):
-        assert output.shape == expected_shape, f"fr{i+1} should be {expected_shape}, but got {output.shape}"
+        assert output.shape == expected_shape, f"❌ fr{i+1} should be {expected_shape}, but got {output.shape}"
     
-    print("All assertions for Dense Feature Encoder (EF) passed!")
+    print("✅ All assertions for Dense Feature Encoder (EF) passed!")
 
+
+# Test LatentTokenDecoder
+def test_latent_token_decoder():
+    batch_size = 1
+    dm = 32  # The latent token dimension
+    style_dim = 128  # Example style vector dimension
+    input_size = 256
+
+
+    # current
+    et = LatentTokenEncoder(dm=dm)
+    x_current = torch.randn(batch_size, 3, input_size, input_size)
+    t_c = et(x_current)
+    print("t_c:",t_c.shape)
+    
+    # ref
+    et = LatentTokenEncoder(dm=dm)
+    x_ref = torch.randn(batch_size, 3, input_size, input_size)
+    t_r = et(x_ref)
+    print("t_r:",t_r.shape)
+
+    ef = DenseFeatureEncoder()
+    features = ef(x_current)
+    print("\nFinal output shapes:")
+    for i, f_r in enumerate(features):
+        print(f"f_r {i} shape: {f_r}")
+
+    latent_token_decoder = LatentTokenDecoder(latent_dim=dm)
+    m_r = latent_token_decoder(t_r)
+    m_c = latent_token_decoder(t_c)
+
+    # align features
+    print("\nFinal output shapes for Latent Token Decoder:")
+    for i, output in enumerate(outputs):
+        print(f"Output m{i+1} shape: {output.shape}")
+
+    # Assert the number of outputs (m1, m2, m3, m4)
+    assert len(outputs) == 4, f"❌ Latent Token Decoder should produce 4 outputs, but got {len(outputs)}"
+    
+    # Assert the dimensions of each output
+    expected_shapes = [
+        (batch_size, 256, 32, 32),
+        (batch_size, 512, 16, 16),
+        (batch_size, 512, 8, 8),
+        (batch_size, 512, 4, 4)
+    ]
+
+    for i, (output, expected_shape) in enumerate(zip(outputs, expected_shapes)):
+        assert output.shape == expected_shape, f"m{i+1} should be {expected_shape}, but got {output.shape}"
+
+    print("✅ All assertions for Latent Token Decoder passed!")
 
 # Run the tests
 if __name__ == "__main__":
     test_dense_feature_encoder()
     test_latent_token_encoder()
+    test_latent_token_decoder()

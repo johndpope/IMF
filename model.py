@@ -298,26 +298,28 @@ class LatentTokenEncoder(nn.Module):
         return x
 
 
-class StyleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2)
-        self.style_mod = nn.Linear(style_dim, in_channels)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) if upsample else nn.Identity()
-        self.activation = nn.LeakyReLU(0.2, inplace=True)
+class StyledConv(nn.Module):
+    def __init__(self, in_channels, out_channels, style_dim, upsample=False):
+        super(StyledConv, self).__init__()
+        self.upsample = upsample
+        if upsample:
+            self.conv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)
+        else:
+            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.style = nn.Linear(style_dim, out_channels)
 
     def forward(self, x, style):
-        debug_print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
-        style = self.style_mod(style).unsqueeze(2).unsqueeze(3)
-        debug_print(f"After style modulation: {style.shape}")
+        style = self.style(style).unsqueeze(2).unsqueeze(3)
+        if self.upsample:
+            x = self.conv(x)
+        else:
+            x = F.interpolate(x, scale_factor=2, mode='nearest')
+            x = self.conv(x)
+        x = self.bn(x)
         x = x * style
-        debug_print(f"After multiplication: {x.shape}")
-        x = self.conv(x)
-        debug_print(f"After conv: {x.shape}")
-        x = self.upsample(x)
-        debug_print(f"After upsample: {x.shape}")
-        x = self.activation(x)
-        debug_print(f"StyleConv output shape: {x.shape}")
+        x = self.relu(x)
         return x
 
 
@@ -348,44 +350,36 @@ Advantages Over Keypoint-Based Methods:
 Unlike keypoint-based methods that use Gaussian heatmaps converted from keypoints, our design scales better and has more capabilities.
 Our latent tokens are directly learned by the encoder, rather than being restricted to coordinates with a limited value range.
 '''
+
 class LatentTokenDecoder(nn.Module):
-    def __init__(self, latent_dim=32, const_dim=64):
+    def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
         self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
         
         self.style_conv_layers = nn.ModuleList([
-            StyleConv(const_dim, 512, style_dim=latent_dim),
-            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 256, upsample=True, style_dim=latent_dim),
-            StyleConv(256, 256, style_dim=latent_dim),
-            StyleConv(256, 256, style_dim=latent_dim)
+            StyledConv(const_dim, 512, latent_dim),
+            StyledConv(512, 512, latent_dim, upsample=True),
+            StyledConv(512, 512, latent_dim),
+            StyledConv(512, 512, latent_dim),
+            StyledConv(512, 512, latent_dim, upsample=True),
+            StyledConv(512, 512, latent_dim),
+            StyledConv(512, 512, latent_dim),
+            StyledConv(512, 512, latent_dim, upsample=True),
+            StyledConv(512, 512, latent_dim),
+            StyledConv(512, 512, latent_dim),
+            StyledConv(512, 256, latent_dim, upsample=True),
+            StyledConv(256, 256, latent_dim),
+            StyledConv(256, 256, latent_dim)
         ])
 
     def forward(self, t):
-        debug_print(f"🎑 LatentTokenDecoder input shape: {t.shape}")
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        debug_print(f"    After const: {x.shape}")
         features = []
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
-            debug_print(f"    After style_conv {i+1}: {x.shape}")
             if i in [3, 6, 9, 12]:
                 features.append(x)
-        debug_print(f"    LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
-
-
-
-
-
 
 class FeatResBlock(nn.Module):
     def __init__(self, channels):
@@ -582,7 +576,7 @@ class IMFModel(nn.Module):
         self.dense_feature_encoder = DenseFeatureEncoder()
 
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
-        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
+        self.latent_token_decoder = LatentTokenDecoder(style_dim=latent_dim)
 
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
         self.feature_dims = [128, 256, 512, 512]  # values
