@@ -22,34 +22,85 @@ import torchvision.models as models
 from loss import LPIPSPerceptualLoss,VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
-from vggloss import VGGLoss
+from modules.model import Vgg19, ImagePyramide, Transform
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
+class EMA():
+    def __init__(self, beta):
+        super().__init__()
+        self.beta = beta
+
+    def update_model_average(self, ma_model, current_model):
+        for current_params, ma_params in zip(current_model.parameters(), ma_model.parameters()):
+            old_weight, up_weight = ma_params.data, current_params.data
+            ma_params.data = self.update_average(old_weight, up_weight)
+
+    def update_average(self, old, new):
+        if old is None:
+            return new
+        return old * self.beta + (1 - self.beta) * new
+
+
+class PixelLoss(nn.Module):
+    def __init__(self):
+        super(PixelLoss, self).__init__()
+
+    def forward(self, x_hat, x):
+        """
+        Compute the pixel-wise L1 loss between the synthesized frame and the current frame.
+        
+        Args:
+        x_hat (torch.Tensor): The synthesized frame
+        x (torch.Tensor): The current frame
+        
+        Returns:
+        torch.Tensor: The computed pixel-wise loss
+        """
+        return torch.mean(torch.abs(x_hat - x))
+
+
+def multiscale_discriminator_loss(real_preds, fake_preds, loss_type='lsgan'):
+    if loss_type == 'lsgan':
+        real_loss = sum(torch.mean((real_pred - 1)**2) for real_pred in real_preds)
+        fake_loss = sum(torch.mean(fake_pred**2) for fake_pred in fake_preds)
+    elif loss_type == 'vanilla':
+        real_loss = sum(F.binary_cross_entropy_with_logits(real_pred, torch.ones_like(real_pred)) for real_pred in real_preds)
+        fake_loss = sum(F.binary_cross_entropy_with_logits(fake_pred, torch.zeros_like(fake_pred)) for fake_pred in fake_preds)
+    else:
+        raise NotImplementedError(f'Loss type {loss_type} is not implemented.')
+    
+    return ((real_loss + fake_loss) * 0.5).requires_grad_()
 
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
     optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
 
-    # dynamic learning rate
     scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
     scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
 
-    model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
-        model, discriminator, optimizer_g, optimizer_d, train_dataloader
-    )
-    # Use the unified gan_loss_fn
-    gan_loss_type = config.loss.type
-    perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
-    # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
-    pixel_loss_fn = nn.L1Loss()
-    
-    style_mixing_prob = config.training.style_mixing_prob
-    noise_magnitude = config.training.noise_magnitude
-    r1_gamma = config.training.r1_gamma  # R1 regularization strength
+    pixel_loss_fn = PixelLoss()
+    vgg = Vgg19()
+    pyramid = ImagePyramide(config.training.scales, 3)
 
+
+    # EMA setup
+    ema = EMA(config.training.ema_decay)
+    ema_model = IMFModel(latent_dim=config.model.latent_dim, base_channels=config.model.base_channels, num_layers=config.model.num_layers)
+    ema_model.load_state_dict(model.state_dict())
+
+
+
+    model, discriminator, optimizer_g, optimizer_d, train_dataloader, pixel_loss_fn, vgg, pyramid,ema_model,ema = accelerator.prepare(
+        model, discriminator, optimizer_g, optimizer_d, train_dataloader, pixel_loss_fn, vgg, pyramid,ema_model,ema
+    )
+
+    # Set noise level and style mixing probability
+    model.set_noise_level(config.training.noise_magnitude)
+    model.set_style_mix_prob(config.training.style_mixing_prob)
 
     for epoch in range(config.training.num_epochs):
         model.train()
@@ -59,145 +110,109 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         total_g_loss = 0
         total_d_loss = 0
 
-
-
         for batch_idx, batch in enumerate(train_dataloader):
             source_frames = batch['frames']
             batch_size, num_frames, channels, height, width = source_frames.shape
 
-            for ref_idx in range(0, num_frames, config.training.every_xref_frames):  # Step by 16 for reference frames
+            optimizer_g.zero_grad()
+            optimizer_d.zero_grad()
 
+            # Gradient accumulation setup
+            accumulation_steps = config.training.gradient_accumulation_steps
+            effective_batch_size = batch_size * accumulation_steps
+
+            for ref_idx in range(0, num_frames, config.training.every_xref_frames):
                 x_reference = source_frames[:, ref_idx]
 
                 for current_idx in range(num_frames):
                     if current_idx == ref_idx:
-                        continue  # Skip when current frame is the reference frame
+                        continue
                     
                     x_current = source_frames[:, current_idx]
 
-                    # A. Forward Pass
-                    # 1. Dense Feature Encoding
-                    f_r = model.dense_feature_encoder(x_reference)
+                    x_reconstructed, diagnostics = model(x_current, x_reference)
 
-                    # 2. Latent Token Encoding (with noise addition)
-                    t_r = model.latent_token_encoder(x_reference)
-                    t_c = model.latent_token_encoder(x_current)
-
-                    # Add noise to latent tokens
-                    noise_r = torch.randn_like(t_r) * noise_magnitude
-                    noise_c = torch.randn_like(t_c) * noise_magnitude
-                    t_r = t_r + noise_r
-                    t_c = t_c + noise_c
-
-                    # Style mixing (optional, based on probability)
-                    if torch.rand(()).item() < style_mixing_prob:
-                        rand_t_c = t_c[torch.randperm(t_c.size(0))]
-                        rand_t_r = t_r[torch.randperm(t_r.size(0))]
-                        mix_t_c = [rand_t_c if torch.rand(()).item() < 0.5 else t_c for _ in range(len(model.implicit_motion_alignment))]
-                        mix_t_r = [rand_t_r if torch.rand(()).item() < 0.5 else t_r for _ in range(len(model.implicit_motion_alignment))]
-                    else:
-                        mix_t_c = [t_c] * len(model.implicit_motion_alignment)
-                        mix_t_r = [t_r] * len(model.implicit_motion_alignment)
-
-                    # 3. Latent Token Decoding
-                    m_c, m_r = model.process_tokens(mix_t_c, mix_t_r)
-
-                    # 4. Implicit Motion Alignment
-                    # Implicit Motion Alignment
-                    aligned_features = []
-                    for i in range(len(model.implicit_motion_alignment)):
-                        f_r_i = f_r[i]
-                        align_layer = model.implicit_motion_alignment[i]
-                        m_c_i = m_c[i][i]
-                        m_r_i = m_r[i][i]
-                        aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                        aligned_features.append(aligned_feature)
-
-
-                    # 5. Frame Decoding
-                    x_reconstructed = model.frame_decoder(aligned_features)
-
-                    # B. Loss Calculation
-                    # 1. Pixel-wise Loss
                     l_p = pixel_loss_fn(x_reconstructed, x_current)
 
-                    # 2. Perceptual Loss
-                    l_v = perceptual_loss_fn(x_reconstructed, x_current)
+                    pyramide_real = pyramid(x_current)
+                    pyramide_generated = pyramid(x_reconstructed)
+                    l_v = 0
+                    for scale in config.training.scales:
+                        x_vgg = vgg(pyramide_generated[f'prediction_{scale}'])
+                        y_vgg = vgg(pyramide_real[f'prediction_{scale}'])
+                        for i, weight in enumerate(config.loss.weights['perceptual']):
+                            l_v += weight * torch.abs(x_vgg[i] - y_vgg[i].detach()).mean()
 
-                    # 3. GAN Loss
                     # Train Discriminator
-                    optimizer_d.zero_grad()
-                    
-                    # R1 regularization
                     x_current.requires_grad = True
                     real_outputs = discriminator(x_current)
-                    r1_reg = 0
-                    for real_output in real_outputs:
-                        grad_real = torch.autograd.grad(
-                            outputs=real_output.sum(), inputs=x_current, create_graph=True
-                        )[0]
-                        r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
-                    
                     fake_outputs = discriminator(x_reconstructed.detach())
-                    d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
+                    d_loss = multiscale_discriminator_loss(real_outputs, fake_outputs, loss_type='lsgan')
 
-                    # Add R1 regularization to the discriminator loss
-                    d_loss = d_loss + r1_gamma * r1_reg
+                    # Conditional application of R1 regularization
+                    if config.training.use_r1_reg and batch_idx % config.training.r1_interval == 0:
+                        r1_reg = 0
+                        for real_output in real_outputs:
+                            grad_real = torch.autograd.grad(
+                                outputs=real_output.sum(), inputs=x_current, create_graph=True
+                            )[0]
+                            r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+                        d_loss = d_loss + config.training.r1_gamma * r1_reg
 
-
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
-                    
+                    d_loss = d_loss / accumulation_steps
                     accelerator.backward(d_loss)
-                    optimizer_d.step()
 
                     # Train Generator
-                    optimizer_g.zero_grad()
                     fake_outputs = discriminator(x_reconstructed)
                     g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
 
-
-                    # 4. Total Loss
                     g_loss = (config.training.lambda_pixel * l_p +
-                            config.training.lambda_perceptual * l_v +
-                            config.training.lambda_adv * g_loss_gan)
+                              config.training.lambda_perceptual * l_v +
+                              config.training.lambda_adv * g_loss_gan)
 
-                    # C. Optimization
+                    g_loss = g_loss / accumulation_steps
                     accelerator.backward(g_loss)
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optimizer_g.step()
 
+                    total_g_loss += g_loss.item() * accumulation_steps
+                    total_d_loss += d_loss.item() * accumulation_steps
 
-                    total_g_loss += g_loss.item()
-                    total_d_loss += d_loss.item()
+                    if (batch_idx + 1) % accumulation_steps == 0 or batch_idx == len(train_dataloader) - 1:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+                        optimizer_g.step()
+                        optimizer_d.step()
+                        optimizer_g.zero_grad()
+                        optimizer_d.zero_grad()
+
+                        # Update EMA model
+                        ema.update_model_average(ema_model, model)
+
                     progress_bar.update(1)
                     progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+
                 # Sample and save reconstructions
-                sample_path = f"recon_epoch_{epoch+1}_batch_{ref_idx}.png"
-                sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
-                            num_samples=config.logging.sample_size)
+                if batch_idx % config.training.save_steps == 0:
+                    sample_path = f"recon_epoch_{epoch+1}_batch_{batch_idx}.png"
+                    sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                                num_samples=config.logging.sample_size)
 
-            # Calculate average losses for the epoch
-            avg_g_loss = total_g_loss / len(train_dataloader)
-            avg_d_loss = total_d_loss / len(train_dataloader)
-            # Step the schedulers
-            scheduler_g.step(avg_g_loss)
-            scheduler_d.step(avg_d_loss)
-            # Logging
-            if accelerator.is_main_process:
-                wandb.log({
-                    "batch_g_loss": g_loss.item(),
-                    "batch_d_loss": d_loss.item(),
-                    "pixel_loss": l_p.item(),
-                    "perceptual_loss": l_v.item(),
-                    "gan_loss": g_loss_gan.item(),
-                    "batch": batch_idx + epoch * len(train_dataloader),
-                    "lr_g": optimizer_g.param_groups[0]['lr'],
-                    "lr_d": optimizer_d.param_groups[0]['lr']
-                })
-
-  
+         # Calculate average losses for the epoch
+        avg_g_loss = total_g_loss / len(train_dataloader)
+        avg_d_loss = total_d_loss / len(train_dataloader)
+        
+        # Step the schedulers
+        scheduler_g.step(avg_g_loss)
+        scheduler_d.step(avg_d_loss)
+        
+        # Logging
+        if accelerator.is_main_process:
+            wandb.log({
+                "epoch": epoch,
+                "avg_g_loss": avg_g_loss,
+                "avg_d_loss": avg_d_loss,
+                "lr_g": optimizer_g.param_groups[0]['lr'],
+                "lr_d": optimizer_d.param_groups[0]['lr']
+            })
 
         progress_bar.close()
 
@@ -209,6 +224,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             accelerator.save({
                 'epoch': epoch,
                 'model_state_dict': unwrapped_model.state_dict(),
+                'ema_model_state_dict': ema_model.state_dict(),
                 'discriminator_state_dict': unwrapped_discriminator.state_dict(),
                 'optimizer_g_state_dict': optimizer_g.state_dict(),
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
@@ -218,7 +234,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(model)
     accelerator.save(unwrapped_model.state_dict(), f"{config.checkpoints.dir}/final_model.pth")
-      
+    
 def main():
     config = load_config('config.yaml')
     torch.cuda.empty_cache()
@@ -242,17 +258,18 @@ def main():
     transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
     ])
 
-    # dataset = VideoDataset(
-    #     root_dir=config.dataset.root_dir,
-    #     transform=transform
-    # )
+    dataset = VideoDataset(
+        root_dir=config.dataset.root_dir,
+        transform=transform,
+        frame_skip=config.dataset.frame_skip
+    )
 
     dataset = EMODataset(
         use_gpu=True,
-        remove_background=False,
+        remove_background=True,
         width=256,
         height=256,
         sample_rate=24,
@@ -263,14 +280,11 @@ def main():
         apply_crop_warping=False
     )
 
-
-
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
-        num_workers=1,
-        # persistent_workers=True,
-        # pin_memory=True,
+        num_workers=4,
+        shuffle=True,
         collate_fn=gpu_padded_collate 
     )
 
