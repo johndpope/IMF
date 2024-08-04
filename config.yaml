@@ -6,6 +6,7 @@ model:
 
 # Training parameters
 training:
+  use_r1_reg: True
   batch_size: 4
   num_epochs: 100
   save_steps: 25

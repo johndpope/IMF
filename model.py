@@ -583,22 +583,9 @@ class IMFModel(nn.Module):
         self.dense_feature_encoder = DenseFeatureEncoder()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
-        
 
-
-
-#  Motion dimensions (m_c and m_r):
-# The Latent Token Decoder (IMFD) in part (c) of Figure 1 shows that the motion features have dimensions:
-# [256, 512, 512, 512]
-# This can be inferred from the StyledConv layers, which start with 512 channels and maintain that dimension through most of the network.
-        self.motion_dims = [256, 512, 512, 512] # queries / keys
-      
-
-# Feature dimensions (f_r):
-# The Dense Feature Encoder (EF) outputs features with dimensions:
-# [128, 256, 512, 512]
-# This can be seen from the ResBlock layers in part (b) of Figure 1, which show the channel dimensions increasing from 64 to 512.
-        self.feature_dims =  [128, 256, 512, 512] # values
+        self.motion_dims = [256, 512, 512, 512]  # queries / keys
+        self.feature_dims = [128, 256, 512, 512]  # values
 
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
@@ -607,7 +594,6 @@ class IMFModel(nn.Module):
             self.implicit_motion_alignment.append(ImplicitMotionAlignment(
                 feature_dim=feature_dim,
                 motion_dim=motion_dim,
-             
                 heads=8,
                 dim_head=64,
                 mlp_dim=1024
@@ -617,11 +603,15 @@ class IMFModel(nn.Module):
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
 
+        # StyleGAN2-like additions
+        self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
+        self.noise_injection = NoiseInjection()
+
     def add_noise(self, tensor):
         return tensor + torch.randn_like(tensor) * self.noise_level
 
     def style_mixing(self, t_c, t_r):
-        device = t_c.device  # Get the device of the input tensor
+        device = t_c.device
         if random.random() < self.style_mix_prob:
             batch_size = t_c.size(0)
             perm = torch.randperm(batch_size, device=device)
@@ -635,46 +625,41 @@ class IMFModel(nn.Module):
     def forward(self, x_current, x_reference):
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
-        
-        # print(f"Input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
-        
+
         # Dense feature encoding
         f_r = self.dense_feature_encoder(x_reference)
-        # print(f"Dense feature encoding output shapes: {[f.shape for f in f_r]}")
-        
+
         # Latent token encoding
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
-        # print(f"Latent token encoding output shapes: t_r: {t_r.shape}, t_c: {t_c.shape}")
-        
+
+        # StyleGAN2-like mapping network
+        t_r = self.mapping_network(t_r)
+        t_c = self.mapping_network(t_c)
+
         # Add noise to latent tokens
         t_r = self.add_noise(t_r)
         t_c = self.add_noise(t_c)
-        # print(f"After adding noise: t_r: {t_r.shape}, t_c: {t_c.shape}")
-        
+
         # Apply style mixing
         t_c, t_r = self.style_mixing(t_c, t_r)
-        # print(f"After style mixing: t_r: {t_r.shape}, t_c: {t_c.shape}")
-        
+
         # Latent token decoding
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
-        # print(f"Latent token decoding output shapes: m_r: {[m.shape for m in m_r]}, m_c: {[m.shape for m in m_c]}")
-        
-        # Implicit motion alignment
+
+        # Implicit motion alignment with noise injection
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
-            m_r_i = m_r[i]
-            m_c_i = m_c[i]
+            m_r_i = self.noise_injection(m_r[i])
+            m_c_i = self.noise_injection(m_c[i])
             align_layer = self.implicit_motion_alignment[i]
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
-            # print(f"Implicit motion alignment output shape for layer {i}: {aligned_feature.shape}")
 
         # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)
-        # print(f"Reconstructed frame shape: {reconstructed_frame.shape}")
 
         return reconstructed_frame, {
             'dense_features': f_r,
@@ -689,7 +674,29 @@ class IMFModel(nn.Module):
     def set_style_mix_prob(self, style_mix_prob):
         self.style_mix_prob = style_mix_prob
 
+class MappingNetwork(nn.Module):
+    def __init__(self, latent_dim, w_dim, depth):
+        super().__init__()
+        layers = []
+        for i in range(depth):
+            layers.extend([
+                nn.Linear(latent_dim if i == 0 else w_dim, w_dim),
+                nn.LeakyReLU(0.2)
+            ])
+        self.net = nn.Sequential(*layers)
 
+    def forward(self, z):
+        return self.net(z)
+
+class NoiseInjection(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, noise=None):
+        if noise is None:
+            batch, _, height, width = x.shape
+            noise = torch.randn(batch, 1, height, width).to(x.device)
+        return x + noise
 
 
 
@@ -780,3 +787,7 @@ def init_weights(m):
     elif classname.find('BatchNorm') != -1:
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
+
+
+
+        
