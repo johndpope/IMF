@@ -693,6 +693,16 @@ class IMFModel(nn.Module):
     def set_style_mix_prob(self, style_mix_prob):
         self.style_mix_prob = style_mix_prob
 
+    def process_tokens(self, t_c, t_r):
+        if isinstance(t_c, list) and isinstance(t_r, list):
+            m_c = [self.latent_token_decoder(tc) for tc in t_c]
+            m_r = [self.latent_token_decoder(tr) for tr in t_r]
+        else:
+            m_c = self.latent_token_decoder(t_c)
+            m_r = self.latent_token_decoder(t_r)
+        
+        return m_c, m_r
+
 class MappingNetwork(nn.Module):
     def __init__(self, latent_dim, w_dim, depth):
         super().__init__()
