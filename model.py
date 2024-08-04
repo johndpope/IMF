@@ -17,6 +17,8 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 import numpy as np
 from vit import ImplicitMotionAlignment
+import random
+
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -470,19 +472,15 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
+    def __init__(self, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         self.dense_feature_encoder = ResNetFeatureExtractor()
         self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
         
-        # Adjusted to match DenseFeatureEncoder output
         self.feature_dims = [128, 256, 512, 512]
-        
-        # Adjusted to match LatentTokenDecoder output
         self.motion_dims = [256, 512, 512, 512]
         
-        # Initialize a list of ImplicitMotionAlignment modules
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
@@ -497,65 +495,83 @@ class IMFModel(nn.Module):
             ))
         
         self.frame_decoder = FrameDecoder()
+        self.noise_level = noise_level
+        self.style_mix_prob = style_mix_prob
+
+    def add_noise(self, tensor):
+        return tensor + torch.randn_like(tensor) * self.noise_level
+
+    def style_mixing(self, t_c, t_r):
+        device = t_c.device  # Get the device of the input tensor
+        if random.random() < self.style_mix_prob:
+            batch_size = t_c.size(0)
+            perm = torch.randperm(batch_size, device=device)
+            t_c_mixed = t_c[perm]
+            t_r_mixed = t_r[perm]
+            mix_mask = (torch.rand(batch_size, 1, device=device) < 0.5).to(device)
+            t_c = torch.where(mix_mask, t_c, t_c_mixed)
+            t_r = torch.where(mix_mask, t_r, t_r_mixed)
+        return t_c, t_r
 
     def forward(self, x_current, x_reference):
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
         
+        # print(f"Input shapes: x_current: {x_current.shape}, x_reference: {x_reference.shape}")
+        
         # Dense feature encoding
         f_r = self.dense_feature_encoder(x_reference)
+        # print(f"Dense feature encoding output shapes: {[f.shape for f in f_r]}")
         
         # Latent token encoding
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
+        # print(f"Latent token encoding output shapes: t_r: {t_r.shape}, t_c: {t_c.shape}")
+        
+        # Add noise to latent tokens
+        t_r = self.add_noise(t_r)
+        t_c = self.add_noise(t_c)
+        # print(f"After adding noise: t_r: {t_r.shape}, t_c: {t_c.shape}")
+        
+        # Apply style mixing
+        t_c, t_r = self.style_mixing(t_c, t_r)
+        # print(f"After style mixing: t_r: {t_r.shape}, t_c: {t_c.shape}")
         
         # Latent token decoding
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
+        # print(f"Latent token decoding output shapes: m_r: {[m.shape for m in m_r]}, m_c: {[m.shape for m in m_c]}")
         
         # Implicit motion alignment
         aligned_features = []
-        num_layers = len(self.implicit_motion_alignment)
-
-        debug_print(f"🎣 IMF - Number of layers: {num_layers}")
-        debug_print(f"f_r shapes: {[f.shape for f in f_r]}")
-        debug_print(f"m_r shapes: {[m.shape for m in m_r]}")
-        debug_print(f"m_c shapes: {[m.shape for m in m_c]}")
-
-        for i in range(num_layers):
+        for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
             m_r_i = m_r[i]
             m_c_i = m_c[i]
             align_layer = self.implicit_motion_alignment[i]
-            
-            debug_print(f"\nProcessing layer {i+1}:")
-            debug_print(f"  f_r_i shape: {f_r_i.shape}")
-            debug_print(f"  m_r_i shape: {m_r_i.shape}")
-            debug_print(f"  m_c_i shape: {m_c_i.shape}")
-            
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
-            
-            debug_print(f"  Aligned feature shape: {aligned_feature.shape}")
-
-        debug_print("\nFinal aligned features shapes:")
-        for i, feat in enumerate(aligned_features):
-            debug_print(f"  Layer {i+1}: {feat.shape}")
+            # print(f"Implicit motion alignment output shape for layer {i}: {aligned_feature.shape}")
 
         # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)
+        # print(f"Reconstructed frame shape: {reconstructed_frame.shape}")
 
-        return reconstructed_frame
+        return reconstructed_frame, {
+            'dense_features': f_r,
+            'latent_tokens': (t_c, t_r),
+            'motion_features': (m_c, m_r),
+            'aligned_features': aligned_features
+        }
 
-    def process_tokens(self, t_c, t_r):
-        if isinstance(t_c, list) and isinstance(t_r, list):
-            m_c = [self.latent_token_decoder(tc) for tc in t_c]
-            m_r = [self.latent_token_decoder(tr) for tr in t_r]
-        else:
-            m_c = self.latent_token_decoder(t_c)
-            m_r = self.latent_token_decoder(t_r)
-        
-        return m_c, m_r
+    def set_noise_level(self, noise_level):
+        self.noise_level = noise_level
+
+    def set_style_mix_prob(self, style_mix_prob):
+        self.style_mix_prob = style_mix_prob
+
+
+
 
 
 
