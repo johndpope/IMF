@@ -6,8 +6,8 @@ model:
 
 # Training parameters
 training:
-  every_xref_frames: 16
-  batch_size: 2
+  use_r1_reg: False
+  batch_size: 4
   num_epochs: 100
   save_steps: 25
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
@@ -16,7 +16,7 @@ training:
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
   ema_decay: 0.999
   style_mixing_prob: 0.9
-  noise_magnitude: 0.01
+  noise_magnitude: 0.1
   gradient_accumulation_steps: 4
   lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10
@@ -30,21 +30,22 @@ training:
   label_smoothing: 0.1
 
   # dynamic discriminator learning to overcome mode collapse
-  initial_learning_rate_d: 1.0e-5
+  initial_learning_rate_d: 1.0e-4
   min_learning_rate_d: 1.0e-6
   max_learning_rate_d: 1.0e-3
   d_lr_adjust_frequency: 100  # Adjust D learning rate every 100 steps
   d_lr_adjust_factor: 2.0  # Factor to increase/decrease D learning rate
   target_d_loss_ratio: 0.6  # Target ratio of D loss to G loss
-
+  every_xref_frames: 16
+  
+  scales: [1, 0.5, 0.25, 0.125]
 
 # Dataset parameters
 dataset:
   # celeb-hq torrent https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666" # for overfitting M2Ohb0FAaJU_1.mp4 use https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
-  json_file: './data/celebvhq_info.json' 
+  json_file: './data/overfit.json' 
   # json_file: './data/celebvhq_info.json' # 35k
-  max_frames: 50
 
 # Checkpointing
 checkpoints:
@@ -75,3 +76,7 @@ optimizer:
 # Loss function
 loss:
   type: "wasserstein"  # Changed to Wasserstein loss for WGAN-GP
+  weights:
+      perceptual: [10, 10, 10, 10, 10]
+      equivariance_shift: 10
+      equivariance_affine: 10

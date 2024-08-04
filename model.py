@@ -17,6 +17,8 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 import numpy as np
 from vit import ImplicitMotionAlignment
+import random
+from stylegan import EqualConv2d,EqualLinear
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -154,6 +156,55 @@ DownConvResBlock-512
 It outputs multiple feature maps (f¹ᵣ, f²ᵣ, f³ᵣ, f⁴ᵣ) as shown in the image. These are collected in the features list and returned.
 
 Each DownConvResBlock performs downsampling using a strided convolution, maintains a residual connection, and applies BatchNorm and ReLU activations, which is consistent with typical ResNet architectures.'''
+
+
+class FeatResBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += residual
+        out = self.relu(out)
+        return out
+
+class DownConvResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block1 = FeatResBlock(out_channels)
+        self.feat_res_block2 = FeatResBlock(out_channels)
+
+    def forward(self, x):
+        debug_print(f"DownConvResBlock input shape: {x.shape}")
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        debug_print(f"After conv1, bn1, relu: {out.shape}")
+        out = self.avgpool(out)
+        debug_print(f"After avgpool: {out.shape}")
+        out = self.conv2(out)
+        debug_print(f"After conv2: {out.shape}")
+        out = self.feat_res_block1(out)
+        debug_print(f"After feat_res_block1: {out.shape}")
+        out = self.feat_res_block2(out)
+        debug_print(f"DownConvResBlock output shape: {out.shape}")
+        return out
+
 class DenseFeatureEncoder(nn.Module):
     def __init__(self, in_channels=3):
         super().__init__()
@@ -192,132 +243,62 @@ The shortcut connection now uses a 3x3 convolution with stride 2 when downsampli
 ReLU activations are applied both after adding the residual and at the end of the block.
 The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
 '''
-class TEResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu2 = nn.ReLU(inplace=True)
-        
-        if downsample or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.shortcut = nn.Identity()
 
-        self.downsample = downsample
-        self.in_channels = in_channels
-        self.out_channels = out_channels
 
-    def forward(self, x):
-        debug_print(f"ResBlock input shape: {x.shape}")
-        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
 
-        residual = self.shortcut(x)
-        debug_print(f"After shortcut: {residual.shape}")
-        
-        out = self.conv1(x)
-        debug_print(f"After conv1: {out.shape}")
-        out = self.bn1(out)
-        out = self.relu1(out)
-        debug_print(f"After bn1 and relu1: {out.shape}")
-        
-        out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
-        out = self.bn2(out)
-        debug_print(f"After bn2: {out.shape}")
-        
-        out += residual
-        debug_print(f"After adding residual: {out.shape}")
-        
-        out = self.relu2(out)
-        debug_print(f"ResBlock output shape: {out.shape}")
-        
-        return out
-        
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, in_channels=3, latent_dim=32):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        
-        self.resblock1 = TEResBlock(64, 64, downsample=False)
-        self.resblock2 = TEResBlock(64, 128, downsample=True)
-        self.resblock3 = TEResBlock(128, 256, downsample=True)
-        
-        self.resblock4 = nn.Sequential(
-            TEResBlock(256, 512, downsample=True),
-            TEResBlock(512, 512, downsample=False),
-            TEResBlock(512, 512, downsample=False)
-        )
-        
-        self.equal_conv = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))
-        
-        self.fc_layers = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, latent_dim)
-        )
+    def __init__(self, dm=32):
+        super(LatentTokenEncoder, self).__init__()
+        self.conv1 = EqualConv2d(3, 64, kernel_size=7, stride=1, padding=3)
+        self.activation = nn.LeakyReLU(0.2)
 
-    def forward(self, x):
-        debug_print(f"💳 LatentTokenEncoder input shape: {x.shape}")
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        debug_print(f"    After first conv, bn, relu: {x.shape}")
-        x = self.resblock1(x)
-        debug_print(f"    After resblock1: {x.shape}")
-        x = self.resblock2(x)
-        debug_print(f"    After resblock2: {x.shape}")
-        x = self.resblock3(x)
-        debug_print(f"    After resblock3: {x.shape}")
-        x = self.resblock4(x)
-        debug_print(f"    After resblock4: {x.shape}")
-        x = self.equal_conv(x)
-        debug_print(f"    After equal_conv: {x.shape}")
-        x = self.adaptive_pool(x)
-        debug_print(f"    After adaptive_pool: {x.shape}")
-        x = x.view(x.size(0), -1)
-        debug_print(f"    After flatten: {x.shape}")
-        t = self.fc_layers(x)
-        debug_print(f"    1xdm=32 LatentTokenEncoder output shape: {t.shape}")
-        return t
+        self.res1 = ResBlock(64, 64, downsample=True)  # ResBlock-64, ↓2
+        self.res2 = ResBlock(64, 128, downsample=True)  # ResBlock-128, ↓2
+        self.res3 = ResBlock(128, 256, downsample=True)  # ResBlock-256, ↓2
+        
+        # 3× ResBlock-512, ↓2
+        self.res4 = ResBlock(256, 512, downsample=True)
+        self.res5 = ResBlock(512, 512, downsample=True)
+        self.res6 = ResBlock(512, 512, downsample=True)
+        
+        self.equalconv = EqualConv2d(512, 512, kernel_size=3, stride=1, padding=1)
+
+        
+        # 4× EqualLinear-512
+        self.linear1 = EqualLinear(512, 512)
+        self.linear2 = EqualLinear(512, 512)
+        self.linear3 = EqualLinear(512, 512)
+        self.linear4 = EqualLinear(512, 512)
+        
+        self.final_linear = EqualLinear(512, dm) # EqualLinear-dm
 
     
-class StyleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, upsample=False, style_dim=32):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, padding=kernel_size//2)
-        self.style_mod = nn.Linear(style_dim, in_channels)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False) if upsample else nn.Identity()
-        self.activation = nn.LeakyReLU(0.2, inplace=True)
-
-    def forward(self, x, style):
-        debug_print(f"StyleConv input shape: x: {x.shape}, style: {style.shape}")
-        style = self.style_mod(style).unsqueeze(2).unsqueeze(3)
-        debug_print(f"After style modulation: {style.shape}")
-        x = x * style
-        debug_print(f"After multiplication: {x.shape}")
-        x = self.conv(x)
-        debug_print(f"After conv: {x.shape}")
-        x = self.upsample(x)
-        debug_print(f"After upsample: {x.shape}")
-        x = self.activation(x)
-        debug_print(f"StyleConv output shape: {x.shape}")
+    def forward(self, x):
+        x = self.activation(self.conv1(x))
+        
+        x = self.res1(x)
+        x = self.res2(x)
+        x = self.res3(x)
+        x = self.res4(x)
+        x = self.res5(x)
+        x = self.res6(x)
+        
+        x = self.equalconv(x)
+        
+        # Global average pooling instead of flattening
+        x = x.mean([2, 3])
+        
+        x = self.activation(self.linear1(x))
+        x = self.activation(self.linear2(x))
+        x = self.activation(self.linear3(x))
+        x = self.activation(self.linear4(x))
+        
+        x = self.final_linear(x)
+        
         return x
+
+
+
 
 
 '''
@@ -347,44 +328,83 @@ Advantages Over Keypoint-Based Methods:
 Unlike keypoint-based methods that use Gaussian heatmaps converted from keypoints, our design scales better and has more capabilities.
 Our latent tokens are directly learned by the encoder, rather than being restricted to coordinates with a limited value range.
 '''
+
+class ModulatedConv2d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, demodulate=True):
+        super().__init__()
+        self.weight = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size))
+        self.stride = stride
+        self.padding = padding
+        self.demodulate = demodulate
+
+    def forward(self, x, style):
+        batch, in_channel, height, width = x.shape
+        style = style.view(batch, 1, in_channel, 1, 1)
+        
+        # Weight modulation
+        weight = self.weight.unsqueeze(0) * style
+        
+        if self.demodulate:
+            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
+            weight = weight * demod.view(batch, self.weight.size(0), 1, 1, 1)
+
+        weight = weight.view(
+            batch * self.weight.size(0), in_channel, self.weight.size(2), self.weight.size(3)
+        )
+
+        x = x.view(1, batch * in_channel, height, width)
+        out = F.conv2d(x, weight, padding=self.padding, groups=batch)
+        _, _, height, width = out.shape
+        out = out.view(batch, self.weight.size(0), height, width)
+
+        return out
+
+class StyledConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, style_dim, upsample=False, demodulate=True):
+        super().__init__()
+        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, demodulate=demodulate)
+        self.style = nn.Linear(style_dim, in_channels)
+        self.upsample = upsample
+        self.activation = nn.LeakyReLU(0.2)
+
+    def forward(self, x, latent):
+        if self.upsample:
+            x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+        
+        style = self.style(latent)
+        x = self.conv(x, style)
+        x = self.activation(x)
+        return x
+
 class LatentTokenDecoder(nn.Module):
-    def __init__(self, latent_dim=32, const_dim=64):
+    def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
         self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
         
         self.style_conv_layers = nn.ModuleList([
-            StyleConv(const_dim, 512, style_dim=latent_dim),
-            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, upsample=True, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 512, style_dim=latent_dim),
-            StyleConv(512, 256, upsample=True, style_dim=latent_dim),
-            StyleConv(256, 256, style_dim=latent_dim),
-            StyleConv(256, 256, style_dim=latent_dim)
+            StyledConv(const_dim, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 256, 3, latent_dim, upsample=True),
+            StyledConv(256, 256, 3, latent_dim),
+            StyledConv(256, 256, 3, latent_dim)
         ])
 
     def forward(self, t):
-        debug_print(f"🎑 LatentTokenDecoder input shape: {t.shape}")
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        debug_print(f"    After const: {x.shape}")
         features = []
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
-            debug_print(f"    After style_conv {i+1}: {x.shape}")
             if i in [3, 6, 9, 12]:
                 features.append(x)
-        debug_print(f"    LatentTokenDecoder output shapes: {[f.shape for f in features[::-1]]}")
         return features[::-1]  # Return features in order [m4, m3, m2, m1]
-
-
-
-
-
 
 class FeatResBlock(nn.Module):
     def __init__(self, channels):
@@ -576,20 +596,16 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4, condition_dim=None):
+    def __init__(self, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
-        # self.dense_feature_encoder = DenseFeatureEncoder()
-        self.dense_feature_encoder = ResNetFeatureExtractor()
-        self.latent_token_encoder = LatentTokenEncoder(latent_dim=latent_dim)
-        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim, const_dim=base_channels)
-        
-        # Adjusted to match DenseFeatureEncoder output
-        self.feature_dims = [128, 256, 512, 512]
-        
-        # Adjusted to match LatentTokenDecoder output
-        self.motion_dims = [256, 512, 512, 512]
-        
-        # Initialize a list of ImplicitMotionAlignment modules
+        self.dense_feature_encoder = DenseFeatureEncoder()
+
+        self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
+        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
+
+        self.motion_dims = [256, 512, 512, 512]  # queries / keys
+        self.feature_dims = [128, 256, 512, 512]  # values
+
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
@@ -597,42 +613,66 @@ class IMFModel(nn.Module):
             self.implicit_motion_alignment.append(ImplicitMotionAlignment(
                 feature_dim=feature_dim,
                 motion_dim=motion_dim,
-                depth=2,
                 heads=8,
                 dim_head=64,
                 mlp_dim=1024
             ))
         
         self.frame_decoder = FrameDecoder()
-        
-        # Add token manipulation network if condition_dim is provided
-        if condition_dim is not None:
-            self.token_manipulation = TokenManipulationNetwork(latent_dim, condition_dim)
-        else:
-            self.token_manipulation = None
+        self.noise_level = noise_level
+        self.style_mix_prob = style_mix_prob
 
-    def forward(self, x_current, x_reference, condition=None):
+        # StyleGAN2-like additions
+        self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
+        self.noise_injection = NoiseInjection()
+
+    def add_noise(self, tensor):
+        return tensor + torch.randn_like(tensor) * self.noise_level
+
+    def style_mixing(self, t_c, t_r):
+        device = t_c.device
+        if random.random() < self.style_mix_prob:
+            batch_size = t_c.size(0)
+            perm = torch.randperm(batch_size, device=device)
+            t_c_mixed = t_c[perm]
+            t_r_mixed = t_r[perm]
+            mix_mask = (torch.rand(batch_size, 1, device=device) < 0.5).to(device)
+            t_c = torch.where(mix_mask, t_c, t_c_mixed)
+            t_r = torch.where(mix_mask, t_r, t_r_mixed)
+        return t_c, t_r
+
+    def forward(self, x_current, x_reference):
+        x_current = x_current.requires_grad_()
+        x_reference = x_reference.requires_grad_()
+
         # Dense feature encoding
         f_r = self.dense_feature_encoder(x_reference)
-        
+
         # Latent token encoding
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
-        
-        # Token manipulation if condition is provided
-        if condition is not None and self.token_manipulation is not None:
-            t_c = self.token_manipulation(t_c, condition)
-        
+
+        # StyleGAN2-like mapping network
+        t_r = self.mapping_network(t_r)
+        t_c = self.mapping_network(t_c)
+
+        # Add noise to latent tokens
+        t_r = self.add_noise(t_r)
+        t_c = self.add_noise(t_c)
+
+        # Apply style mixing
+        t_c, t_r = self.style_mixing(t_c, t_r)
+
         # Latent token decoding
         m_r = self.latent_token_decoder(t_r)
         m_c = self.latent_token_decoder(t_c)
-        
-        # Implicit motion alignment
+
+        # Implicit motion alignment with noise injection
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
-            m_r_i = m_r[i]
-            m_c_i = m_c[i]
+            m_r_i = self.noise_injection(m_r[i])
+            m_c_i = self.noise_injection(m_c[i])
             align_layer = self.implicit_motion_alignment[i]
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
@@ -640,7 +680,18 @@ class IMFModel(nn.Module):
         # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)
 
-        return reconstructed_frame
+        return reconstructed_frame, {
+            'dense_features': f_r,
+            'latent_tokens': (t_c, t_r),
+            'motion_features': (m_c, m_r),
+            'aligned_features': aligned_features
+        }
+
+    def set_noise_level(self, noise_level):
+        self.noise_level = noise_level
+
+    def set_style_mix_prob(self, style_mix_prob):
+        self.style_mix_prob = style_mix_prob
 
     def process_tokens(self, t_c, t_r):
         if isinstance(t_c, list) and isinstance(t_r, list):
@@ -651,6 +702,30 @@ class IMFModel(nn.Module):
             m_r = self.latent_token_decoder(t_r)
         
         return m_c, m_r
+
+class MappingNetwork(nn.Module):
+    def __init__(self, latent_dim, w_dim, depth):
+        super().__init__()
+        layers = []
+        for i in range(depth):
+            layers.extend([
+                nn.Linear(latent_dim if i == 0 else w_dim, w_dim),
+                nn.LeakyReLU(0.2)
+            ])
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, z):
+        return self.net(z)
+
+class NoiseInjection(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, noise=None):
+        if noise is None:
+            batch, _, height, width = x.shape
+            noise = torch.randn(batch, 1, height, width).to(x.device)
+        return x + noise
 
 
 
@@ -741,3 +816,7 @@ def init_weights(m):
     elif classname.find('BatchNorm') != -1:
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
+
+
+
+        
