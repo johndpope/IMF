@@ -11,6 +11,13 @@ import torch
 import matplotlib.pyplot as plt
 import os
 
+
+def normalize(tensor):
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(tensor.device)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(tensor.device)
+    return (tensor - mean) / std
+
+
 def sample_recon(model, data, accelerator, output_path, num_samples=1):
     model.eval()
     with torch.no_grad():
@@ -21,12 +28,10 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
         # Select a subset of images if batch_size > num_samples
         x_reconstructed = x_reconstructed[:num_samples]
         x_reference = x_reference[:num_samples]
-        
-        # Clamp x_reconstructed to ensure values are in [0, 1] range
-        x_reconstructed_clamped = torch.clamp(x_reconstructed, 0, 1)
+
         
         # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
-        frames = torch.cat((x_reconstructed_clamped, x_reference), dim=0)
+        frames = torch.cat((x_reconstructed, x_reference), dim=0)
         
         # Ensure we have a valid output directory
         if output_path:
@@ -45,7 +50,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
         wandb_images = []
         for i in range(num_samples):
             wandb_images.extend([
-                wandb.Image(x_reconstructed_clamped[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
+                wandb.Image(x_reconstructed[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
                 wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
             ])
         

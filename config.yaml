@@ -7,7 +7,7 @@ model:
 # Training parameters
 training:
   use_r1_reg: False
-  batch_size: 4
+  batch_size: 16
   num_epochs: 100
   save_steps: 25
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
