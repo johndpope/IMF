@@ -82,8 +82,7 @@ class ResNetFeatureExtractor(nn.Module):
             debug_print(f"  Feature {i+1} shape: {feat.shape}")
         
         return features
-        
-        return features
+      
 class UpConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -399,33 +398,19 @@ class LatentTokenDecoder(nn.Module):
 
     def forward(self, t):
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        features = []
+        m1, m2, m3, m4 = None, None, None, None
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
-            if i in [3, 6, 9, 12]:
-                features.append(x)
-        return features[::-1]  # Return features in order [m4, m3, m2, m1]
-
-class FeatResBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-        self.relu2 = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        residual = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu1(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out += residual
-        out = self.relu2(out)
-        return out
+            if i == 3:
+                m1 = x
+            elif i == 6:
+                m2 = x
+            elif i == 9:
+                m3 = x
+            elif i == 12:
+                m4 = x
+        return m4, m3, m2, m1 
+    
 
 '''
 FrameDecoder FeatResBlock

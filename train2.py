@@ -84,18 +84,6 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     t_c = model.latent_token_encoder(x_current)
 
 
-                    # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
-                    if batch_idx % config.logging.visualize_every == 0:
-                        os.makedirs(f"latent_visualizations/epoch_{epoch}", exist_ok=True)
-                        visualize_latent_token(
-                            t_r,  # Visualize the first token in the batch
-                            f"latent_visualizations/epoch_{epoch}/token_reference_batch{batch_idx}.png"
-                        )
-                        visualize_latent_token(
-                            t_c,  # Visualize the first token in the batch
-                            f"latent_visualizations/epoch_{epoch}/token_current_batch{batch_idx}.png"
-                        )
-
 
                     # Add noise to latent tokens
                     noise_r = torch.randn_like(t_r) * noise_magnitude
@@ -104,17 +92,54 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     t_c = t_c + noise_c
 
                     # Style mixing (optional, based on probability)
-                    if torch.rand(()).item() < style_mixing_prob:
-                        rand_t_c = t_c[torch.randperm(t_c.size(0))]
-                        rand_t_r = t_r[torch.randperm(t_r.size(0))]
-                        mix_t_c = [rand_t_c if torch.rand(()).item() < 0.5 else t_c for _ in range(len(model.implicit_motion_alignment))]
-                        mix_t_r = [rand_t_r if torch.rand(()).item() < 0.5 else t_r for _ in range(len(model.implicit_motion_alignment))]
-                    else:
-                        mix_t_c = [t_c] * len(model.implicit_motion_alignment)
-                        mix_t_r = [t_r] * len(model.implicit_motion_alignment)
+                    # Style mixing (optional, based on probability)
+                    print(f"Original t_c shape: {t_c.shape}")
+                    print(f"Original t_r shape: {t_r.shape}")
 
-                    # 3. Latent Token Decoding
-                    m_c, m_r = model.process_tokens(mix_t_c, mix_t_r)
+                    if torch.rand(()).item() < style_mixing_prob:
+                        batch_size = t_c.size(0)
+                        rand_indices = torch.randperm(batch_size)
+                        rand_t_c = t_c[rand_indices]
+                        rand_t_r = t_r[rand_indices]
+                        
+                        print(f"rand_t_c shape: {rand_t_c.shape}")
+                        print(f"rand_t_r shape: {rand_t_r.shape}")
+                        
+                        # Create a mask for mixing
+                        mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
+                        mix_mask = mix_mask.float()
+                        
+                        print(f"mix_mask shape: {mix_mask.shape}")
+                        
+                        # Mix the tokens
+                        mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
+                        mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
+                    else:
+                        mix_t_c = t_c
+                        mix_t_r = t_r
+
+                    print(f"Final mix_t_c shape: {mix_t_c.shape}")
+                    print(f"Final mix_t_r shape: {mix_t_r.shape}")
+
+                    # Now use mix_t_c and mix_t_r for the rest of the processing
+                    m_c = model.latent_token_decoder(mix_t_c)
+                    m_r = model.latent_token_decoder(mix_t_r)
+
+
+
+
+                    # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
+                    if batch_idx % config.logging.visualize_every == 0:
+                        os.makedirs(f"latent_visualizations/epoch_{epoch}", exist_ok=True)
+                        visualize_latent_token(
+                            t_r,  # Visualize the first token in the batch
+                            f"latent_visualizations/epoch_{epoch}/t_r_token_reference_batch{batch_idx}.png"
+                        )
+                        visualize_latent_token(
+                            m_c[0],  # Visualize the first token in the batch
+                            f"latent_visualizations/epoch_{epoch}/m_c_token_current_batch{batch_idx}.png"
+                        )
+
 
                     # 4. Implicit Motion Alignment
                     # Implicit Motion Alignment
@@ -122,8 +147,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     for i in range(len(model.implicit_motion_alignment)):
                         f_r_i = f_r[i]
                         align_layer = model.implicit_motion_alignment[i]
-                        m_c_i = m_c[i][i] # 🤷 this is wrong - but it doesn't train without it.
-                        m_r_i = m_r[i][i]
+                        m_c_i = m_c[i] 
+                        m_r_i = m_r[i]
                         aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
                         aligned_features.append(aligned_feature)
 
