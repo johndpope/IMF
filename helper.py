@@ -7,6 +7,15 @@ import wandb
 import os
 from torchvision.utils import save_image
 import torch.nn.functional as F
+import torch
+import matplotlib.pyplot as plt
+import os
+
+
+def normalize(tensor):
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(tensor.device)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(tensor.device)
+    return (tensor - mean) / std
 
 
 def sample_recon(model, data, accelerator, output_path, num_samples=1):
@@ -19,12 +28,10 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
         # Select a subset of images if batch_size > num_samples
         x_reconstructed = x_reconstructed[:num_samples]
         x_reference = x_reference[:num_samples]
-        
-        # Clamp x_reconstructed to ensure values are in [0, 1] range
-        x_reconstructed_clamped = torch.clamp(x_reconstructed, 0, 1)
+
         
         # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
-        frames = torch.cat((x_reconstructed_clamped, x_reference), dim=0)
+        frames = torch.cat((x_reconstructed, x_reference), dim=0)
         
         # Ensure we have a valid output directory
         if output_path:
@@ -43,7 +50,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
         wandb_images = []
         for i in range(num_samples):
             wandb_images.extend([
-                wandb.Image(x_reconstructed_clamped[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
+                wandb.Image(x_reconstructed[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
                 wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
             ])
         
@@ -118,3 +125,40 @@ def add_gradient_hooks(model):
     for name, param in model.named_parameters():
         if param.requires_grad:
             param.register_hook(hook_fn(name))
+
+
+
+def visualize_latent_token(token, save_path):
+    """
+    Visualize a 1D latent token as a colorful bar.
+    
+    Args:
+    token (torch.Tensor): A 1D tensor representing the latent token.
+    save_path (str): Path to save the visualization.
+    """
+    # Ensure the token is on CPU and convert to numpy
+    token_np = token.cpu().detach().numpy()
+    
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(10, 0.5))
+    
+    # Normalize the token values to [0, 1] for colormap
+    token_normalized = (token_np - token_np.min()) / (token_np.max() - token_np.min())
+    
+    # Create a colorful representation
+    cmap = plt.get_cmap('viridis')
+    colors = cmap(token_normalized)
+    
+    # Plot the token as a colorful bar
+    ax.imshow(colors.reshape(1, -1, 4), aspect='auto')
+    
+    # Remove axes
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Add a title
+    plt.title(f"Latent Token (dim={len(token_np)})")
+    
+    # Save the figure
+    plt.savefig(save_path, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
