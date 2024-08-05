@@ -27,11 +27,13 @@ def debug_print(*args, **kwargs):
 
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
 class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, pretrained=True, output_channels=[128, 256, 512, 512]):
+    def __init__(self, pretrained=True, output_channels=[128, 256, 512, 512],freeze=True):
         super().__init__()
         debug_print(f"Initializing ResNetFeatureExtractor with output_channels: {output_channels}")
         # Load a pre-trained ResNet model
         resnet = models.resnet50(pretrained=pretrained)
+        if freeze:
+            resnet.eval()
         
         # We'll use the first 4 layers of ResNet
         self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
@@ -583,8 +585,8 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder()
-
+        self.dense_feature_encoder = ResNetFeatureExtractor()
+    
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 

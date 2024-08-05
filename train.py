@@ -149,12 +149,21 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 # Implicit Motion Alignment
                 aligned_features = []
                 for i in range(len(model.implicit_motion_alignment)):
-                    f_r_i = f_r[i]
-                    align_layer = model.implicit_motion_alignment[i]
-                    m_c_i = m_c[i] 
-                    m_r_i = m_r[i]
-                    aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                    aligned_features.append(aligned_feature)
+                    try:
+                        f_r_i = f_r[i]
+                        align_layer = model.implicit_motion_alignment[i]
+                        m_c_i = m_c[i]
+                        m_r_i = m_r[i]
+                        aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                        aligned_features.append(aligned_feature)
+                    except RuntimeError as e:
+                        print(f"🔥 Error in ImplicitMotionAlignment layer {i} for video {video_id}:")
+                        print(f"  f_r_i shape: {f_r_i.shape}")
+                        print(f"  m_c_i shape: {m_c_i.shape}")
+                        print(f"  m_r_i shape: {m_r_i.shape}")
+                        print(f"  Error message: {str(e)}")
+                        # Skip this alignment and continue with the next one
+                        continue
 
 
                 # 5. Frame Decoding
