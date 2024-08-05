@@ -31,8 +31,11 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
 
         
         # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
-        frames = torch.cat((x_reconstructed, x_reference), dim=0)
-        
+        try:
+            frames = torch.cat((x_reconstructed, x_reference), dim=0)
+        except RuntimeError as e:
+            return []
+
         # Ensure we have a valid output directory
         if output_path:
             output_dir = os.path.dirname(output_path)
