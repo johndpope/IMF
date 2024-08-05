@@ -312,7 +312,7 @@ def main():
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
-        num_workers=2,
+        num_workers=1,
         # persistent_workers=True,
         # pin_memory=True,
         collate_fn=gpu_padded_collate 
