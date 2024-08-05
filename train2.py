@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,PatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import monitor_gradients, add_gradient_hooks, sample_recon
+from helper import visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -82,6 +82,20 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # 2. Latent Token Encoding (with noise addition)
                     t_r = model.latent_token_encoder(x_reference)
                     t_c = model.latent_token_encoder(x_current)
+
+
+                    # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
+                    if batch_idx % config.logging.visualize_every == 0:
+                        os.makedirs(f"latent_visualizations/epoch_{epoch}", exist_ok=True)
+                        visualize_latent_token(
+                            t_r,  # Visualize the first token in the batch
+                            f"latent_visualizations/epoch_{epoch}/token_reference_batch{batch_idx}.png"
+                        )
+                        visualize_latent_token(
+                            t_c,  # Visualize the first token in the batch
+                            f"latent_visualizations/epoch_{epoch}/token_current_batch{batch_idx}.png"
+                        )
+
 
                     # Add noise to latent tokens
                     noise_r = torch.randn_like(t_r) * noise_magnitude

@@ -7,7 +7,9 @@ import wandb
 import os
 from torchvision.utils import save_image
 import torch.nn.functional as F
-
+import torch
+import matplotlib.pyplot as plt
+import os
 
 def sample_recon(model, data, accelerator, output_path, num_samples=1):
     model.eval()
@@ -118,3 +120,40 @@ def add_gradient_hooks(model):
     for name, param in model.named_parameters():
         if param.requires_grad:
             param.register_hook(hook_fn(name))
+
+
+
+def visualize_latent_token(token, save_path):
+    """
+    Visualize a 1D latent token as a colorful bar.
+    
+    Args:
+    token (torch.Tensor): A 1D tensor representing the latent token.
+    save_path (str): Path to save the visualization.
+    """
+    # Ensure the token is on CPU and convert to numpy
+    token_np = token.cpu().detach().numpy()
+    
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(10, 0.5))
+    
+    # Normalize the token values to [0, 1] for colormap
+    token_normalized = (token_np - token_np.min()) / (token_np.max() - token_np.min())
+    
+    # Create a colorful representation
+    cmap = plt.get_cmap('viridis')
+    colors = cmap(token_normalized)
+    
+    # Plot the token as a colorful bar
+    ax.imshow(colors.reshape(1, -1, 4), aspect='auto')
+    
+    # Remove axes
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Add a title
+    plt.title(f"Latent Token (dim={len(token_np)})")
+    
+    # Save the figure
+    plt.savefig(save_path, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
