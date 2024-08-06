@@ -21,6 +21,15 @@ class PositionalEncoding(nn.Module):
         return self.pe[:x.size(0), :]
 
 
+class AdaptiveLayerNorm(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.a = nn.Parameter(torch.ones(1, 1, dim))
+        self.b = nn.Parameter(torch.zeros(1, 1, dim))
+
+    def forward(self, x):
+        return self.a * self.norm(x) + self.b
 
 class TransformerBlock(nn.Module):
     def __init__(self, dim, heads, dim_head, mlp_dim):
@@ -31,8 +40,8 @@ class TransformerBlock(nn.Module):
             nn.GELU(),
             nn.Linear(mlp_dim, dim)
         )
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
+        self.norm1 = AdaptiveLayerNorm(dim)
+        self.norm2 = AdaptiveLayerNorm(dim)
 
 
     def forward(self, x):
