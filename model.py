@@ -184,32 +184,7 @@ class FeatResBlock(nn.Module):
         out = self.relu(out)
         return out
 
-class DownConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        self.feat_res_block2 = FeatResBlock(out_channels)
 
-    def forward(self, x):
-        debug_print(f"DownConvResBlock input shape: {x.shape}")
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        debug_print(f"After conv1, bn1, relu: {out.shape}")
-        out = self.avgpool(out)
-        debug_print(f"After avgpool: {out.shape}")
-        out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
-        out = self.feat_res_block1(out)
-        debug_print(f"After feat_res_block1: {out.shape}")
-        out = self.feat_res_block2(out)
-        debug_print(f"DownConvResBlock output shape: {out.shape}")
-        return out
 
 class DenseFeatureEncoder(nn.Module):
     def __init__(self, in_channels=3):
