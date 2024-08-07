@@ -19,6 +19,7 @@ import numpy as np
 from vit import ImplicitMotionAlignment
 import random
 from stylegan import EqualConv2d,EqualLinear
+from torch.utils.checkpoint import checkpoint
 
 
 
@@ -663,8 +664,8 @@ class IMFModel(nn.Module):
             t_c, t_r = self.style_mixer(t_c, t_r, style_mix_prob)
 
         # Latent token decoding
-        m_r = self.latent_token_decoder(t_r)
-        m_c = self.latent_token_decoder(t_c)
+        m_r = checkpoint(self.latent_token_decoder, t_r)
+        m_c = checkpoint(self.latent_token_decoder, t_c)
 
         # Implicit motion alignment with noise injection
         aligned_features = []
