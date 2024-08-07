@@ -40,8 +40,8 @@ class TransformerBlock(nn.Module):
             nn.GELU(),
             nn.Linear(mlp_dim, dim)
         )
-        self.norm1 = AdaptiveLayerNorm(dim)
-        self.norm2 = AdaptiveLayerNorm(dim)
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
 
 
     def forward(self, x):
