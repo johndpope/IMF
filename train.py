@@ -201,13 +201,12 @@ def main():
 
     model = IMFModel(
         latent_dim=config.model.latent_dim,
-        base_channels=config.model.base_channels,
         num_layers=config.model.num_layers
     )
-    add_gradient_hooks(model)
+    # add_gradient_hooks(model)
 
     discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
-    add_gradient_hooks(discriminator)
+    # add_gradient_hooks(discriminator)
 
     transform = transforms.Compose([
         transforms.Resize((256, 256)),

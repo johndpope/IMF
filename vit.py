@@ -63,9 +63,9 @@ class TransformerBlock(nn.Module):
         return output
 
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth=2, heads=8, dim_head=64, mlp_dim=1024):
+    def __init__(self, feature_dim, motion_dim,  heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
-        self.cross_attention = CrossAttentionModule(feature_dim, motion_dim, heads, dim_head)
+        self.cross_attention = CrossAttentionModule(motion_dim, motion_dim, heads, dim_head)
         # x4
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
@@ -73,6 +73,8 @@ class ImplicitMotionAlignment(nn.Module):
             TransformerBlock(feature_dim, heads, dim_head, mlp_dim),
             TransformerBlock(feature_dim, heads, dim_head, mlp_dim)
         ])
+        self.motion_dim = motion_dim
+        self.feature_dim = feature_dim
 
     def forward(self, ml_c, ml_r, fl_r):
         embeddings = []
@@ -86,8 +88,8 @@ class ImplicitMotionAlignment(nn.Module):
         for i, block in enumerate(self.transformer_blocks):
             V_prime = block(V_prime)
             embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
-            #print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
-
+            #print(f"🎸  ImplicitMotionAlignment: feat_dim:{self.feature_dim} mot_dim:{self.motion_dim} After transformer block {i}, V_prime.shape = {V_prime.shape}")
+ 
         return V_prime #, embeddings
 
 
@@ -124,7 +126,7 @@ class ImplicitMotionAlignment(nn.Module):
 
 
 class CrossAttentionModule(nn.Module):
-    def __init__(self, feature_dim, motion_dim, heads, dim_head):
+    def __init__(self, motion_dim, feature_dim, heads, dim_head):
         super().__init__()
         self.heads = heads
         self.dim_head = dim_head
@@ -140,7 +142,7 @@ class CrossAttentionModule(nn.Module):
         self.pos_encoding_k = PositionalEncoding(motion_dim)
 
     def forward(self, ml_c, ml_r, fl_r):
-        #print(f"CrossAttentionModule input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        #print(f"🌻 CrossAttentionModule input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         
         B, C_m, H, W = ml_c.shape
         _, C_f, _, _ = fl_r.shape
@@ -199,7 +201,7 @@ if __name__ == "__main__":
     fl_r = torch.randn(B, C_f, H, W).to(device)
 
     # Initialize the ImplicitMotionAlignment module and move to device
-    model = ImplicitMotionAlignment(feature_dim, motion_dim, depth, heads, dim_head, mlp_dim).to(device)
+    model = ImplicitMotionAlignment(feature_dim, motion_dim,  heads, dim_head, mlp_dim).to(device)
 
     # Forward pass
     with torch.no_grad():

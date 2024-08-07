@@ -30,7 +30,7 @@ def debug_print(*args, **kwargs):
 
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
 class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, pretrained=True, output_channels=[128, 256, 512, 512],freeze=True):
+    def __init__(self, output_channels,pretrained=True, freeze=True):
         super().__init__()
         debug_print(f"Initializing ResNetFeatureExtractor with output_channels: {output_channels}")
         # Load a pre-trained ResNet model
@@ -436,15 +436,15 @@ class FrameDecoder(nn.Module):
         self.upconv_blocks = nn.ModuleList([
             UpConvResBlock(512, 512),
             UpConvResBlock(1024, 512),
-            UpConvResBlock(768, 256),
-            UpConvResBlock(384, 128),
-            UpConvResBlock(128, 64)
+            UpConvResBlock(1024, 256),
+            UpConvResBlock(512, 128),
+            UpConvResBlock(128, 64)  # Changed from 256 to 128 input channels
         ])
         
         self.feat_blocks = nn.ModuleList([
             nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
+            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(256) for _ in range(3)])
         ])
         
         self.final_conv = nn.Sequential(
@@ -454,43 +454,32 @@ class FrameDecoder(nn.Module):
 
     def forward(self, features):
         debug_print(f"🎒 FrameDecoder input shapes: {[f.shape for f in features]}")
-
-        # Reshape features
-        reshaped_features = []
-        for feat in features:
-            if len(feat.shape) == 3:  # (batch, hw, channels)
-                b, hw, c = feat.shape
-                h = w = int(math.sqrt(hw))
-                reshaped_feat = feat.permute(0, 2, 1).view(b, c, h, w)
-            else:  # Already in (batch, channels, height, width) format
-                reshaped_feat = feat
-            reshaped_features.append(reshaped_feat)
-
-        debug_print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
-
-        x = reshaped_features[-1]  # Start with the smallest feature map
+        
+        x = features[-1]
         debug_print(f"    Initial x shape: {x.shape}")
         
-        for i in range(len(self.upconv_blocks)):
+        for i, (upconv, feat_block) in enumerate(zip(self.upconv_blocks[:3], self.feat_blocks)):
             debug_print(f"\n    Processing upconv_block {i+1}")
-            x = self.upconv_blocks[i](x)
+            x = upconv(x)
             debug_print(f"    After upconv_block {i+1}: {x.shape}")
             
-            if i < len(self.feat_blocks):
-                debug_print(f"    Processing feat_block {i+1}")
-                feat_input = reshaped_features[-(i+2)]
-                debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
-                feat = self.feat_blocks[i](feat_input)
-                debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
-                
-                debug_print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
-                x = torch.cat([x, feat], dim=1)
-                debug_print(f"    After concatenation: {x.shape}")
+            debug_print(f"    Processing feat_block {i+1}")
+            debug_print(f"    feat_block {i+1} input shape: {x.shape}")
+            feat = feat_block(x)
+            debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
+            
+            debug_print(f"    Concatenating: x {x.shape} and feat {features[-(i+2)].shape}")
+            x = torch.cat([x, features[-(i+2)]], dim=1)
+            debug_print(f"    After concatenation: {x.shape}")
         
-        debug_print("\n    Applying final convolution")
+        for i, upconv in enumerate(self.upconv_blocks[3:], start=3):
+            debug_print(f"\n    Processing upconv_block {i+1}")
+            x = upconv(x)
+            debug_print(f"    After upconv_block {i+1}: {x.shape}")
+        
         x = self.final_conv(x)
-        debug_print(f"    FrameDecoder final output shape: {x.shape}")
-
+        debug_print(f"\n    Final output shape: {x.shape}")
+        
         return x
 '''
 The upsample parameter is replaced with downsample to match the diagram.
@@ -606,15 +595,18 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
+    def __init__(self, latent_dim=32,  num_layers=4):
         super().__init__()
         
-        self.feature_extractor = ResNetFeatureExtractor()
+        self.motion_dims = [256, 512, 512, 512]  # Output of LatentTokenDecoder - "512 channels for most of the layers, switching to 256 channels for the final three layer" (m⁴, m³, m², m¹) 
+        self.feature_dims = [256, 512, 512, 512]  # This should match the output of DenseFeatureEncoder
+
+
+        self.feature_extractor = ResNetFeatureExtractor(output_channels=self.feature_dims)
         self.latent_token_encoder = LatentTokenEncoder() 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
-        self.motion_dims = [256, 512, 512, 512]  # queries / keys
-        self.feature_dims = [128, 256, 512, 512]  # values
+
 
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
@@ -627,7 +619,6 @@ class IMFModel(nn.Module):
                 dim_head=64,
                 mlp_dim=1024
             ))
-        
         self.frame_decoder = FrameDecoder()
 
         # StyleGAN2-like additions
