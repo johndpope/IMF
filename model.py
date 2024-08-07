@@ -20,6 +20,8 @@ from vit import ImplicitMotionAlignment
 import random
 from stylegan import EqualConv2d,EqualLinear
 
+
+
 DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
@@ -31,22 +33,24 @@ class ResNetFeatureExtractor(nn.Module):
         super().__init__()
         debug_print(f"Initializing ResNetFeatureExtractor with output_channels: {output_channels}")
         # Load a pre-trained ResNet model
-        resnet = models.resnet50(pretrained=pretrained)
-        if freeze:
-            resnet.eval()
-        
+        self.resnet = models.resnet50(pretrained=pretrained)
+
+
         # We'll use the first 4 layers of ResNet
-        self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
-        self.layer1 = resnet.layer1
-        self.layer2 = resnet.layer2
-        self.layer3 = resnet.layer3
-        self.layer4 = resnet.layer4
+        self.layer0 = nn.Sequential(self.resnet.conv1, self.resnet.bn1, self.resnet.relu, self.resnet.maxpool)
+        self.layer1 = self.resnet.layer1
+        self.layer2 = self.resnet.layer2
+        self.layer3 = self.resnet.layer3
+        self.layer4 = self.resnet.layer4
 
         # Add additional convolutional layers to adjust channel dimensions
         self.adjust1 = nn.Conv2d(256, output_channels[0], kernel_size=1)
         self.adjust2 = nn.Conv2d(512, output_channels[1], kernel_size=1)
         self.adjust3 = nn.Conv2d(1024, output_channels[2], kernel_size=1)
         self.adjust4 = nn.Conv2d(2048, output_channels[3], kernel_size=1)
+
+        for param in self.resnet.parameters():
+            param.requires_grad = False
 
     def forward(self, x):
         debug_print(f"👟 ResNetFeatureExtractor input shape: {x.shape}")
@@ -248,9 +252,11 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 
 
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, dm=32):
-        super(LatentTokenEncoder, self).__init__()
-        self.conv1 = EqualConv2d(3, 64, kernel_size=7, stride=1, padding=3)
+    def __init__(self, input_channels=3, dm=32):
+        super().__init__()
+        
+        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1)
+        
         self.activation = nn.LeakyReLU(0.2)
 
         self.res1 = ResBlock(64, 64, downsample=True)  # ResBlock-64, ↓2
@@ -601,9 +607,9 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4):
         super().__init__()
-        self.dense_feature_encoder = DenseFeatureEncoder()
-    
-        self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
+        
+        self.feature_extractor = ResNetFeatureExtractor()
+        self.latent_token_encoder = LatentTokenEncoder() 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
@@ -637,7 +643,8 @@ class IMFModel(nn.Module):
 
     def _forward_impl(self, x_current, x_reference, style_mix_prob, noise_magnitude, is_inference):
         # Dense feature encoding
-        f_r = self.dense_feature_encoder(x_reference)
+        f_r = self.feature_extractor(x_reference)
+        
 
         # Latent token encoding
         t_r = self.latent_token_encoder(x_reference)
