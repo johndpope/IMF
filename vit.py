@@ -142,7 +142,7 @@ class CrossAttentionModule(nn.Module):
         self.pos_encoding_k = PositionalEncoding(motion_dim)
 
     def forward(self, ml_c, ml_r, fl_r):
-        #print(f"🌻 CrossAttentionModule input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        print(f"🌻 CrossAttentionModule input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         
         B, C_m, H, W = ml_c.shape
         _, C_f, _, _ = fl_r.shape
@@ -151,14 +151,16 @@ class CrossAttentionModule(nn.Module):
         ml_c = ml_c.view(B, C_m, H*W).permute(2, 0, 1)
         ml_r = ml_r.view(B, C_m, H*W).permute(2, 0, 1)
         fl_r = fl_r.view(B, C_f, H*W).permute(2, 0, 1)
-        #print(f"After flattening - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        print(f"After flattening - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
 
         # Generate and add positional encodings
         p_q = self.pos_encoding_q(ml_c)
         p_k = self.pos_encoding_k(ml_r)
+        print(f" -> - p_q: {p_q.shape}, p_k: {p_k.shape}")
+
         ml_c = ml_c + p_q
         ml_r = ml_r + p_k
-        #print(f"After adding positional encodings - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}")
+        # print(f"After adding positional encodings - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}")
 
         # Compute Q, K, V
         q = self.to_q(ml_c).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)

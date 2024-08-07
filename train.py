@@ -1,28 +1,18 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from accelerate import Accelerator
 from tqdm.auto import tqdm
 import wandb
-import yaml
-import os
-import torch.nn.functional as F
-from model import IMFModel, debug_print,PatchDiscriminator
+from model import IMFModel, PatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
-from torchvision.utils import save_image
-from helper import normalize,visualize_latent_token, add_gradient_hooks, sample_recon
-from torch.optim import AdamW
+from helper import normalize, sample_recon
 from omegaconf import OmegaConf
 import lpips
-from torch.nn.utils import spectral_norm
-import torchvision.models as models
-from loss import LPIPSPerceptualLoss,VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
+from loss import VGGPerceptualLoss,gan_loss_fn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-import random
-from vggloss import VGGLoss
 from stylegan import EMA
 
 def load_config(config_path):
@@ -71,78 +61,78 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             source_frames = batch['frames']
             batch_size, num_frames, channels, height, width = source_frames.shape
 
-            
-            for ref_idx in range(0, num_frames, config.training.every_xref_frames):  # Step by 16 for reference frames
+            ref_idx = 0 # if more than 1 - seems like there's leakage ?? https://wandb.ai/snoozie/IMF/runs/zh1o9mo0/workspace?nw=nwusersnoozie
+            # for ref_idx in range(0, num_frames, config.training.every_xref_frames):  # Step by 16 for reference frames
 
-                x_reference = source_frames[:, ref_idx]
+            x_reference = source_frames[:, ref_idx]
 
-                for current_idx in range(num_frames):
-                    if current_idx == ref_idx:
-                        continue  # Skip when current frame is the reference frame
-                    
-                    x_current = source_frames[:, current_idx]
+            for current_idx in range(num_frames):
+                if current_idx == ref_idx:
+                    continue  # Skip when current frame is the reference frame
+                
+                x_current = source_frames[:, current_idx]
 
-                    # Forward pass with style mixing and noise addition
-                    x_reconstructed, outputs = model(x_current, x_reference, style_mixing_prob, noise_magnitude)
-                    x_reconstructed = normalize(x_reconstructed)
+                # Forward pass with style mixing and noise addition
+                x_reconstructed, outputs = model(x_current, x_reference, style_mixing_prob, noise_magnitude)
+                x_reconstructed = normalize(x_reconstructed)
 
-                    
-                    # B. Loss Calculation
-                    # 1. Pixel-wise Loss
-                    l_p = pixel_loss_fn(x_reconstructed, x_current)
+                
+                # B. Loss Calculation
+                # 1. Pixel-wise Loss
+                l_p = pixel_loss_fn(x_reconstructed, x_current)
 
-                    # 2. Perceptual Loss
-                    l_v = perceptual_loss_fn(x_reconstructed, x_current)
+                # 2. Perceptual Loss
+                l_v = perceptual_loss_fn(x_reconstructed, x_current)
 
-                    # 3. GAN Loss
-                    # Train Discriminator
-                    optimizer_d.zero_grad()
-                    
-                    # R1 regularization
-                    x_current.requires_grad = True
-                    real_outputs = discriminator(x_current)
-                    r1_reg = 0
-                    for real_output in real_outputs:
-                        grad_real = torch.autograd.grad(
-                            outputs=real_output.sum(), inputs=x_current, create_graph=True
-                        )[0]
-                        r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
-                    
-                    fake_outputs = discriminator(x_reconstructed.detach())
-                    d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
+                # 3. GAN Loss
+                # Train Discriminator
+                optimizer_d.zero_grad()
+                
+                # R1 regularization
+                x_current.requires_grad = True
+                real_outputs = discriminator(x_current)
+                r1_reg = 0
+                for real_output in real_outputs:
+                    grad_real = torch.autograd.grad(
+                        outputs=real_output.sum(), inputs=x_current, create_graph=True
+                    )[0]
+                    r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+                
+                fake_outputs = discriminator(x_reconstructed.detach())
+                d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
 
-                    # Add R1 regularization to the discriminator loss
-                    d_loss = d_loss + r1_gamma * r1_reg
-
-
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
-                    
-                    accelerator.backward(d_loss)
-                    optimizer_d.step()
-                    ema.update()
-                    # Train Generator
-                    optimizer_g.zero_grad()
-                    fake_outputs = discriminator(x_reconstructed)
-                    g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
+                # Add R1 regularization to the discriminator loss
+                d_loss = d_loss + r1_gamma * r1_reg
 
 
-                    # 4. Total Loss
-                    g_loss = (config.training.lambda_pixel * l_p +
-                            config.training.lambda_perceptual * l_v +
-                            config.training.lambda_adv * g_loss_gan)
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+                
+                accelerator.backward(d_loss)
+                optimizer_d.step()
+                ema.update()
+                # Train Generator
+                optimizer_g.zero_grad()
+                fake_outputs = discriminator(x_reconstructed)
+                g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
 
-                    # C. Optimization
-                    accelerator.backward(g_loss)
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optimizer_g.step()
+
+                # 4. Total Loss
+                g_loss = (config.training.lambda_pixel * l_p +
+                        config.training.lambda_perceptual * l_v +
+                        config.training.lambda_adv * g_loss_gan)
+
+                # C. Optimization
+                accelerator.backward(g_loss)
+                # Clip gradients
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                optimizer_g.step()
 
 
-                    total_g_loss += g_loss.item()
-                    total_d_loss += d_loss.item()
-                    progress_bar.update(1)
-                    progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+                total_g_loss += g_loss.item()
+                total_d_loss += d_loss.item()
+                progress_bar.update(1)
+                progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
             # Sample and save reconstructions
                 sample_path = f"recon_epoch_{epoch+1}_batch_{ref_idx}.png"
                 sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
