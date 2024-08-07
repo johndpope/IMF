@@ -1,7 +1,6 @@
-# Model parameters
+
 model:
   latent_dim: 32
-  base_channels: 64
   num_layers: 4
 
 # Training parameters
@@ -55,7 +54,7 @@ checkpoints:
 # Logging and visualization
 logging:
   sample_interval: 1
-  sample_size: 8
+  sample_size: 1 # for images on wandb
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
 
@@ -82,3 +81,6 @@ loss:
       perceptual: [10, 10, 10, 10, 10]
       equivariance_shift: 10
       equivariance_affine: 10
+
+
+

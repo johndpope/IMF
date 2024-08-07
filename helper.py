@@ -21,42 +21,47 @@ def normalize(tensor):
 def sample_recon(model, data, accelerator, output_path, num_samples=1):
     model.eval()
     with torch.no_grad():
-        x_reconstructed, x_reference = data
-        batch_size = x_reconstructed.size(0)
-        num_samples = min(num_samples, batch_size)
-        
-        # Select a subset of images if batch_size > num_samples
-        x_reconstructed = x_reconstructed[:num_samples]
-        x_reference = x_reference[:num_samples]
-
-        
-        # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
-        frames = torch.cat((x_reconstructed, x_reference), dim=0)
-        
-        # Ensure we have a valid output directory
-        if output_path:
-            output_dir = os.path.dirname(output_path)
-            if not output_dir:
-                output_dir = '.'
-            os.makedirs(output_dir, exist_ok=True)
+        try:
+            x_reconstructed, x_reference = data
+            batch_size = x_reconstructed.size(0)
+            num_samples = min(num_samples, batch_size)
             
-            # Save frames as a grid (2 rows, num_samples columns)
-            save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
-            accelerator.print(f"Saved sample reconstructions to {output_path}")
-        else:
-            accelerator.print("Warning: No output path provided. Skipping image save.")
-        
-        # Log images to wandb
-        wandb_images = []
-        for i in range(num_samples):
-            wandb_images.extend([
-                wandb.Image(x_reconstructed[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
-                wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
-            ])
-        
-        wandb.log({"Sample Reconstructions": wandb_images})
-        
-        return frames
+            # Select a subset of images if batch_size > num_samples
+            x_reconstructed = x_reconstructed[:num_samples]
+            x_reference = x_reference[:num_samples]
+
+            
+            # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
+            frames = torch.cat((x_reconstructed, x_reference), dim=0)
+            
+            # Ensure we have a valid output directory
+            if output_path:
+                output_dir = os.path.dirname(output_path)
+                if not output_dir:
+                    output_dir = '.'
+                os.makedirs(output_dir, exist_ok=True)
+                
+                # Save frames as a grid (2 rows, num_samples columns)
+                save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
+                accelerator.print(f"Saved sample reconstructions to {output_path}")
+            else:
+                accelerator.print("Warning: No output path provided. Skipping image save.")
+            
+            # Log images to wandb
+            wandb_images = []
+            for i in range(num_samples):
+                wandb_images.extend([
+                    wandb.Image(x_reconstructed[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
+                    wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
+                ])
+            
+            wandb.log({"Sample Reconstructions": wandb_images})
+            
+            return frames
+        except RuntimeError as e:
+            print(f"🔥 e:{e}")
+        return None
+                       
 
 def monitor_gradients(model, epoch, batch_idx, log_interval=10):
     """
