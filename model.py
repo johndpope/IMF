@@ -585,7 +585,7 @@ class IMFModel(nn.Module):
         self.style_mix_prob = style_mix_prob
 
         # StyleGAN2-like additions
-        # self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
+        self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
         self.noise_injection = NoiseInjection()
 
     def add_noise(self, tensor):
@@ -615,8 +615,8 @@ class IMFModel(nn.Module):
         t_c = self.latent_token_encoder(x_current)
 
         # StyleGAN2-like mapping network
-        # t_r = self.mapping_network(t_r)
-        # t_c = self.mapping_network(t_c)
+        t_r = self.mapping_network(t_r)
+        t_c = self.mapping_network(t_c)
 
         # Add noise to latent tokens
         t_r = self.add_noise(t_r)
