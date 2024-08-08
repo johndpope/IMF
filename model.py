@@ -494,28 +494,28 @@ class ResBlock(nn.Module):
         self.out_channels = out_channels
 
     def forward(self, x):
-        debug_print(f"ResBlock input shape: {x.shape}")
-        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+        # debug_print(f"ResBlock input shape: {x.shape}")
+        # debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
 
         residual = self.shortcut(x)
-        debug_print(f"After shortcut: {residual.shape}")
+        # debug_print(f"After shortcut: {residual.shape}")
         
         out = self.conv1(x)
-        debug_print(f"After conv1: {out.shape}")
+        # debug_print(f"After conv1: {out.shape}")
         out = self.bn1(out)
         out = self.relu1(out)
-        debug_print(f"After bn1 and relu1: {out.shape}")
+        # debug_print(f"After bn1 and relu1: {out.shape}")
         
         out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
+        # debug_print(f"After conv2: {out.shape}")
         out = self.bn2(out)
-        debug_print(f"After bn2: {out.shape}")
+        # debug_print(f"After bn2: {out.shape}")
         
         out += residual
-        debug_print(f"After adding residual: {out.shape}")
+        # debug_print(f"After adding residual: {out.shape}")
         
         out = self.relu2(out)
-        debug_print(f"ResBlock output shape: {out.shape}")
+        # debug_print(f"ResBlock output shape: {out.shape}")
         
         return out
 
