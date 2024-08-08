@@ -7,9 +7,9 @@ model:
 # Training parameters
 training:
   use_r1_reg: False
-  batch_size: 8 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
+  batch_size: 16 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
-  save_steps: 25
+  save_steps: 250
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
   learning_rate_d: 1.0e-5  # Reduced learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator

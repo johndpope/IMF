@@ -10,8 +10,8 @@
 if [ $? -ne 0 ]; then
     exit 1
 else
-    echo "Test passed (micro-commit)...."
+    # echo "Test passed (micro-commit)...."
     git add .
-    git commit -m "🧗 Commit Recovery"
+    git commit -m "🧗"
     python train.py
 fi

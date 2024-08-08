@@ -65,7 +65,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         total_g_loss = 0
         total_d_loss = 0
 
-
+        global_step = 0
 
         for batch_idx, batch in enumerate(train_dataloader):
             source_frames = batch['frames']
@@ -220,10 +220,16 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 total_d_loss += d_loss.item()
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
-        # Sample and save reconstructions
-            sample_path = f"recon_epoch_{epoch+1}_batch_{ref_idx}.png"
-            sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
-                        num_samples=config.logging.sample_size)
+            
+                # Update global step
+                global_step += 1
+            
+              # Sample and save reconstructions every save_steps
+                if global_step % config.training.save_steps == 0:
+                    sample_path = f"recon_step_{global_step}.png"
+                    sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                                num_samples=config.logging.sample_size)
+
 
             # Calculate average losses for the epoch
             avg_g_loss = total_g_loss / len(train_dataloader)
@@ -314,10 +320,10 @@ def main():
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
-        num_workers=1,
-        # persistent_workers=True,
-        # pin_memory=True,
-        # collate_fn=gpu_padded_collate 
+        num_workers=4,
+        persistent_workers=True,
+        pin_memory=True,
+        collate_fn=gpu_padded_collate 
     )
 
     train(config, model, discriminator, dataloader, accelerator)

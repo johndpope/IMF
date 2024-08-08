@@ -560,14 +560,14 @@ For each scale, aligns the reference features to the current frame using the Imp
 class IMFModel(nn.Module):
     def __init__(self, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
-        self.dense_feature_encoder = ResNetFeatureExtractor()
+        
 
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
         self.feature_dims = [128, 256, 512, 512]  # values
-
+        self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
@@ -584,7 +584,7 @@ class IMFModel(nn.Module):
         self.style_mix_prob = style_mix_prob
 
         # StyleGAN2-like additions
-        self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
+        # self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
         self.noise_injection = NoiseInjection()
 
     def add_noise(self, tensor):
@@ -614,8 +614,8 @@ class IMFModel(nn.Module):
         t_c = self.latent_token_encoder(x_current)
 
         # StyleGAN2-like mapping network
-        t_r = self.mapping_network(t_r)
-        t_c = self.mapping_network(t_c)
+        # t_r = self.mapping_network(t_r)
+        # t_c = self.mapping_network(t_c)
 
         # Add noise to latent tokens
         t_r = self.add_noise(t_r)
