@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from model import LatentTokenEncoder, LatentTokenDecoder, DenseFeatureEncoder
+from model import LatentTokenEncoder, LatentTokenDecoder, DenseFeatureEncoder,FrameDecoder
 # 
 # Test  latent_token_encoder
 def test_latent_token_encoder():
@@ -92,8 +92,25 @@ def test_latent_token_decoder():
 
     print("✅ All assertions for Latent Token Decoder passed!")
 
+
+def test_frame_decoder():
+    # Assuming input sizes. These may need adjustment based on actual input dimensions.
+    f_c4 = torch.randn(1, 512, 8, 8)
+    f_c3 = torch.randn(1, 512, 16, 16)
+    f_c2 = torch.randn(1, 512, 32, 32)
+    f_c1 = torch.randn(1, 256, 64, 64)
+
+
+
+    model = FrameDecoder()
+    output = model([f_c4, f_c3, f_c2, f_c1])
+    # Add assertions to verify output shape
+    assert output.shape == (1, 3, 256, 256), f"Expected output shape (1, 3, 256, 256), but got {output.shape}"
+    print("✅ All assertions passed. Model output shape is correct.")
+
 # Run the tests
 if __name__ == "__main__":
     test_dense_feature_encoder()
     test_latent_token_encoder()
     test_latent_token_decoder()
+    test_frame_decoder()

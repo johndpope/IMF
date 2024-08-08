@@ -407,55 +407,63 @@ It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid
 class FrameDecoder(nn.Module):
     def __init__(self):
         super().__init__()
-        
-        self.upconv_blocks = nn.ModuleList([
-            UpConvResBlock(512, 512),
-            UpConvResBlock(1024, 512),
-            UpConvResBlock(1024, 256),
-            UpConvResBlock(512, 128),
-            UpConvResBlock(128, 64)  # Changed from 256 to 128 input channels
-        ])
-        
-        self.feat_blocks = nn.ModuleList([
-            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(256) for _ in range(3)])
-        ])
-        
-        self.final_conv = nn.Sequential(
-            nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
-            nn.Sigmoid()
-        )
+        self.upconv_512_1 = UpConvResBlock(512, 512)
+        self.feat_res_512 = nn.Sequential(*[FeatResBlock(512) for _ in range(3)])
+        self.upconv_512_2 = UpConvResBlock(1024, 512)
+        self.feat_res_512_2 = nn.Sequential(*[FeatResBlock(512) for _ in range(3)])
+        self.upconv_256 = UpConvResBlock(1024, 256)
+        self.feat_res_256 = nn.Sequential(*[FeatResBlock(256) for _ in range(3)])
+        self.upconv_128 = UpConvResBlock(512, 128)
+        self.upconv_64 = UpConvResBlock(128, 64)
+        self.final_conv = nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1)
+        self.sigmoid = nn.Sigmoid()
+
 
     def forward(self, features):
-        debug_print(f"🎒 FrameDecoder input shapes: {[f.shape for f in features]}")
+        f_c4, f_c3, f_c2, f_c1 = features
+        print(f"Input f_c4 shape: {f_c4.shape}") #  [1, 512, 8, 8]
         
-        x = features[-1]
-        debug_print(f"    Initial x shape: {x.shape}")
+        # First UpConvResBlock
+        x = self.upconv_512_1(f_c4)
+        print(f"After 1st UpConvResBlock-512, ↑2 shape: {x.shape}") # [1, 512, 16, 16]
         
-        for i, (upconv, feat_block) in enumerate(zip(self.upconv_blocks[:3], self.feat_blocks)):
-            debug_print(f"\n    Processing upconv_block {i+1}")
-            x = upconv(x)
-            debug_print(f"    After upconv_block {i+1}: {x.shape}")
-            
-            debug_print(f"    Processing feat_block {i+1}")
-            debug_print(f"    feat_block {i+1} input shape: {x.shape}")
-            feat = feat_block(x)
-            debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
-            
-            debug_print(f"    Concatenating: x {x.shape} and feat {features[-(i+2)].shape}")
-            x = torch.cat([x, features[-(i+2)]], dim=1)
-            debug_print(f"    After concatenation: {x.shape}")
+        # First FeatResBlock and concatenation
+        f3 = self.feat_res_512(f_c3)
+        x = torch.cat([x, f3], dim=1)
+
+        # Second UpConvResBlock
+        x = self.upconv_512_2(x)
+        print(f"After 2nd UpConvResBlock-512, ↑2 shape: {x.shape}") #[1, 512, 32, 32]
         
-        for i, upconv in enumerate(self.upconv_blocks[3:], start=3):
-            debug_print(f"\n    Processing upconv_block {i+1}")
-            x = upconv(x)
-            debug_print(f"    After upconv_block {i+1}: {x.shape}")
+        # Second FeatResBlock and concatenation
+        f2 = self.feat_res_512_2(f_c2)
+        x = torch.cat([x, f2], dim=1)
+        print(f"After concat with f_c2 shape: {x.shape}") # [1, 1024, 32, 32]
         
+        # Third UpConvResBlock
+        x = self.upconv_256(x)
+        print(f"After UpConvResBlock-256, ↑2 shape: {x.shape}") # [1, 256, 64, 64]
+        
+        # Third FeatResBlock and concatenation
+        f1 = self.feat_res_256(f_c1)
+        x = torch.cat([x, f1], dim=1)
+        print(f"After concat with f_c1 shape: {x.shape}") # [1, 512, 64, 64]
+        
+        # Final UpConvResBlocks
+        x = self.upconv_128(x)
+        print(f"After UpConvResBlock-128, ↑2 shape: {x.shape}")
+        
+        x = self.upconv_64(x)
+        print(f"After UpConvResBlock-64, ↑2 shape: {x.shape}")
+        
+        # Final convolution and activation
         x = self.final_conv(x)
-        debug_print(f"\n    Final output shape: {x.shape}")
+        x = self.sigmoid(x)
+        print(f"Final output shape: {x.shape}")
         
         return x
+
+
 '''
 The upsample parameter is replaced with downsample to match the diagram.
 The first convolution now has a stride of 2 when downsampling.
