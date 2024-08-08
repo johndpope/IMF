@@ -51,12 +51,13 @@ class ImplicitMotionAlignment(nn.Module):
         ])
         self.norms = nn.ModuleList([nn.LayerNorm(feature_dim) for _ in range(depth)])
 
-    def forward(self, ml_c, ml_r, fl_r):
+    def forward(self, ml_c, ml_r, fl_r, return_embeddings=False):
         embeddings = []
         
         # Cross-attention module
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
-        embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
+        if return_embeddings:
+            embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
 
         # Attention blocks
         B, C, H, W = V_prime.shape
@@ -64,11 +65,15 @@ class ImplicitMotionAlignment(nn.Module):
         
         for i, (attn, norm) in enumerate(zip(self.attention_blocks, self.norms)):
             V_prime = V_prime + attn(norm(V_prime))
-            embeddings.append((f"After Attention Block {i}", V_prime.detach().cpu()))
+            if return_embeddings:
+                embeddings.append((f"After Attention Block {i}", V_prime.detach().cpu()))
         
         V_prime = V_prime.permute(0, 2, 1).view(B, C, H, W)
-        return V_prime, embeddings
-
+        
+        if return_embeddings:
+            return V_prime, embeddings
+        else:
+            return V_prime
     @staticmethod
     def visualize_embeddings(embeddings, save_path):
         fig, axes = plt.subplots(2, 3, figsize=(15, 10))
