@@ -632,10 +632,10 @@ class IMFModel(nn.Module):
         m_r = checkpoint(self.latent_token_decoder, t_r)
         m_c = checkpoint(self.latent_token_decoder, t_c)
         for r in m_r:
-            print(f"m_r:{r.shape}")
+            debug_print(f"m_r:{r.shape}")
 
         for c in m_c:
-            print(f"m_c:{c.shape}")
+            debug_print(f"m_c:{c.shape}")
 
         # Implicit motion alignment with noise injection
         aligned_features = []
