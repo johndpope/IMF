@@ -12,17 +12,16 @@ import colored_traceback.auto # makes terminal show color coded output when cras
 DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
-        debug_print(*args, **kwargs)
+        print(*args, **kwargs)
 
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
 class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, output_channels,pretrained=True, freeze=True):
+    def __init__(self, pretrained=True, output_channels=[128, 256, 512, 512]):
         super().__init__()
         debug_print(f"Initializing ResNetFeatureExtractor with output_channels: {output_channels}")
         # Load a pre-trained ResNet model
         self.resnet = models.resnet50(pretrained=pretrained)
-
-
+        
         # We'll use the first 4 layers of ResNet
         self.layer0 = nn.Sequential(self.resnet.conv1, self.resnet.bn1, self.resnet.relu, self.resnet.maxpool)
         self.layer1 = self.resnet.layer1
@@ -171,7 +170,6 @@ class FeatResBlock(nn.Module):
         return out
 
 
-
 class DenseFeatureEncoder(nn.Module):
     def __init__(self, in_channels=3):
         super().__init__()
@@ -214,11 +212,9 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 
 
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, input_channels=3, dm=32):
-        super().__init__()
-        
-        self.conv1 = nn.Conv2d(input_channels, 64, kernel_size=3, stride=1, padding=1)
-        
+    def __init__(self, dm=32):
+        super(LatentTokenEncoder, self).__init__()
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
         self.activation = nn.LeakyReLU(0.2)
 
         self.res1 = ResBlock(64, 64, downsample=True)  # ResBlock-64, ↓2
@@ -393,65 +389,66 @@ It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid
 class FrameDecoder(nn.Module):
     def __init__(self):
         super().__init__()
-        self.upconv_512_1 = UpConvResBlock(512, 512)
-        self.feat_res_512 = nn.Sequential(*[FeatResBlock(512) for _ in range(3)])
-        self.upconv_512_2 = UpConvResBlock(1024, 512) # implied from diagram as we concat 512 + 512
-        self.feat_res_512_2 = nn.Sequential(*[FeatResBlock(512) for _ in range(3)])
-        self.upconv_256 = UpConvResBlock(1024, 256) # looks harsh downgrade - is diagram wrong 🤷
-        self.feat_res_256 = nn.Sequential(*[FeatResBlock(256) for _ in range(3)])
-        self.upconv_128 = UpConvResBlock(512, 128)
-        self.upconv_64 = UpConvResBlock(128, 64)
-        self.final_conv = nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1)
-        self.sigmoid = nn.Sigmoid()
-
+        
+        self.upconv_blocks = nn.ModuleList([
+            UpConvResBlock(512, 512),
+            UpConvResBlock(1024, 512),
+            UpConvResBlock(768, 256),
+            UpConvResBlock(384, 128),
+            UpConvResBlock(128, 64)
+        ])
+        
+        self.feat_blocks = nn.ModuleList([
+            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
+        ])
+        
+        self.final_conv = nn.Sequential(
+            nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
+            nn.Sigmoid()
+        )
 
     def forward(self, features):
-        f_c1, f_c2,f_c3, f_c4  = features
-        debug_print(f"Input f_c4 shape: {f_c4.shape}") #  [1, 512, 8, 8]
-        
-        spatial_dims = [f.shape[-1] for f in [f_c4, f_c3, f_c2, f_c1]]
-        assert spatial_dims == sorted(spatial_dims), f"Spatial dimensions must be in ascending order. Got: {spatial_dims}"
-        # First UpConvResBlock
-        x = self.upconv_512_1(f_c4)
-        debug_print(f"After 1st UpConvResBlock-512, ↑2 shape: {x.shape}") # [1, 512, 16, 16]
-        
-        # First FeatResBlock and concatenation
-        f3 = self.feat_res_512(f_c3)
-        x = torch.cat([x, f3], dim=1)
+        debug_print(f"🎒 FrameDecoder input shapes: {[f.shape for f in features]}")
 
-        # Second UpConvResBlock
-        x = self.upconv_512_2(x)
-        debug_print(f"After 2nd UpConvResBlock-512, ↑2 shape: {x.shape}") #[1, 512, 32, 32]
+        # Reshape features
+        reshaped_features = []
+        for feat in features:
+            if len(feat.shape) == 3:  # (batch, hw, channels)
+                b, hw, c = feat.shape
+                h = w = int(math.sqrt(hw))
+                reshaped_feat = feat.permute(0, 2, 1).view(b, c, h, w)
+            else:  # Already in (batch, channels, height, width) format
+                reshaped_feat = feat
+            reshaped_features.append(reshaped_feat)
+
+        debug_print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
+
+        x = reshaped_features[-1]  # Start with the smallest feature map
+        debug_print(f"    Initial x shape: {x.shape}")
         
-        # Second FeatResBlock and concatenation
-        f2 = self.feat_res_512_2(f_c2)
-        x = torch.cat([x, f2], dim=1)
-        debug_print(f"After concat with f_c2 shape: {x.shape}") # [1, 1024, 32, 32]
+        for i in range(len(self.upconv_blocks)):
+            debug_print(f"\n    Processing upconv_block {i+1}")
+            x = self.upconv_blocks[i](x)
+            debug_print(f"    After upconv_block {i+1}: {x.shape}")
+            
+            if i < len(self.feat_blocks):
+                debug_print(f"    Processing feat_block {i+1}")
+                feat_input = reshaped_features[-(i+2)]
+                debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
+                feat = self.feat_blocks[i](feat_input)
+                debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
+                
+                debug_print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
+                x = torch.cat([x, feat], dim=1)
+                debug_print(f"    After concatenation: {x.shape}")
         
-        # Third UpConvResBlock
-        x = self.upconv_256(x)
-        debug_print(f"After UpConvResBlock-256, ↑2 shape: {x.shape}") # [1, 256, 64, 64]
-        
-        # Third FeatResBlock and concatenation
-        f1 = self.feat_res_256(f_c1)
-        x = torch.cat([x, f1], dim=1)
-        debug_print(f"After concat with f_c1 shape: {x.shape}") # [1, 512, 64, 64]
-        
-        # Final UpConvResBlocks
-        x = self.upconv_128(x)
-        debug_print(f"After UpConvResBlock-128, ↑2 shape: {x.shape}")
-        
-        x = self.upconv_64(x)
-        debug_print(f"After UpConvResBlock-64, ↑2 shape: {x.shape}")
-        
-        # Final convolution and activation
+        debug_print("\n    Applying final convolution")
         x = self.final_conv(x)
-        x = self.sigmoid(x)
-        debug_print(f"Final output shape: {x.shape}")
-        
+        debug_print(f"    FrameDecoder final output shape: {x.shape}")
+
         return x
-
-
 '''
 The upsample parameter is replaced with downsample to match the diagram.
 The first convolution now has a stride of 2 when downsampling.
@@ -482,28 +479,28 @@ class ResBlock(nn.Module):
         self.out_channels = out_channels
 
     def forward(self, x):
-        # debug_print(f"ResBlock input shape: {x.shape}")
-        # debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+        debug_print(f"ResBlock input shape: {x.shape}")
+        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
 
         residual = self.shortcut(x)
-        # debug_print(f"After shortcut: {residual.shape}")
+        debug_print(f"After shortcut: {residual.shape}")
         
         out = self.conv1(x)
-        # debug_print(f"After conv1: {out.shape}")
+        debug_print(f"After conv1: {out.shape}")
         out = self.bn1(out)
         out = self.relu1(out)
-        # debug_print(f"After bn1 and relu1: {out.shape}")
+        debug_print(f"After bn1 and relu1: {out.shape}")
         
         out = self.conv2(out)
-        # debug_print(f"After conv2: {out.shape}")
+        debug_print(f"After conv2: {out.shape}")
         out = self.bn2(out)
-        # debug_print(f"After bn2: {out.shape}")
+        debug_print(f"After bn2: {out.shape}")
         
         out += residual
-        # debug_print(f"After adding residual: {out.shape}")
+        debug_print(f"After adding residual: {out.shape}")
         
         out = self.relu2(out)
-        # debug_print(f"ResBlock output shape: {out.shape}")
+        debug_print(f"ResBlock output shape: {out.shape}")
         
         return out
 
@@ -536,22 +533,6 @@ class TokenManipulationNetwork(nn.Module):
 
 
 
-class StyleMixer(nn.Module):
-    def __init__(self, prob=0.5):
-        super().__init__()
-        self.prob = prob
-
-    def forward(self, t_c, t_r,style_mix_prob):
-        if self.training and torch.rand(1).item() < self.prob:
-            batch_size = t_c.size(0)
-            perm = torch.randperm(batch_size)
-            mix_mask = (torch.rand(batch_size, 1, device=t_c.device) < 0.5).float()
-            t_c = t_c * mix_mask + t_c[perm] * (1 - mix_mask)
-            t_r = t_r * mix_mask + t_r[perm] * (1 - mix_mask)
-        return t_c, t_r
-
-    def set_prob(self, prob):
-        self.prob = prob
 '''
 DenseFeatureEncoder (EF): Encodes the reference frame into multi-scale features.
 LatentTokenEncoder (ET): Encodes both the current and reference frames into latent tokens.
@@ -566,18 +547,15 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self, latent_dim=32,  num_layers=4):
+    def __init__(self, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
-        
-        self.motion_dims = [256, 512, 512, 512]  # Output of LatentTokenDecoder - "512 channels for most of the layers, switching to 256 channels for the final three layer" (m⁴, m³, m², m¹) 
-        self.feature_dims = [256, 512, 512, 512]  # This should match the output of DenseFeatureEncoder
+        self.dense_feature_encoder = ResNetFeatureExtractor()
 
-
-        self.feature_extractor = ResNetFeatureExtractor(output_channels=self.feature_dims)
-        self.latent_token_encoder = LatentTokenEncoder() 
+        self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
-
+        self.motion_dims = [256, 512, 512, 512]  # queries / keys
+        self.feature_dims = [128, 256, 512, 512]  # values
 
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
@@ -590,27 +568,36 @@ class IMFModel(nn.Module):
                 dim_head=64,
                 mlp_dim=1024
             ))
-
-
-
+        
         self.frame_decoder = FrameDecoder()
+        self.noise_level = noise_level
+        self.style_mix_prob = style_mix_prob
 
         # StyleGAN2-like additions
         self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
         self.noise_injection = NoiseInjection()
-        self.style_mixer = StyleMixer()
-   
 
-    def forward(self, x_current, x_reference, style_mix_prob=0.9, noise_magnitude=0.1):
-        return self._forward_impl(x_current, x_reference, style_mix_prob, noise_magnitude, is_inference=False)
+    def add_noise(self, tensor):
+        return tensor + torch.randn_like(tensor) * self.noise_level
 
-    def inference(self, x_current, x_reference):
-        return self._forward_impl(x_current, x_reference, style_mix_prob=0, noise_magnitude=0, is_inference=True)
+    def style_mixing(self, t_c, t_r):
+        device = t_c.device
+        if random.random() < self.style_mix_prob:
+            batch_size = t_c.size(0)
+            perm = torch.randperm(batch_size, device=device)
+            t_c_mixed = t_c[perm]
+            t_r_mixed = t_r[perm]
+            mix_mask = (torch.rand(batch_size, 1, device=device) < 0.5).to(device)
+            t_c = torch.where(mix_mask, t_c, t_c_mixed)
+            t_r = torch.where(mix_mask, t_r, t_r_mixed)
+        return t_c, t_r
 
-    def _forward_impl(self, x_current, x_reference, style_mix_prob, noise_magnitude, is_inference):
+    def forward(self, x_current, x_reference):
+        x_current = x_current.requires_grad_()
+        x_reference = x_reference.requires_grad_()
+
         # Dense feature encoding
-        f_r = self.feature_extractor(x_reference)
-        
+        f_r = self.dense_feature_encoder(x_reference)
 
         # Latent token encoding
         t_r = self.latent_token_encoder(x_reference)
@@ -620,33 +607,23 @@ class IMFModel(nn.Module):
         t_r = self.mapping_network(t_r)
         t_c = self.mapping_network(t_c)
 
-        if not is_inference:
-            # Add noise to latent tokens
-            t_r = self.noise_injection(t_r, noise_magnitude * torch.randn_like(t_r))
-            t_c = self.noise_injection(t_c, noise_magnitude * torch.randn_like(t_c))
+        # Add noise to latent tokens
+        t_r = self.add_noise(t_r)
+        t_c = self.add_noise(t_c)
 
-            # Apply style mixing
-            t_c, t_r = self.style_mixer(t_c, t_r, style_mix_prob)
+        # Apply style mixing
+        t_c, t_r = self.style_mixing(t_c, t_r)
 
         # Latent token decoding
-        m_r = checkpoint(self.latent_token_decoder, t_r)
-        m_c = checkpoint(self.latent_token_decoder, t_c)
-        for r in m_r:
-            debug_print(f"m_r:{r.shape}")
-
-        for c in m_c:
-            debug_print(f"m_c:{c.shape}")
+        m_r = self.latent_token_decoder(t_r)
+        m_c = self.latent_token_decoder(t_c)
 
         # Implicit motion alignment with noise injection
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
-            if not is_inference:
-                m_r_i = self.noise_injection(m_r[i], noise=noise_magnitude * torch.randn_like(m_r[i]))
-                m_c_i = self.noise_injection(m_c[i], noise=noise_magnitude * torch.randn_like(m_c[i]))
-            else:
-                m_r_i = m_r[i]
-                m_c_i = m_c[i]
+            m_r_i = self.noise_injection(m_r[i])
+            m_c_i = self.noise_injection(m_c[i])
             align_layer = self.implicit_motion_alignment[i]
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
@@ -654,19 +631,28 @@ class IMFModel(nn.Module):
         # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)
 
-        if is_inference:
-            return reconstructed_frame
+        return reconstructed_frame, {
+            'dense_features': f_r,
+            'latent_tokens': (t_c, t_r),
+            'motion_features': (m_c, m_r),
+            'aligned_features': aligned_features
+        }
+
+    def set_noise_level(self, noise_level):
+        self.noise_level = noise_level
+
+    def set_style_mix_prob(self, style_mix_prob):
+        self.style_mix_prob = style_mix_prob
+
+    def process_tokens(self, t_c, t_r):
+        if isinstance(t_c, list) and isinstance(t_r, list):
+            m_c = [self.latent_token_decoder(tc) for tc in t_c]
+            m_r = [self.latent_token_decoder(tr) for tr in t_r]
         else:
-            return reconstructed_frame, {
-                'dense_features': f_r,
-                'latent_tokens': (t_c, t_r),
-                'motion_features': (m_c, m_r),
-                'aligned_features': aligned_features
-            }
-
-
-
-
+            m_c = self.latent_token_decoder(t_c)
+            m_r = self.latent_token_decoder(t_r)
+        
+        return m_c, m_r
 
 class MappingNetwork(nn.Module):
     def __init__(self, latent_dim, w_dim, depth):
