@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,PatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import normalize,visualize_latent_token, add_gradient_hooks, sample_recon
+from helper import count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -28,9 +28,6 @@ from stylegan import EMA
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
-
-def count_model_params(model):
-    return sum([p.numel() for p in model.parameters()]) / 1e6
 
 
 # from torch.optim.lr_scheduler import ReduceLROnPlateau

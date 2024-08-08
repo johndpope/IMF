@@ -8,8 +8,8 @@ import numpy as np
 import xformers.ops as xops
 
 from xformers.components.attention import Attention
-from xformers.components.feedforward import FeedForward
 from xformers.factory.model_factory import xFormerEncoderBlock
+from xformers.components.feedforward import FeedForward
 from torch.utils.checkpoint import checkpoint
 
 

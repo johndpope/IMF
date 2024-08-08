@@ -5,10 +5,11 @@ import torchvision.models as models
 from torch.utils.checkpoint import checkpoint
 import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_scaled import ImplicitMotionAlignment #- SLOW but reduces memory 2x/3x
-# from vit import ImplicitMotionAlignment
-from vit_xformers import ImplicitMotionAlignment
+from vit import ImplicitMotionAlignment
+# from vit_xformers import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from pixelwise import PixelwiseSeparateConv, SNPixelwiseSeparateConv
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
@@ -20,6 +21,32 @@ def debug_print(*args, **kwargs):
 
 use_pixelwise = True
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
+class EfficientFeatureExtractor(nn.Module):
+    def __init__(self, output_channels=[24, 40, 112, 320]):
+        super().__init__()
+        # Load pre-trained EfficientNet-B0
+        self.backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1).features
+        
+        # Define where to extract features
+        self.feature_indices = [2, 3, 5, 7]  # Corresponds to different stages in EfficientNet
+        
+        # Add 1x1 convolutions to adjust channel dimensions if needed
+        self.adjustments = nn.ModuleList([
+            nn.Conv2d(self.backbone[i][-1].out_channels, out_channels, kernel_size=1)
+            for i, out_channels in zip(self.feature_indices, output_channels)
+        ])
+
+    def forward(self, x):
+        features = []
+        for i, layer in enumerate(self.backbone):
+            x = layer(x)
+            if i in self.feature_indices:
+                adj_index = self.feature_indices.index(i)
+                features.append(self.adjustments[adj_index](x))
+        return features
+
+
+
 class ResNetFeatureExtractor(nn.Module):
     def __init__(self, pretrained=True, output_channels=[128, 256, 512, 512]):
         super().__init__()
@@ -570,6 +597,9 @@ class IMFModel(nn.Module):
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
         self.feature_dims = [128, 256, 512, 512]  # values
         self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
+        
+        # self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
+        
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
