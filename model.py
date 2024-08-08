@@ -595,7 +595,7 @@ class IMFModel(nn.Module):
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
-        self.feature_dims = [24, 40, 112, 320]
+        self.feature_dims = [80, 160, 320, 320]
         self.motion_dims = [80, 160, 320, 320]
         self.decoder_dims = [320, 160, 80, 40]
         # self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
