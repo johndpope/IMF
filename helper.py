@@ -28,7 +28,7 @@ def count_model_params(model, trainable_only=False, verbose=False):
     total_params = 0
     trainable_params = 0
     param_counts = defaultdict(int)
-    
+
     for name, module in model.named_modules():
         for param_name, param in module.named_parameters():
             if param.requires_grad:
@@ -38,7 +38,7 @@ def count_model_params(model, trainable_only=False, verbose=False):
             # Count parameters for each layer type
             layer_type = module.__class__.__name__
             param_counts[layer_type] += param.numel()
-    
+
     if verbose:
         print(f"{'Layer Type':<20} {'Parameter Count':<15} {'% of Total':<10}")
         print("-" * 45)
@@ -48,11 +48,12 @@ def count_model_params(model, trainable_only=False, verbose=False):
         print("-" * 45)
         print(f"{'Total':<20} {total_params:<15,d} 100.00%")
         print(f"{'Trainable':<20} {trainable_params:<15,d} {trainable_params/total_params*100:.2f}%")
-    
+
     if trainable_only:
         return trainable_params / 1e6, dict(param_counts)
     else:
         return total_params / 1e6, dict(param_counts)
+
 
 def normalize(tensor):
     mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(tensor.device)
