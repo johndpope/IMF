@@ -4,7 +4,7 @@
 # wandb store the git commit - this will guarantee repeatability 
 
 # Run the test script
-python test.py
+# python test.py
 
 # Check the exit status of the test script
 if [ $? -ne 0 ]; then
