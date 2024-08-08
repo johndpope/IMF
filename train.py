@@ -29,6 +29,10 @@ def load_config(config_path):
     return OmegaConf.load(config_path)
 
 
+def count_model_params(model):
+    return sum([p.numel() for p in model.parameters()]) / 1e6
+
+
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 def train(config, model, discriminator, train_dataloader, accelerator):
     optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
@@ -324,6 +328,12 @@ def main():
         pin_memory=True,
         collate_fn=gpu_padded_collate 
     )
+
+    accelerator.print("The Model parameters: imfmodel {:.2f}M, discriminator: {:.2f}M".format(
+        count_model_params(model), count_model_params(discriminator)
+    ))
+
+
 
     train(config, model, discriminator, dataloader, accelerator)
 

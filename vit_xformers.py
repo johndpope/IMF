@@ -5,7 +5,9 @@ import math
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 import numpy as np
-
+import xformers.ops as xops
+from xformers.components import Attention, FeedForward
+from xformers.factory import xFormerEncoderBlock
 
 # https://medium.com/pytorch/training-compact-transformers-from-scratch-in-30-minutes-with-pytorch-ff5c21668ed5
 class PositionalEncoding(nn.Module):
@@ -23,36 +25,28 @@ class PositionalEncoding(nn.Module):
 
 
 
+
 class TransformerBlock(nn.Module):
     def __init__(self, dim, heads, dim_head, mlp_dim):
         super().__init__()
-        self.attention = nn.MultiheadAttention(dim, heads)
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, mlp_dim),
-            nn.GELU(),
-            nn.Linear(mlp_dim, dim)
+        self.block = xFormerEncoderBlock(
+            dim=dim,
+            num_heads=heads,
+            attention_kwargs={"attention_type": "linear"},
+            feedforward_kwargs={
+                "feedforward_type": "mlp",
+                "hidden_layer_multiplier": mlp_dim // dim,
+                "activation": "gelu"
+            }
         )
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
-
 
     def forward(self, x):
-        #print(f"TransformerBlock input shape: {x.shape}")
         B, C, H, W = x.shape
         x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
         
-        x_norm = self.norm1(x_reshaped)
-        att_output, _ = self.attention(x_norm, x_norm, x_norm)
-        x_reshaped = x_reshaped + att_output
-        #print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
-
-        ff_output = self.mlp(self.norm2(x_reshaped))
-        x_reshaped = x_reshaped + ff_output
-        #print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
-
-        output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
-        #print(f"TransformerBlock output shape: {output.shape}")
-        return output
+        output = self.block(x_reshaped)
+        
+        return output.permute(1, 2, 0).view(B, C, H, W)
 
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, depth=2, heads=8, dim_head=64, mlp_dim=1024):
@@ -127,44 +121,32 @@ class CrossAttentionModule(nn.Module):
         self.to_v = nn.Linear(feature_dim, heads * dim_head)
         self.to_out = nn.Linear(heads * dim_head, feature_dim)
 
-        # Separate positional encodings for queries and keys
         self.pos_encoding_q = PositionalEncoding(motion_dim)
         self.pos_encoding_k = PositionalEncoding(motion_dim)
 
     def forward(self, ml_c, ml_r, fl_r):
-        #print(f"CrossAttentionModule input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-        
         B, C_m, H, W = ml_c.shape
         _, C_f, _, _ = fl_r.shape
 
-        # Flatten inputs
         ml_c = ml_c.view(B, C_m, H*W).permute(2, 0, 1)
         ml_r = ml_r.view(B, C_m, H*W).permute(2, 0, 1)
         fl_r = fl_r.view(B, C_f, H*W).permute(2, 0, 1)
-        #print(f"After flattening - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
 
-        # Generate and add positional encodings
         p_q = self.pos_encoding_q(ml_c)
         p_k = self.pos_encoding_k(ml_r)
         ml_c = ml_c + p_q
         ml_r = ml_r + p_k
-        #print(f"After adding positional encodings - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}")
 
-        # Compute Q, K, V
         q = self.to_q(ml_c).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
         k = self.to_k(ml_r).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
         v = self.to_v(fl_r).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
-        #print(f"Q, K, V shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Compute attention weights and output
-        attention_weights = F.softmax(torch.matmul(q, k.transpose(-1, -2)) * self.scale, dim=-1)
-        V_prime = torch.matmul(attention_weights, v)
+        # Use xformers memory_efficient_attention
+        V_prime = xops.memory_efficient_attention(q, k, v, scale=self.scale)
         V_prime = V_prime.permute(0, 2, 1, 3).contiguous().view(B, H*W, self.heads * self.dim_head)
         V_prime = self.to_out(V_prime)
-        #print(f"V_prime shape before final reshape: {V_prime.shape}")
 
         output = V_prime.permute(0, 2, 1).view(B, C_f, H, W)
-        #print(f"CrossAttentionModule output shape: {output.shape}")
         return output
 
 
