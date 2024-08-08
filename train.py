@@ -314,7 +314,7 @@ def main():
     dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
                            transform=transform, 
                            frame_skip=0, 
-                           num_frames=24)
+                           num_frames=240)
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
