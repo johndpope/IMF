@@ -57,6 +57,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     r1_gamma = config.training.r1_gamma  # R1 regularization strength
 
 
+    global_step = 0
+
     for epoch in range(config.training.num_epochs):
         model.train()
         discriminator.train()
@@ -64,8 +66,6 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         total_g_loss = 0
         total_d_loss = 0
-
-        global_step = 0
 
         for batch_idx, batch in enumerate(train_dataloader):
             source_frames = batch['frames']
@@ -320,8 +320,8 @@ def main():
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
-        num_workers=4,
-        persistent_workers=True,
+        num_workers=1,
+        # persistent_workers=True,
         pin_memory=True,
         collate_fn=gpu_padded_collate 
     )
