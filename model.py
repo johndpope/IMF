@@ -12,7 +12,7 @@ import colored_traceback.auto # makes terminal show color coded output when cras
 DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
-        print(*args, **kwargs)
+        debug_print(*args, **kwargs)
 
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
 class ResNetFeatureExtractor(nn.Module):
@@ -407,13 +407,13 @@ class FrameDecoder(nn.Module):
 
     def forward(self, features):
         f_c1, f_c2,f_c3, f_c4  = features
-        print(f"Input f_c4 shape: {f_c4.shape}") #  [1, 512, 8, 8]
+        debug_print(f"Input f_c4 shape: {f_c4.shape}") #  [1, 512, 8, 8]
         
         spatial_dims = [f.shape[-1] for f in [f_c4, f_c3, f_c2, f_c1]]
         assert spatial_dims == sorted(spatial_dims), f"Spatial dimensions must be in ascending order. Got: {spatial_dims}"
         # First UpConvResBlock
         x = self.upconv_512_1(f_c4)
-        print(f"After 1st UpConvResBlock-512, ↑2 shape: {x.shape}") # [1, 512, 16, 16]
+        debug_print(f"After 1st UpConvResBlock-512, ↑2 shape: {x.shape}") # [1, 512, 16, 16]
         
         # First FeatResBlock and concatenation
         f3 = self.feat_res_512(f_c3)
@@ -421,33 +421,33 @@ class FrameDecoder(nn.Module):
 
         # Second UpConvResBlock
         x = self.upconv_512_2(x)
-        print(f"After 2nd UpConvResBlock-512, ↑2 shape: {x.shape}") #[1, 512, 32, 32]
+        debug_print(f"After 2nd UpConvResBlock-512, ↑2 shape: {x.shape}") #[1, 512, 32, 32]
         
         # Second FeatResBlock and concatenation
         f2 = self.feat_res_512_2(f_c2)
         x = torch.cat([x, f2], dim=1)
-        print(f"After concat with f_c2 shape: {x.shape}") # [1, 1024, 32, 32]
+        debug_print(f"After concat with f_c2 shape: {x.shape}") # [1, 1024, 32, 32]
         
         # Third UpConvResBlock
         x = self.upconv_256(x)
-        print(f"After UpConvResBlock-256, ↑2 shape: {x.shape}") # [1, 256, 64, 64]
+        debug_print(f"After UpConvResBlock-256, ↑2 shape: {x.shape}") # [1, 256, 64, 64]
         
         # Third FeatResBlock and concatenation
         f1 = self.feat_res_256(f_c1)
         x = torch.cat([x, f1], dim=1)
-        print(f"After concat with f_c1 shape: {x.shape}") # [1, 512, 64, 64]
+        debug_print(f"After concat with f_c1 shape: {x.shape}") # [1, 512, 64, 64]
         
         # Final UpConvResBlocks
         x = self.upconv_128(x)
-        print(f"After UpConvResBlock-128, ↑2 shape: {x.shape}")
+        debug_print(f"After UpConvResBlock-128, ↑2 shape: {x.shape}")
         
         x = self.upconv_64(x)
-        print(f"After UpConvResBlock-64, ↑2 shape: {x.shape}")
+        debug_print(f"After UpConvResBlock-64, ↑2 shape: {x.shape}")
         
         # Final convolution and activation
         x = self.final_conv(x)
         x = self.sigmoid(x)
-        print(f"Final output shape: {x.shape}")
+        debug_print(f"Final output shape: {x.shape}")
         
         return x
 
