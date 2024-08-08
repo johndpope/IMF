@@ -225,26 +225,26 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
                         num_samples=config.logging.sample_size)
 
-        # Calculate average losses for the epoch
-        avg_g_loss = total_g_loss / len(train_dataloader)
-        avg_d_loss = total_d_loss / len(train_dataloader)
-        # Step the schedulers
-        scheduler_g.step(avg_g_loss)
-        scheduler_d.step(avg_d_loss)
-        # Logging
-        if accelerator.is_main_process:
-            wandb.log({
-                "batch_g_loss": g_loss.item(),
-                "batch_d_loss": d_loss.item(),
-                "pixel_loss": l_p.item(),
-                "perceptual_loss": l_v.item(),
-                "gan_loss": g_loss_gan.item(),
-                "batch": batch_idx + epoch * len(train_dataloader),
-                "lr_g": optimizer_g.param_groups[0]['lr'],
-                "lr_d": optimizer_d.param_groups[0]['lr']
-            })
+            # Calculate average losses for the epoch
+            avg_g_loss = total_g_loss / len(train_dataloader)
+            avg_d_loss = total_d_loss / len(train_dataloader)
+            # Step the schedulers
+            scheduler_g.step(avg_g_loss)
+            scheduler_d.step(avg_d_loss)
+            # Logging
+            if accelerator.is_main_process:
+                wandb.log({
+                    "batch_g_loss": g_loss.item(),
+                    "batch_d_loss": d_loss.item(),
+                    "pixel_loss": l_p.item(),
+                    "perceptual_loss": l_v.item(),
+                    "gan_loss": g_loss_gan.item(),
+                    "batch": batch_idx + epoch * len(train_dataloader),
+                    "lr_g": optimizer_g.param_groups[0]['lr'],
+                    "lr_d": optimizer_d.param_groups[0]['lr']
+                })
 
-  
+    
 
         progress_bar.close()
 
