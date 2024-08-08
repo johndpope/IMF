@@ -36,7 +36,7 @@ class TestNeuralNetworkComponents(unittest.TestCase):
         self.assertEqual(output.shape, (self.B, 10, self.feature_dim))
 
     def test_transformer_block(self):
-        tb = TransformerBlock(dim=self.feature_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
+        tb = TransformerBlock(feature_dim=self.feature_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
         x = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
         output = tb(x)
         self.assertEqual(output.shape, (self.B, self.C_f, self.H, self.W))
@@ -102,10 +102,10 @@ class TestNeuralNetworkComponents(unittest.TestCase):
             self.assertEqual(m_r_x.shape, m_c_x.shape, "Shapes of reference and current outputs should match")
 
     def test_frame_decoder(self):
-        f_c4 = torch.randn(self.B, 512, 8, 8).to(self.device)
-        f_c3 = torch.randn(self.B, 512, 16, 16).to(self.device)
-        f_c2 = torch.randn(self.B, 512, 32, 32).to(self.device)
-        f_c1 = torch.randn(self.B, 256, 64, 64).to(self.device)
+        f_c1 = torch.randn(self.B, 512, 8, 8).to(self.device)
+        f_c2 = torch.randn(self.B, 512, 16, 16).to(self.device)
+        f_c3 = torch.randn(self.B, 512, 32, 32).to(self.device)
+        f_c4 = torch.randn(self.B, 256, 64, 64).to(self.device)
 
         model = FrameDecoder().to(self.device)
         output = model([f_c4, f_c3, f_c2, f_c1])

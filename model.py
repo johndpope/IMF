@@ -9,7 +9,7 @@ from stylegan import EqualConv2d,EqualLinear
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -406,9 +406,11 @@ class FrameDecoder(nn.Module):
 
 
     def forward(self, features):
-        f_c4, f_c3, f_c2, f_c1 = features
+        f_c1, f_c2,f_c3, f_c4  = features
         print(f"Input f_c4 shape: {f_c4.shape}") #  [1, 512, 8, 8]
         
+        spatial_dims = [f.shape[-1] for f in [f_c4, f_c3, f_c2, f_c1]]
+        assert spatial_dims == sorted(spatial_dims), f"Spatial dimensions must be in ascending order. Got: {spatial_dims}"
         # First UpConvResBlock
         x = self.upconv_512_1(f_c4)
         print(f"After 1st UpConvResBlock-512, ↑2 shape: {x.shape}") # [1, 512, 16, 16]
@@ -568,10 +570,10 @@ class IMFModel(nn.Module):
         super().__init__()
         
         self.motion_dims = [256, 512, 512, 512]  # Output of LatentTokenDecoder - "512 channels for most of the layers, switching to 256 channels for the final three layer" (m⁴, m³, m², m¹) 
-        self.feature_dims = [256, 256, 512, 512]  # This should match the output of DenseFeatureEncoder
+        self.feature_dims = [256, 512, 512, 512]  # This should match the output of DenseFeatureEncoder
 
 
-        self.feature_extractor = ResNetFeatureExtractor(output_channels=[256, 512, 512, 512])
+        self.feature_extractor = ResNetFeatureExtractor(output_channels=self.feature_dims)
         self.latent_token_encoder = LatentTokenEncoder() 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
@@ -629,6 +631,11 @@ class IMFModel(nn.Module):
         # Latent token decoding
         m_r = checkpoint(self.latent_token_decoder, t_r)
         m_c = checkpoint(self.latent_token_decoder, t_c)
+        for r in m_r:
+            print(f"m_r:{r.shape}")
+
+        for c in m_c:
+            print(f"m_c:{c.shape}")
 
         # Implicit motion alignment with noise injection
         aligned_features = []
