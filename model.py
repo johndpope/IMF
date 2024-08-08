@@ -576,8 +576,7 @@ class IMFModel(nn.Module):
                 feature_dim=feature_dim,
                 motion_dim=motion_dim,
                 heads=8,
-                dim_head=64,
-                mlp_dim=1024
+                dim_head=64
             ))
         
         self.frame_decoder = FrameDecoder()
