@@ -45,21 +45,21 @@ class TransformerBlock(nn.Module):
 
 
     def forward(self, x):
-        #print(f"TransformerBlock input shape: {x.shape}")
+        print(f"TransformerBlock input shape: {x.shape}")
         B, C, H, W = x.shape
         x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
         
         x_norm = self.norm1(x_reshaped)
         att_output, _ = self.attention(x_norm, x_norm, x_norm)
         x_reshaped = x_reshaped + att_output
-        #print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
+        print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
 
         ff_output = self.mlp(self.norm2(x_reshaped))
         x_reshaped = x_reshaped + ff_output
-        #print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
+        print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
 
         output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
-        #print(f"TransformerBlock output shape: {output.shape}")
+        print(f"TransformerBlock output shape: {output.shape}")
         return output
 
 class ImplicitMotionAlignment(nn.Module):
