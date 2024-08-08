@@ -220,29 +220,29 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 total_d_loss += d_loss.item()
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
-        # Sample and save reconstructions
-            sample_path = f"recon_epoch_{epoch+1}_batch_{ref_idx}.png"
-            sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
-                        num_samples=config.logging.sample_size)
+    # Sample and save reconstructions
+        sample_path = f"recon_epoch_{epoch+1}_batch_{ref_idx}.png"
+        sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                    num_samples=config.logging.sample_size)
 
-            # Calculate average losses for the epoch
-            avg_g_loss = total_g_loss / len(train_dataloader)
-            avg_d_loss = total_d_loss / len(train_dataloader)
-            # Step the schedulers
-            scheduler_g.step(avg_g_loss)
-            scheduler_d.step(avg_d_loss)
-            # Logging
-            if accelerator.is_main_process:
-                wandb.log({
-                    "batch_g_loss": g_loss.item(),
-                    "batch_d_loss": d_loss.item(),
-                    "pixel_loss": l_p.item(),
-                    "perceptual_loss": l_v.item(),
-                    "gan_loss": g_loss_gan.item(),
-                    "batch": batch_idx + epoch * len(train_dataloader),
-                    "lr_g": optimizer_g.param_groups[0]['lr'],
-                    "lr_d": optimizer_d.param_groups[0]['lr']
-                })
+        # Calculate average losses for the epoch
+        avg_g_loss = total_g_loss / len(train_dataloader)
+        avg_d_loss = total_d_loss / len(train_dataloader)
+        # Step the schedulers
+        scheduler_g.step(avg_g_loss)
+        scheduler_d.step(avg_d_loss)
+        # Logging
+        if accelerator.is_main_process:
+            wandb.log({
+                "batch_g_loss": g_loss.item(),
+                "batch_d_loss": d_loss.item(),
+                "pixel_loss": l_p.item(),
+                "perceptual_loss": l_v.item(),
+                "gan_loss": g_loss_gan.item(),
+                "batch": batch_idx + epoch * len(train_dataloader),
+                "lr_g": optimizer_g.param_groups[0]['lr'],
+                "lr_d": optimizer_d.param_groups[0]['lr']
+            })
 
   
 
@@ -297,27 +297,30 @@ def main():
     #     transform=transform
     # )
 
-    dataset = EMODataset(
-        use_gpu=True,
-        remove_background=False,
-        width=256,
-        height=256,
-        sample_rate=24,
-        img_scale=(1.0, 1.0),
-        video_dir=config.dataset.root_dir,
-        json_file=config.dataset.json_file,
-        transform=transform,
-        apply_crop_warping=False
-    )
+    # dataset = EMODataset(
+    #     use_gpu=True,
+    #     remove_background=False,
+    #     width=256,
+    #     height=256,
+    #     sample_rate=24,
+    #     img_scale=(1.0, 1.0),
+    #     video_dir=config.dataset.root_dir,
+    #     json_file=config.dataset.json_file,
+    #     transform=transform,
+    #     apply_crop_warping=False
+    # )
 
 
-
+    dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
+                           transform=transform, 
+                           frame_skip=0, 
+                           num_frames=2)
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
         num_workers=1,
-        # persistent_workers=True,
-        # pin_memory=True,
+        persistent_workers=True,
+        pin_memory=True,
         collate_fn=gpu_padded_collate 
     )
 

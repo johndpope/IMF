@@ -1,69 +1,79 @@
-from torch.utils.data import Dataset
-from decord import VideoReader, cpu
-import decord
-from PIL import Image
-from typing import List, Tuple, Dict, Any
-import random
-import torch
-from torch.utils.data import IterableDataset
-from decord import VideoReader, cpu
-import torchvision.transforms as transforms
-import random
 import os
+import random
+from PIL import Image
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
 
 class VideoDataset(Dataset):
-    def __init__(self, root_dir, transform=None, frame_skip=0):
+    def __init__(self, root_dir, transform=None, frame_skip=0, num_frames=2):
         self.root_dir = root_dir
         self.transform = transform
         self.frame_skip = frame_skip
-        self.video_files = [os.path.join(subdir, file)
-                            for subdir, dirs, files in os.walk(root_dir)
-                            for file in files if file.endswith('.mp4')]
-        decord.bridge.set_bridge('torch')  # Optional: This line sets decord to directly output PyTorch tensors.
-        self.ctx = decord.cpu()
+        self.num_frames = num_frames
+        self.video_folders = [f.path for f in os.scandir(root_dir) if f.is_dir()]
+        self.video_frames = self._count_frames()
+
+    def _count_frames(self):
+        video_frames = []
+        for folder in self.video_folders:
+            frames = [f for f in os.listdir(folder) if f.endswith('.jpg')]
+            video_frames.append(len(frames))
+        return video_frames
 
     def __len__(self):
-        return len(self.video_files)  # You can adjust this value based on how many samples you want per epoch
+        return len(self.video_folders)
 
     def augmentation(self, images, transform, state=None):
         if state is not None:
             torch.set_rng_state(state)
-        if isinstance(images, list):
-            transformed_images = [transform(img) for img in images]
-            ret_tensor = torch.stack(transformed_images, dim=0)  # (f, c, h, w)
-        else:
-            ret_tensor = transform(images)  # (c, h, w)
-        return ret_tensor
+        transformed_images = [transform(img) for img in images]
+        return torch.stack(transformed_images, dim=0)  # (f, c, h, w)
 
     def __getitem__(self, idx):
-        video_path = random.choice(self.video_files)
-        vr = VideoReader(video_path, ctx=self.ctx)
+        video_folder = self.video_folders[idx]
+        frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.jpg')])
         
-        # Ensure we can get both current and reference frames
-        max_frame_idx = len(vr) - self.frame_skip - 1
-        if max_frame_idx < 0:
-            # If the video is too short, choose another one
-            return self.__getitem__(idx)
+        if len(frames) < self.num_frames:
+            # If not enough frames, duplicate the last frame
+            frames = frames + [frames[-1]] * (self.num_frames - len(frames))
         
-        current_frame_idx = random.randint(0, max_frame_idx)
-        reference_frame_idx = 1 # the reference frame is constant, current_frame_idx + self.frame_skip
+        start_idx = random.randint(0, len(frames) - self.num_frames)
+        frame_indices = range(start_idx, start_idx + self.num_frames)
         
-        current_frame = Image.fromarray(vr[current_frame_idx].numpy())  
-        reference_frame = Image.fromarray(vr[reference_frame_idx].numpy())  
+        vid_pil_image_list = []
+        for i in frame_indices:
+            img_path = os.path.join(video_folder, frames[i])
+            img = Image.open(img_path).convert('RGB')
+            vid_pil_image_list.append(img)
 
         if self.transform:
             state = torch.get_rng_state()
-            current_frame = self.augmentation(current_frame, self.transform, state)
-            reference_frame = self.augmentation(reference_frame, self.transform, state)
+            vid_tensor = self.augmentation(vid_pil_image_list, self.transform, state)
+        else:
+            vid_tensor = torch.stack([transforms.ToTensor()(img) for img in vid_pil_image_list])
 
-        return current_frame, reference_frame
-    
-    def _get_video_and_frame(self, idx):
-        for video_idx, video_path in enumerate(self.video_files):
-            vr = VideoReader(video_path, ctx=cpu(0))
-            num_frames = max(0, len(vr) - self.frame_skip)
-            if idx < num_frames:
-                return video_idx, idx
-            idx -= num_frames
-        raise IndexError("Index out of range")
+        return {
+            "frames": vid_tensor,
+            # "tensor": vid_tensor,
+            "video_name": os.path.basename(video_folder)
+        }
 
+# Example usage
+if __name__ == "__main__":
+    transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+    ])
+
+    dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
+                           transform=transform, 
+                           frame_skip=0, 
+                           num_frames=2)
+    print(f"Total videos in dataset: {len(dataset)}")
+
+    sample = dataset[0]
+    print(f"Sample keys: {sample.keys()}")
+    print(f"Number of PIL images: {len(sample['frames'])}")
+    print(f"Tensor shape: {sample['tensor'].shape}")
+    print(f"Video name: {sample['video_name']}")
