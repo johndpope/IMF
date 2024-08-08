@@ -12,6 +12,6 @@ if [ $? -ne 0 ]; then
 else
     echo "Test passed (micro-commit)...."
     git add .
-    git commit -m "🧗 Commit Recovery"
+    git commit -m "🧗"
     python train.py
 fi
