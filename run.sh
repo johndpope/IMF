@@ -5,7 +5,7 @@
 
 # Run the test script
 # python test.py
-
+nvidia-smi
 # Check the exit status of the test script
 if [ $? -ne 0 ]; then
     exit 1
