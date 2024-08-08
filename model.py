@@ -381,25 +381,26 @@ class StyledConv(nn.Module):
         return x
 
 class LatentTokenDecoder(nn.Module):
-    def __init__(self, latent_dim=32, const_dim=32):
+    def __init__(self, latent_dim=32, const_dim=32, output_channels=[80, 160, 320, 320]):
         super().__init__()
         self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
         
         self.style_conv_layers = nn.ModuleList([
-            StyledConv(const_dim, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim, upsample=True),
-            StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim, upsample=True),
-            StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim, upsample=True),
-            StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 256, 3, latent_dim, upsample=True),
-            StyledConv(256, 256, 3, latent_dim),
-            StyledConv(256, 256, 3, latent_dim)
+            StyledConv(const_dim, output_channels[3], 3, latent_dim),
+            StyledConv(output_channels[3], output_channels[3], 3, latent_dim, upsample=True),
+            StyledConv(output_channels[3], output_channels[3], 3, latent_dim),
+            StyledConv(output_channels[3], output_channels[3], 3, latent_dim),
+            StyledConv(output_channels[3], output_channels[2], 3, latent_dim, upsample=True),
+            StyledConv(output_channels[2], output_channels[2], 3, latent_dim),
+            StyledConv(output_channels[2], output_channels[2], 3, latent_dim),
+            StyledConv(output_channels[2], output_channels[1], 3, latent_dim, upsample=True),
+            StyledConv(output_channels[1], output_channels[1], 3, latent_dim),
+            StyledConv(output_channels[1], output_channels[1], 3, latent_dim),
+            StyledConv(output_channels[1], output_channels[0], 3, latent_dim, upsample=True),
+            StyledConv(output_channels[0], output_channels[0], 3, latent_dim),
+            StyledConv(output_channels[0], output_channels[0], 3, latent_dim)
         ])
+
 
     def forward(self, t):
         x = self.const.repeat(t.shape[0], 1, 1, 1)
@@ -426,25 +427,25 @@ The channel dimensions decrease as we go up the network: 512 → 512 → 256 →
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
 class FrameDecoder(nn.Module):
-    def __init__(self):
+    def __init__(self, input_channels=[80, 160, 320, 320]):
         super().__init__()
         
         self.upconv_blocks = nn.ModuleList([
-            UpConvResBlock(512, 512),
-            UpConvResBlock(1024, 512),
-            UpConvResBlock(768, 256),
-            UpConvResBlock(384, 128),
-            UpConvResBlock(128, 64)
+            UpConvResBlock(input_channels[3], input_channels[2]),
+            UpConvResBlock(input_channels[2] * 2, input_channels[1]),
+            UpConvResBlock(input_channels[1] * 2, input_channels[0]),
+            UpConvResBlock(input_channels[0] * 2, input_channels[0] // 2),
+            UpConvResBlock(input_channels[0] // 2, input_channels[0] // 4)
         ])
         
         self.feat_blocks = nn.ModuleList([
-            nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
+            nn.Sequential(*[FeatResBlock(input_channels[2]) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(input_channels[1]) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(input_channels[0]) for _ in range(3)])
         ])
         
         self.final_conv = nn.Sequential(
-            PixelwiseSeparateConv(64, 3, kernel_size=3, stride=1, padding=1),
+            PixelwiseSeparateConv(input_channels[0] // 4, 3, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
 
@@ -594,11 +595,12 @@ class IMFModel(nn.Module):
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
-        self.motion_dims = [256, 512, 512, 512]  # queries / keys
-        self.feature_dims = [128, 256, 512, 512]  # values
-        self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
+        self.feature_dims = [24, 40, 112, 320]
+        self.motion_dims = [80, 160, 320, 320]
+        self.decoder_dims = [320, 160, 80, 40]
+        # self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
         
-        # self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
+        self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
         
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
@@ -611,7 +613,7 @@ class IMFModel(nn.Module):
                 dim_head=64
             ))
         
-        self.frame_decoder = FrameDecoder()
+        self.frame_decoder = FrameDecoder(input_channels=self.motion_dims)
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
 
@@ -747,10 +749,9 @@ Output: The forward method returns a list containing the outputs from both scale
 Weight Initialization: A helper function init_weights is provided to initialize the weights of the network, which can be applied using the apply method.
 '''
 class PatchDiscriminator(nn.Module):
-    def __init__(self, input_nc=3, ndf=64):
+    def __init__(self, input_nc=3, ndf=80):
         super(PatchDiscriminator, self).__init__()
         
-          
         self.scale1 = nn.Sequential(
             SNPixelwiseSeparateConv(input_nc, ndf, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2, inplace=True),
@@ -760,10 +761,7 @@ class PatchDiscriminator(nn.Module):
             SNPixelwiseSeparateConv(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
             nn.InstanceNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
-            SNPixelwiseSeparateConv(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNPixelwiseSeparateConv(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+            SNPixelwiseSeparateConv(ndf * 4, 1, kernel_size=1, stride=1, padding=0)
         )
         
         self.scale2 = nn.Sequential(
@@ -775,10 +773,7 @@ class PatchDiscriminator(nn.Module):
             SNConv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
             nn.InstanceNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+            SNConv2d(ndf * 4, 1, kernel_size=1, stride=1, padding=0)
         )
 
     def forward(self, x):
