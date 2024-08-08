@@ -23,7 +23,7 @@ from torch.utils.checkpoint import checkpoint
 
 
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -409,9 +409,9 @@ class FrameDecoder(nn.Module):
         super().__init__()
         self.upconv_512_1 = UpConvResBlock(512, 512)
         self.feat_res_512 = nn.Sequential(*[FeatResBlock(512) for _ in range(3)])
-        self.upconv_512_2 = UpConvResBlock(1024, 512)
+        self.upconv_512_2 = UpConvResBlock(1024, 512) # implied from diagram as we concat 512 + 512
         self.feat_res_512_2 = nn.Sequential(*[FeatResBlock(512) for _ in range(3)])
-        self.upconv_256 = UpConvResBlock(1024, 256)
+        self.upconv_256 = UpConvResBlock(1024, 256) # looks harsh downgrade - is diagram wrong 🤷
         self.feat_res_256 = nn.Sequential(*[FeatResBlock(256) for _ in range(3)])
         self.upconv_128 = UpConvResBlock(512, 128)
         self.upconv_64 = UpConvResBlock(128, 64)
@@ -582,7 +582,7 @@ class IMFModel(nn.Module):
         super().__init__()
         
         self.motion_dims = [256, 512, 512, 512]  # Output of LatentTokenDecoder - "512 channels for most of the layers, switching to 256 channels for the final three layer" (m⁴, m³, m², m¹) 
-        self.feature_dims = [256, 512, 512, 512]  # This should match the output of DenseFeatureEncoder
+        self.feature_dims = [128, 256, 512, 512]  # This should match the output of DenseFeatureEncoder
 
 
         self.feature_extractor = ResNetFeatureExtractor(output_channels=self.feature_dims)
@@ -602,6 +602,9 @@ class IMFModel(nn.Module):
                 dim_head=64,
                 mlp_dim=1024
             ))
+
+
+
         self.frame_decoder = FrameDecoder()
 
         # StyleGAN2-like additions
