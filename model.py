@@ -39,7 +39,7 @@ class ResNetFeatureExtractor(nn.Module):
         self.adjust3 = nn.Conv2d(1024, output_channels[2], kernel_size=1)
         self.adjust4 = nn.Conv2d(2048, output_channels[3], kernel_size=1)
 
-        # for param in self.resnet.parameters():
+        # for param in self.resnet.parameters(): Shoots up vram by 10gb
         #     param.requires_grad = False
 
     def forward(self, x):
