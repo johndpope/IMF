@@ -582,10 +582,10 @@ class IMFModel(nn.Module):
         super().__init__()
         
         self.motion_dims = [256, 512, 512, 512]  # Output of LatentTokenDecoder - "512 channels for most of the layers, switching to 256 channels for the final three layer" (m⁴, m³, m², m¹) 
-        self.feature_dims = [128, 256, 512, 512]  # This should match the output of DenseFeatureEncoder
+        self.feature_dims = [256, 256, 512, 512]  # This should match the output of DenseFeatureEncoder
 
 
-        self.feature_extractor = ResNetFeatureExtractor(output_channels=self.feature_dims)
+        self.feature_extractor = ResNetFeatureExtractor(output_channels=[128, 256, 512, 512])
         self.latent_token_encoder = LatentTokenEncoder() 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 

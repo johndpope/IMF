@@ -69,17 +69,17 @@ def test_latent_token_decoder():
     et = LatentTokenEncoder(dm=dm)
     x_current = torch.randn(batch_size, 3, input_size, input_size)
     t_c = et(x_current)
-    print("t_c:",t_c.shape)
+    # print("t_c:",t_c.shape)
     
     # ref
     et = LatentTokenEncoder(dm=dm)
     x_ref = torch.randn(batch_size, 3, input_size, input_size)
     t_r = et(x_ref)
-    print("t_r:",t_r.shape)
+    # print("t_r:",t_r.shape)
 
     ef = DenseFeatureEncoder()
     features = ef(x_current)
-    print("\nFinal output shapes:")
+    # print("\nFinal output shapes:")
     for i, f_r in enumerate(features):
         print(f"f_r {i} shape: {f_r}")
 
