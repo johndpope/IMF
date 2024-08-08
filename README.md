@@ -10,6 +10,16 @@ The frame_skip in VideoDataset - is only at 1.
 ![Image](ok.png)
 
 
+
+
+**xformers + cuda **
+https://github.com/facebookresearch/xformers
+
+```shell
+pip3 install -U xformers --index-url https://download.pytorch.org/whl/cu121
+```
+
+
 # IMF (Implicit Motion Function) Training Outline
 
 ## 1. Network Architecture

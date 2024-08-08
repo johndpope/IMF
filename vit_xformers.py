@@ -10,7 +10,7 @@ import xformers.ops as xops
 from xformers.components.attention import Attention
 from xformers.components.feedforward import FeedForward
 from xformers.factory.model_factory import xFormerEncoderBlock
-
+from torch.utils.checkpoint import checkpoint
 
 
 
@@ -71,20 +71,12 @@ class ImplicitMotionAlignment(nn.Module):
         ])
 
     def forward(self, ml_c, ml_r, fl_r):
-        embeddings = []
+        V_prime = checkpoint(self.cross_attention, ml_c, ml_r, fl_r)
         
-        # Cross-attention module
-        V_prime = self.cross_attention(ml_c, ml_r, fl_r)
-        embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
-        #print(f"ImplicitMotionAlignment: After cross-attention, V_prime.shape = {V_prime.shape}")
+        for block in self.transformer_blocks:
+            V_prime = checkpoint(block, V_prime)
 
-        # Transformer blocks
-        for i, block in enumerate(self.transformer_blocks):
-            V_prime = block(V_prime)
-            embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
-            #print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
-
-        return V_prime #, embeddings
+        return V_prime 
 
 
     @staticmethod
