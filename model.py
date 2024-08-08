@@ -39,8 +39,8 @@ class ResNetFeatureExtractor(nn.Module):
         self.adjust3 = nn.Conv2d(1024, output_channels[2], kernel_size=1)
         self.adjust4 = nn.Conv2d(2048, output_channels[3], kernel_size=1)
 
-        for param in self.resnet.parameters():
-            param.requires_grad = False
+        # for param in self.resnet.parameters():
+        #     param.requires_grad = False
 
     def forward(self, x):
         debug_print(f"👟 ResNetFeatureExtractor input shape: {x.shape}")
