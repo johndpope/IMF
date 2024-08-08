@@ -6,8 +6,13 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 import numpy as np
 import xformers.ops as xops
-from xformers.components import Attention, FeedForward
-from xformers.factory import xFormerEncoderBlock
+
+from xformers.components.attention import Attention
+from xformers.components.feedforward import FeedForward
+from xformers.factory.model_factory import xFormerEncoderBlock
+
+
+
 
 # https://medium.com/pytorch/training-compact-transformers-from-scratch-in-30-minutes-with-pytorch-ff5c21668ed5
 class PositionalEncoding(nn.Module):
@@ -25,28 +30,33 @@ class PositionalEncoding(nn.Module):
 
 
 
-
 class TransformerBlock(nn.Module):
     def __init__(self, dim, heads, dim_head, mlp_dim):
         super().__init__()
-        self.block = xFormerEncoderBlock(
+        self.attention = Attention(
             dim=dim,
             num_heads=heads,
-            attention_kwargs={"attention_type": "linear"},
-            feedforward_kwargs={
-                "feedforward_type": "mlp",
-                "hidden_layer_multiplier": mlp_dim // dim,
-                "activation": "gelu"
-            }
+            attention_mechanism="scaled_dot_product"
         )
+        self.feedforward = FeedForward(
+            dim=dim,
+            hidden_layer_multiplier=mlp_dim // dim,
+            activation="gelu"
+        )
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
 
     def forward(self, x):
         B, C, H, W = x.shape
-        x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
+        x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)  # (H*W, B, C)
         
-        output = self.block(x_reshaped)
+        # Attention
+        attn_out = self.attention(self.norm1(x_reshaped)) + x_reshaped
         
-        return output.permute(1, 2, 0).view(B, C, H, W)
+        # Feedforward
+        ff_out = self.feedforward(self.norm2(attn_out)) + attn_out
+        
+        return ff_out.permute(1, 2, 0).view(B, C, H, W)
 
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, depth=2, heads=8, dim_head=64, mlp_dim=1024):
