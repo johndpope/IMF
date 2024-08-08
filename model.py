@@ -1,27 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-import torchvision.transforms as transforms
-from torchvision.utils import save_image
-import os
 import torchvision.models as models
-from memory_profiler import profile
-import colored_traceback.auto
 from torch.utils.checkpoint import checkpoint
-from performer_pytorch import SelfAttention
-import math
 import torch.nn.utils.spectral_norm as spectral_norm
-from einops import rearrange
-from einops.layers.torch import Rearrange
-import numpy as np
 from vit import ImplicitMotionAlignment
-import random
 from stylegan import EqualConv2d,EqualLinear
-from torch.utils.checkpoint import checkpoint
-
-
+# from common import DownConvResBlock,UpConvResBlock
+import colored_traceback.auto # makes terminal show color coded output when crash
 
 DEBUG = True
 def debug_print(*args, **kwargs):
@@ -585,7 +571,7 @@ class IMFModel(nn.Module):
         self.feature_dims = [256, 256, 512, 512]  # This should match the output of DenseFeatureEncoder
 
 
-        self.feature_extractor = ResNetFeatureExtractor(output_channels=[128, 256, 512, 512])
+        self.feature_extractor = ResNetFeatureExtractor(output_channels=[256, 512, 512, 512])
         self.latent_token_encoder = LatentTokenEncoder() 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 

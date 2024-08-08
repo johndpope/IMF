@@ -1,116 +1,137 @@
+import unittest
 import torch
 import torch.nn as nn
-from model import LatentTokenEncoder, LatentTokenDecoder, DenseFeatureEncoder,FrameDecoder
-# 
-# Test  latent_token_encoder
-def test_latent_token_encoder():
-    batch_size = 1
-    input_channels = 3
-    input_size = 256
-    dm = 32  # "The latent token dimension is dm = 32 for all experiments except for ablation studies."
+import sys
+import os
 
-    et = LatentTokenEncoder(dm=dm)
-    x = torch.randn(batch_size, input_channels, input_size, input_size)
+# Add the directory containing the module to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    output = et(x)
+from vit import PositionalEncoding, AdaptiveLayerNorm, TransformerBlock, ImplicitMotionAlignment, CrossAttentionModule
+from model import LatentTokenEncoder, LatentTokenDecoder, DenseFeatureEncoder, FrameDecoder
 
-    print(f"\nDebugging ET output shape: {output.shape}")
+class TestNeuralNetworkComponents(unittest.TestCase):
+    def setUp(self):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.B, self.C_f, self.C_m, self.H, self.W = 2, 256, 256, 64, 64
+        self.feature_dim = self.C_f
+        self.motion_dim = self.C_m
+        self.heads = 8
+        self.dim_head = 64
+        self.mlp_dim = 1024
+        self.dm = 32
+        self.input_size = 256
+        self.input_channels = 3
 
-    # Assert the output is a 2D tensor (latent token)
-    assert len(output.shape) == 2, f"❌ET output should be a 2D tensor (batch_size, dm), but got shape {output.shape}"
-    assert output.shape[0] == batch_size, f"❌First dimension should be batch_size ({batch_size}), but got {output.shape[0]}"
+    def test_positional_encoding(self):
+        pe = PositionalEncoding(d_model=self.motion_dim).to(self.device)
+        x = torch.randn(100, 1, self.motion_dim).to(self.device)
+        output = pe(x)
+        self.assertEqual(output.shape, (100, 1, self.motion_dim))
 
-    # Assert that dm is within the expected range
-    assert 32 <= output.shape[1] <= 1024, f"❌dm should be between 32 and 1024, got {output.shape[1]}"
+    def test_adaptive_layer_norm(self):
+        aln = AdaptiveLayerNorm(dim=self.feature_dim).to(self.device)
+        x = torch.randn(self.B, 10, self.feature_dim).to(self.device)
+        output = aln(x)
+        self.assertEqual(output.shape, (self.B, 10, self.feature_dim))
 
-    print("✅ All assertions for Latent Token Encoder (ET) passed!")
+    def test_transformer_block(self):
+        tb = TransformerBlock(dim=self.feature_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
+        x = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
+        output = tb(x)
+        self.assertEqual(output.shape, (self.B, self.C_f, self.H, self.W))
 
-# Test the adjusted DenseFeatureEncoder
-def test_dense_feature_encoder():
-    batch_size = 1
-    input_channels = 3
-    input_size = 256
-    
-    ef = DenseFeatureEncoder()
-    x = torch.randn(batch_size, input_channels, input_size, input_size)
-    
-    outputs = ef(x)
-    
-    print("\nFinal output shapes:")
-    for i, output in enumerate(outputs):
-        print(f"Output {i} shape: {output.shape}")
-    
-    # Assert the number of outputs (fr1, fr2, fr3, fr4)
-    assert len(outputs) == 4, f"❌ EF should produce 4 outputs, but got {len(outputs)}"
-    
-    # Assert the dimensions of each output
-    expected_shapes = [
-        (batch_size, 128, 64, 64),
-        (batch_size, 256, 32, 32),
-        (batch_size, 512, 16, 16),
-        (batch_size, 512, 8, 8)
-    ]
-    
-    for i, (output, expected_shape) in enumerate(zip(outputs, expected_shapes)):
-        assert output.shape == expected_shape, f"❌ fr{i+1} should be {expected_shape}, but got {output.shape}"
-    
-    print("✅ All assertions for Dense Feature Encoder (EF) passed!")
+    def test_cross_attention_module(self):
+        cam = CrossAttentionModule(motion_dim=self.motion_dim, feature_dim=self.feature_dim, heads=self.heads, dim_head=self.dim_head).to(self.device)
+        ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+        ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+        fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
+        output = cam(ml_c, ml_r, fl_r)
+        self.assertEqual(output.shape, (self.B, self.C_f, self.H, self.W))
 
+    def test_implicit_motion_alignment(self):
+        ima = ImplicitMotionAlignment(feature_dim=self.feature_dim, motion_dim=self.motion_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
+        ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+        ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+        fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
+        output = ima(ml_c, ml_r, fl_r)
+        self.assertEqual(output.shape, (self.B, self.C_f, self.H, self.W))
 
-# Test LatentTokenDecoder
-def test_latent_token_decoder():
-    batch_size = 1
-    dm = 32  # The latent token dimension
-    style_dim = 128  # Example style vector dimension
-    input_size = 256
+    def test_latent_token_encoder(self):
+        et = LatentTokenEncoder(dm=self.dm).to(self.device)
+        x = torch.randn(self.B, self.input_channels, self.input_size, self.input_size).to(self.device)
+        output = et(x)
+        
+        self.assertEqual(len(output.shape), 2, f"ET output should be a 2D tensor (batch_size, dm), but got shape {output.shape}")
+        self.assertEqual(output.shape[0], self.B, f"First dimension should be batch_size ({self.B}), but got {output.shape[0]}")
+        self.assertTrue(32 <= output.shape[1] <= 1024, f"dm should be between 32 and 1024, got {output.shape[1]}")
 
+    def test_dense_feature_encoder(self):
+        ef = DenseFeatureEncoder().to(self.device)
+        x = torch.randn(self.B, self.input_channels, self.input_size, self.input_size).to(self.device)
+        outputs = ef(x)
+        
+        self.assertEqual(len(outputs), 4, f"EF should produce 4 outputs, but got {len(outputs)}")
+        
+        expected_shapes = [
+            (self.B, 128, 64, 64),
+            (self.B, 256, 32, 32),
+            (self.B, 512, 16, 16),
+            (self.B, 512, 8, 8)
+        ]
+        
+        for i, (output, expected_shape) in enumerate(zip(outputs, expected_shapes)):
+            self.assertEqual(output.shape, expected_shape, f"fr{i+1} should be {expected_shape}, but got {output.shape}")
 
-    # current
-    et = LatentTokenEncoder(dm=dm)
-    x_current = torch.randn(batch_size, 3, input_size, input_size)
-    t_c = et(x_current)
-    # print("t_c:",t_c.shape)
-    
-    # ref
-    et = LatentTokenEncoder(dm=dm)
-    x_ref = torch.randn(batch_size, 3, input_size, input_size)
-    t_r = et(x_ref)
-    # print("t_r:",t_r.shape)
+    def test_latent_token_decoder(self):
+        et = LatentTokenEncoder(dm=self.dm).to(self.device)
+        latent_token_decoder = LatentTokenDecoder(latent_dim=self.dm).to(self.device)
+        
+        x_current = torch.randn(self.B, self.input_channels, self.input_size, self.input_size).to(self.device)
+        x_ref = torch.randn(self.B, self.input_channels, self.input_size, self.input_size).to(self.device)
+        
+        t_c = et(x_current)
+        t_r = et(x_ref)
+        
+        m_r = latent_token_decoder(t_r)
+        m_c = latent_token_decoder(t_c)
+        
+        self.assertEqual(len(m_r), len(m_c), "Number of outputs from LatentTokenDecoder should be the same for reference and current")
+        
+        for m_r_x, m_c_x in zip(m_r, m_c):
+            self.assertEqual(m_r_x.shape, m_c_x.shape, "Shapes of reference and current outputs should match")
 
-    ef = DenseFeatureEncoder()
-    features = ef(x_current)
-    # print("\nFinal output shapes:")
-    for i, f_r in enumerate(features):
-        print(f"f_r {i} shape: {f_r}")
+    def test_frame_decoder(self):
+        f_c4 = torch.randn(self.B, 512, 8, 8).to(self.device)
+        f_c3 = torch.randn(self.B, 512, 16, 16).to(self.device)
+        f_c2 = torch.randn(self.B, 512, 32, 32).to(self.device)
+        f_c1 = torch.randn(self.B, 256, 64, 64).to(self.device)
 
-    latent_token_decoder = LatentTokenDecoder(latent_dim=dm)
-    m_r = latent_token_decoder(t_r)
-    m_c = latent_token_decoder(t_c)
-    for i, m_r_x in enumerate(m_r):
-        print(f"m_r_x {i} shape: {m_r_x}")
+        model = FrameDecoder().to(self.device)
+        output = model([f_c4, f_c3, f_c2, f_c1])
+        
+        self.assertEqual(output.shape, (self.B, 3, 256, 256), f"Expected output shape (self.B, 3, 256, 256), but got {output.shape}")
 
+    def test_invalid_input_shapes(self):
+        ima = ImplicitMotionAlignment(feature_dim=self.feature_dim, motion_dim=self.motion_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
+        
+        with self.assertRaises(RuntimeError):
+            ml_c = torch.randn(self.B + 1, self.C_m, self.H, self.W).to(self.device)
+            ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+            fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
+            ima(ml_c, ml_r, fl_r)
 
-    print("✅ All assertions for Latent Token Decoder passed!")
+        with self.assertRaises(RuntimeError):
+            ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+            ml_r = torch.randn(self.B, self.C_m + 1, self.H, self.W).to(self.device)
+            fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
+            ima(ml_c, ml_r, fl_r)
 
+        with self.assertRaises(RuntimeError):
+            ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+            ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
+            fl_r = torch.randn(self.B, self.C_f, self.H + 1, self.W).to(self.device)
+            ima(ml_c, ml_r, fl_r)
 
-def test_frame_decoder():
-    # Assuming input sizes. These may need adjustment based on actual input dimensions.
-    f_c4 = torch.randn(1, 512, 8, 8)
-    f_c3 = torch.randn(1, 512, 16, 16)
-    f_c2 = torch.randn(1, 512, 32, 32)
-    f_c1 = torch.randn(1, 256, 64, 64)
-
-
-
-    model = FrameDecoder()
-    output = model([f_c4, f_c3, f_c2, f_c1])
-    # Add assertions to verify output shape
-    assert output.shape == (1, 3, 256, 256), f"Expected output shape (1, 3, 256, 256), but got {output.shape}"
-    print("✅ All assertions passed. Model output shape is correct.")
-
-# Run the tests
-if __name__ == "__main__":
-    test_dense_feature_encoder()
-    test_latent_token_encoder()
-    test_latent_token_decoder()
-    test_frame_decoder()
+if __name__ == '__main__':
+    unittest.main()
