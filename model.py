@@ -596,8 +596,8 @@ class IMFModel(nn.Module):
         self.latent_token_decoder = LatentTokenDecoder()
 
         self.motion_dims = [128, 256, 512, 512] 
-        self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.motion_dims)
-        # self.dense_feature_encoder = DenseFeatureEncoder()
+        # self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.motion_dims)
+        self.dense_feature_encoder = DenseFeatureEncoder()
         # self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
         
         self.implicit_motion_alignment = nn.ModuleList()
