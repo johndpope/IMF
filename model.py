@@ -10,11 +10,11 @@ from vit import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from pixelwise import PixelwiseSeparateConv, SNPixelwiseSeparateConv
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
-
+from typing import List, Union,Tuple
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -208,22 +208,38 @@ class FeatResBlock(nn.Module):
         return out
 
 
+
+
 class DenseFeatureEncoder(nn.Module):
-    def __init__(self, in_channels=3):
+    def __init__(self, 
+                 in_channels: int = 3,
+                 initial_channels: int = 64,
+                 down_channels: List[int] = [64, 128, 256, 512, 512],
+                 initial_kernel_size: int = 7,
+                 use_batch_norm: bool = True,
+                 activation: nn.Module = nn.ReLU(inplace=True),
+                 feature_start_index: int = 1):
         super().__init__()
-        self.initial_conv = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=7, stride=1, padding=3),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
         
-        self.down_blocks = nn.ModuleList([
-            DownConvResBlock(64, 64),
-            DownConvResBlock(64, 128),
-            DownConvResBlock(128, 256),
-            DownConvResBlock(256, 512),
-            DownConvResBlock(512, 512)
-        ])
+        self.feature_start_index = feature_start_index
+        
+        # Initial convolution
+        initial_conv_layers = [
+            nn.Conv2d(in_channels, initial_channels, kernel_size=initial_kernel_size, 
+                      stride=1, padding=initial_kernel_size//2)
+        ]
+        if use_batch_norm:
+            initial_conv_layers.append(nn.BatchNorm2d(initial_channels))
+        initial_conv_layers.append(activation)
+        
+        self.initial_conv = nn.Sequential(*initial_conv_layers)
+        
+        # Down blocks
+        self.down_blocks = nn.ModuleList()
+        in_ch = initial_channels
+        for out_ch in down_channels:
+            self.down_blocks.append(DownConvResBlock(in_ch, out_ch))
+            in_ch = out_ch
 
     def forward(self, x):
         debug_print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
@@ -233,11 +249,10 @@ class DenseFeatureEncoder(nn.Module):
         for i, block in enumerate(self.down_blocks):
             x = block(x)
             debug_print(f"    After down_block {i+1}: {x.shape}")
-            if i >= 1:  # Start collecting features from the second block
+            if i >= self.feature_start_index:
                 features.append(x)
         debug_print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
-
 
 '''
 The upsample parameter is replaced with downsample to match the diagram.
@@ -249,53 +264,55 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 
 
 
+
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, dm=32):
+    def __init__(self, 
+                 dm: int = 32, 
+                 input_channels: int = 3,
+                 initial_channels: int = 64,
+                 res_channels: List[int] = [64, 128, 256, 512, 512, 512],
+                 linear_layers: int = 4,
+                 use_pixelwise: bool = True,
+                 activation: nn.Module = nn.LeakyReLU(0.2)):
         super(LatentTokenEncoder, self).__init__()
-        # self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
-        self.conv1 = PixelwiseSeparateConv(3, 64, kernel_size=3, stride=1, padding=1)
-        self.activation = nn.LeakyReLU(0.2)
+        
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
+        self.activation = activation
 
-        self.res1 = ResBlock(64, 64, downsample=True)  # ResBlock-64, ↓2
-        self.res2 = ResBlock(64, 128, downsample=True)  # ResBlock-128, ↓2
-        self.res3 = ResBlock(128, 256, downsample=True)  # ResBlock-256, ↓2
+        # Initial convolution
+        self.conv1 = Conv2d(input_channels, initial_channels, kernel_size=3, stride=1, padding=1)
         
-        # 3× ResBlock-512, ↓2
-        self.res4 = ResBlock(256, 512, downsample=True)
-        self.res5 = ResBlock(512, 512, downsample=True)
-        self.res6 = ResBlock(512, 512, downsample=True)
+        # Residual blocks
+        self.res_blocks = nn.ModuleList()
+        in_channels = initial_channels
+        for out_channels in res_channels:
+            self.res_blocks.append(ResBlock(in_channels, out_channels, downsample=True))
+            in_channels = out_channels
         
-        self.equalconv = EqualConv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        # Equal convolution
+        self.equalconv = EqualConv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1)
+        
+        # Linear layers
+        self.linear_layers = nn.ModuleList()
+        for _ in range(linear_layers):
+            self.linear_layers.append(EqualLinear(in_channels, in_channels))
+        
+        # Final linear layer
+        self.final_linear = EqualLinear(in_channels, dm)
 
-        
-        # 4× EqualLinear-512
-        self.linear1 = EqualLinear(512, 512)
-        self.linear2 = EqualLinear(512, 512)
-        self.linear3 = EqualLinear(512, 512)
-        self.linear4 = EqualLinear(512, 512)
-        
-        self.final_linear = EqualLinear(512, dm) # EqualLinear-dm
-
-    
     def forward(self, x):
         x = self.activation(self.conv1(x))
         
-        x = self.res1(x)
-        x = self.res2(x)
-        x = self.res3(x)
-        x = self.res4(x)
-        x = self.res5(x)
-        x = self.res6(x)
+        for res_block in self.res_blocks:
+            x = res_block(x)
         
         x = self.equalconv(x)
         
-        # Global average pooling instead of flattening
+        # Global average pooling
         x = x.mean([2, 3])
         
-        x = self.activation(self.linear1(x))
-        x = self.activation(self.linear2(x))
-        x = self.activation(self.linear3(x))
-        x = self.activation(self.linear4(x))
+        for linear in self.linear_layers:
+            x = self.activation(linear(x))
         
         x = self.final_linear(x)
         
@@ -381,41 +398,35 @@ class StyledConv(nn.Module):
         return x
 
 class LatentTokenDecoder(nn.Module):
-    def __init__(self, latent_dim=32, const_dim=32, output_channels=[80, 160, 320, 320]):
+    def __init__(self, 
+                 latent_dim: int = 32,
+                 const_dim: int = 32,
+                 init_size: Tuple[int, int] = (4, 4),
+                 channel_config: List[int] = [512, 512, 512, 512, 512, 512, 512, 512, 512, 512, 256, 256, 256],
+                 upsample_indices: List[int] = [1, 4, 7, 10],
+                 output_indices: List[int] = [3, 6, 9, 12]):
         super().__init__()
-        self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
+        self.const = nn.Parameter(torch.randn(1, const_dim, *init_size))
+        self.output_indices = output_indices
         
-        self.style_conv_layers = nn.ModuleList([
-            StyledConv(const_dim, output_channels[3], 3, latent_dim),
-            StyledConv(output_channels[3], output_channels[3], 3, latent_dim, upsample=True),
-            StyledConv(output_channels[3], output_channels[3], 3, latent_dim),
-            StyledConv(output_channels[3], output_channels[3], 3, latent_dim),
-            StyledConv(output_channels[3], output_channels[2], 3, latent_dim, upsample=True),
-            StyledConv(output_channels[2], output_channels[2], 3, latent_dim),
-            StyledConv(output_channels[2], output_channels[2], 3, latent_dim),
-            StyledConv(output_channels[2], output_channels[1], 3, latent_dim, upsample=True),
-            StyledConv(output_channels[1], output_channels[1], 3, latent_dim),
-            StyledConv(output_channels[1], output_channels[1], 3, latent_dim),
-            StyledConv(output_channels[1], output_channels[0], 3, latent_dim, upsample=True),
-            StyledConv(output_channels[0], output_channels[0], 3, latent_dim),
-            StyledConv(output_channels[0], output_channels[0], 3, latent_dim)
-        ])
-
+        self.style_conv_layers = nn.ModuleList()
+        in_channels = const_dim
+        for i, out_channels in enumerate(channel_config):
+            self.style_conv_layers.append(
+                StyledConv(in_channels, out_channels, 3, latent_dim, 
+                           upsample=(i in upsample_indices))
+            )
+            in_channels = out_channels
 
     def forward(self, t):
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        m1, m2, m3, m4 = None, None, None, None
+        outputs = []
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
-            if i == 3:
-                m1 = x
-            elif i == 6:
-                m2 = x
-            elif i == 9:
-                m3 = x
-            elif i == 12:
-                m4 = x
-        return m4, m3, m2, m1 
+            if i in self.output_indices:
+                outputs.append(x)
+        return tuple(reversed(outputs))  # Return in order m4, m3, m2, m1
+
     
 
 '''
@@ -427,50 +438,40 @@ The channel dimensions decrease as we go up the network: 512 → 512 → 256 →
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
 class FrameDecoder(nn.Module):
-    def __init__(self, input_channels=[80, 160, 320, 320]):
+    def __init__(self, upconv_channels=None, feat_channels=None, final_channels=3):
         super().__init__()
         
+        if upconv_channels is None:
+            upconv_channels = [(512, 512), (1024, 512), (768, 256), (384, 128), (128, 64)]
+        if feat_channels is None:
+            feat_channels = [512, 256, 128]
+        
         self.upconv_blocks = nn.ModuleList([
-            UpConvResBlock(input_channels[3], input_channels[2]),
-            UpConvResBlock(input_channels[2] * 2, input_channels[1]),
-            UpConvResBlock(input_channels[1] * 2, input_channels[0]),
-            UpConvResBlock(input_channels[0] * 2, input_channels[0] // 2),
-            UpConvResBlock(input_channels[0] // 2, input_channels[0] // 4)
+            UpConvResBlock(in_ch, out_ch) for in_ch, out_ch in upconv_channels
         ])
         
         self.feat_blocks = nn.ModuleList([
-            nn.Sequential(*[FeatResBlock(input_channels[2]) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(input_channels[1]) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(input_channels[0]) for _ in range(3)])
+            nn.Sequential(*[FeatResBlock(ch) for _ in range(3)])
+            for ch in feat_channels
         ])
         
         self.final_conv = nn.Sequential(
-            PixelwiseSeparateConv(input_channels[0] // 4, 3, kernel_size=3, stride=1, padding=1),
+            PixelwiseSeparateConv(upconv_channels[-1][1], final_channels, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
 
     def forward(self, features):
-        debug_print(f"🎒 FrameDecoder input shapes: {[f for f in features]}")
+        debug_print(f"🎒 FrameDecoder input shapes: {[f.shape for f in features]}")
 
-        # Reshape features
-        reshaped_features = []
-        for feat in features:
-            if len(feat.shape) == 3:  # (batch, hw, channels)
-                b, hw, c = feat.shape
-                h = w = int(math.sqrt(hw))
-                reshaped_feat = feat.permute(0, 2, 1).view(b, c, h, w)
-            else:  # Already in (batch, channels, height, width) format
-                reshaped_feat = feat
-            reshaped_features.append(reshaped_feat)
-
+        reshaped_features = self._reshape_features(features)
         debug_print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
 
         x = reshaped_features[-1]  # Start with the smallest feature map
         debug_print(f"    Initial x shape: {x.shape}")
         
-        for i in range(len(self.upconv_blocks)):
+        for i, upconv_block in enumerate(self.upconv_blocks):
             debug_print(f"\n    Processing upconv_block {i+1}")
-            x = self.upconv_blocks[i](x)
+            x = upconv_block(x)
             debug_print(f"    After upconv_block {i+1}: {x.shape}")
             
             if i < len(self.feat_blocks):
@@ -489,6 +490,18 @@ class FrameDecoder(nn.Module):
         debug_print(f"    FrameDecoder final output shape: {x.shape}")
 
         return x
+
+    def _reshape_features(self, features):
+        reshaped_features = []
+        for feat in features:
+            if len(feat.shape) == 3:  # (batch, hw, channels)
+                b, hw, c = feat.shape
+                h = w = int(math.sqrt(hw))
+                reshaped_feat = feat.permute(0, 2, 1).view(b, c, h, w)
+            else:  # Already in (batch, channels, height, width) format
+                reshaped_feat = feat
+            reshaped_features.append(reshaped_feat)
+        return reshaped_features
 '''
 The upsample parameter is replaced with downsample to match the diagram.
 The first convolution now has a stride of 2 when downsampling.
@@ -595,9 +608,9 @@ class IMFModel(nn.Module):
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
-        self.feature_dims = [80, 160, 320, 320]
-        self.motion_dims = [80, 160, 320, 320]
-        self.decoder_dims = [320, 160, 80, 40]
+        self.motion_dims = [256, 512, 512, 512]  # queries / keys
+        self.feature_dims = [128, 256, 512, 512]  # values
+        self.decoder_dims = self.motion_dims[-1]
         # self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
         
         self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
@@ -613,7 +626,7 @@ class IMFModel(nn.Module):
                 dim_head=64
             ))
         
-        self.frame_decoder = FrameDecoder(input_channels=self.motion_dims)
+        self.frame_decoder = FrameDecoder()
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
 
