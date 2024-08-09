@@ -12,6 +12,48 @@ import matplotlib.pyplot as plt
 import os
 
 
+def count_model_params(model, trainable_only=False, verbose=False):
+    """
+    Count the number of parameters in a PyTorch model.
+    
+    Args:
+    model (nn.Module): The PyTorch model to analyze.
+    trainable_only (bool): If True, count only trainable parameters. Default is False.
+    verbose (bool): If True, print detailed breakdown of parameters. Default is False.
+    
+    Returns:
+    float: Total number of (trainable) parameters in millions.
+    dict: Breakdown of parameters by layer type.
+    """
+    total_params = 0
+    trainable_params = 0
+    param_counts = defaultdict(int)
+    
+    for name, module in model.named_modules():
+        for param_name, param in module.named_parameters():
+            if param.requires_grad:
+                trainable_params += param.numel()
+            total_params += param.numel()
+            
+            # Count parameters for each layer type
+            layer_type = module.__class__.__name__
+            param_counts[layer_type] += param.numel()
+    
+    if verbose:
+        print(f"{'Layer Type':<20} {'Parameter Count':<15} {'% of Total':<10}")
+        print("-" * 45)
+        for layer_type, count in sorted(param_counts.items(), key=lambda x: x[1], reverse=True):
+            percentage = count / total_params * 100
+            print(f"{layer_type:<20} {count:<15,d} {percentage:.2f}%")
+        print("-" * 45)
+        print(f"{'Total':<20} {total_params:<15,d} 100.00%")
+        print(f"{'Trainable':<20} {trainable_params:<15,d} {trainable_params/total_params*100:.2f}%")
+    
+    if trainable_only:
+        return trainable_params / 1e6, dict(param_counts)
+    else:
+        return total_params / 1e6, dict(param_counts)
+
 def normalize(tensor):
     mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(tensor.device)
     std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(tensor.device)

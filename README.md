@@ -10,6 +10,13 @@ The frame_skip in VideoDataset - is only at 1.
 ![Image](ok.png)
 
 
+
+
+**xformers + cuda **
+https://github.com/facebookresearch/xformers
+
+
+
 # IMF (Implicit Motion Function) Training Outline
 
 ## 1. Network Architecture
