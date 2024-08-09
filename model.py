@@ -14,7 +14,7 @@ from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
