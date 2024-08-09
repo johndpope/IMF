@@ -596,8 +596,8 @@ class IMFModel(nn.Module):
 
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
         self.feature_dims = [128, 256, 512, 512]  # values
-        # self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
-        self.dense_feature_encoder = DenseFeatureEncoder()
+        self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
+        # self.dense_feature_encoder = DenseFeatureEncoder()
         # self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
         
         self.implicit_motion_alignment = nn.ModuleList()

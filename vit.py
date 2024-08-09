@@ -58,6 +58,8 @@ class TransformerBlock(nn.Module):
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, depth=2, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
+        self.feature_conv = nn.Conv2d(feature_dim, motion_dim, kernel_size=1)
+
         self.cross_attention = CrossAttentionModule(feature_dim, motion_dim, heads, dim_head)
         # x4
         self.transformer_blocks = nn.ModuleList([
@@ -68,6 +70,11 @@ class ImplicitMotionAlignment(nn.Module):
         ])
 
     def forward(self, ml_c, ml_r, fl_r):
+        print(f"ImplicitMotionAlignment input shapes:")
+        print(f"ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        
+        # Adjust feature channel dimension
+        fl_r = self.feature_conv(fl_r)
         V_prime = checkpoint(self.cross_attention, ml_c, ml_r, fl_r)
         
         for block in self.transformer_blocks:
