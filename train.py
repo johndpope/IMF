@@ -86,7 +86,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # A. Forward Pass
                     # 1. Dense Feature Encoding
                     f_r = model.dense_feature_encoder(x_reference)
-
+                    for f in f_r:
+                        print(f"f:{f.shape}")
                     # 2. Latent Token Encoding (with noise addition)
                     t_r = model.latent_token_encoder(x_reference)
                     t_c = model.latent_token_encoder(x_current)
@@ -132,8 +133,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # Now use mix_t_c and mix_t_r for the rest of the processing
                     m_c = model.latent_token_decoder(mix_t_c)
                     m_r = model.latent_token_decoder(mix_t_r)
+                    for f in m_c:
+                        print(f"m_r:{f.shape}")
 
-
+                    for f in m_c:
+                        print(f"m_c:{f.shape}")
 
 
                     # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
