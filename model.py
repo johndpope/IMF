@@ -14,7 +14,7 @@ from typing import List, Union,Tuple
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -611,9 +611,9 @@ class IMFModel(nn.Module):
         self.motion_dims = [256, 512, 512, 512]  # queries / keys
         self.feature_dims = [128, 256, 512, 512]  # values
         self.decoder_dims = self.motion_dims[-1]
-        # self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
+        self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
         
-        self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
+        # self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
         
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
@@ -626,7 +626,7 @@ class IMFModel(nn.Module):
                 dim_head=64
             ))
         
-        self.frame_decoder = FrameDecoder()
+        self.frame_decoder = FrameDecoder(upconv_channels = [(512, 512), (1024, 512), (768, 256), (384, 128), (128, 64)],feat_channels = [512, 256, 128])     
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
 
