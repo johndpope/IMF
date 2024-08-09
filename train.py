@@ -304,24 +304,24 @@ def main():
     ])
 
 
-    dataset = EMODataset(
-        use_gpu=True,
-        remove_background=False,
-        width=256,
-        height=256,
-        sample_rate=24,
-        img_scale=(1.0, 1.0),
-        video_dir=config.dataset.root_dir,
-        json_file=config.dataset.json_file,
-        transform=transform,
-        apply_crop_warping=False
-    )
+    # dataset = EMODataset(
+    #     use_gpu=True,
+    #     remove_background=False,
+    #     width=256,
+    #     height=256,
+    #     sample_rate=24,
+    #     img_scale=(1.0, 1.0),
+    #     video_dir=config.dataset.root_dir,
+    #     json_file=config.dataset.json_file,
+    #     transform=transform,
+    #     apply_crop_warping=False
+    # )
 
 
-    # dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
-    #                        transform=transform, 
-    #                        frame_skip=0, 
-    #                        num_frames=240)
+    dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
+                           transform=transform, 
+                           frame_skip=0, 
+                           num_frames=240)
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
