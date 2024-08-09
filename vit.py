@@ -36,49 +36,41 @@ class TransformerBlock(nn.Module):
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
 
-
     def forward(self, x):
-        #print(f"TransformerBlock input shape: {x.shape}")
         B, C, H, W = x.shape
         x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
         
         x_norm = self.norm1(x_reshaped)
         att_output, _ = self.attention(x_norm, x_norm, x_norm)
         x_reshaped = x_reshaped + att_output
-        #print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
 
         ff_output = self.mlp(self.norm2(x_reshaped))
         x_reshaped = x_reshaped + ff_output
-        #print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
 
         output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
-        #print(f"TransformerBlock output shape: {output.shape}")
         return output
 
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
+    def __init__(self, motion_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
-        self.feature_conv = nn.Conv2d(feature_dim, motion_dim, kernel_size=1)
-        self.cross_attention = CrossAttentionModule(motion_dim, motion_dim, heads, dim_head)
+        self.cross_attention = CrossAttentionModule(dim=motion_dim, heads=heads, dim_head=dim_head)
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(motion_dim, heads, dim_head, mlp_dim) for _ in range(depth)
+            TransformerBlock(motion_dim, heads, dim_head, mlp_dim)
+            for _ in range(depth)
         ])
 
     def forward(self, ml_c, ml_r, fl_r):
-        print(f"ImplicitMotionAlignment input shapes:")
         print(f"ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-        
-        # Adjust feature channel dimension
-        fl_r = self.feature_conv(fl_r)
-        
-        print(f"After feature_conv - fl_r: {fl_r.shape}")
         
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
         
-        for transformer_block in self.transformer_blocks:
-            V_prime = transformer_block(V_prime)
+        for i, transformer in enumerate(self.transformer_blocks):
+            V_prime = transformer(V_prime)
+            print(f"Layer {i+1} output shape: {V_prime.shape}")
         
         return V_prime
+
+
 
 
     @staticmethod
@@ -114,40 +106,65 @@ class ImplicitMotionAlignment(nn.Module):
 
 
 class CrossAttentionModule(nn.Module):
-    def __init__(self, dim_q, dim_k, heads=8, dim_head=64):
+    def __init__(self, dim=128, heads=8, dim_head=64):
         super().__init__()
+        self.dim = dim
         self.heads = heads
         self.dim_head = dim_head
-        self.to_q = nn.Linear(dim_q, heads * dim_head)
-        self.to_k = nn.Linear(dim_k, heads * dim_head)
-        self.to_v = nn.Linear(dim_k, heads * dim_head)
         self.scale = dim_head ** -0.5
-        self.to_out = nn.Linear(heads * dim_head, dim_q)
+
+        self.to_q = nn.Linear(dim, heads * dim_head)
+        self.to_k = nn.Linear(dim, heads * dim_head)
+        self.to_v = nn.Linear(dim, heads * dim_head)
+        self.to_out = nn.Linear(heads * dim_head, dim)
 
     def forward(self, ml_c, ml_r, fl_r):
+        print(f"🌻 CrossAttentionModule Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        
         B, C, H, W = fl_r.shape
         
-        # Reshape inputs
-        ml_c = ml_c.view(B, C, -1).permute(0, 2, 1)
-        ml_r = ml_r.view(B, C, -1).permute(0, 2, 1)
-        fl_r = fl_r.view(B, C, -1).permute(0, 2, 1)
+        # Flatten and transpose inputs
+        ml_c = ml_c.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
+        ml_r = ml_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
+        fl_r = fl_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
         
-        q = self.to_q(ml_c).view(B, -1, self.heads, self.dim_head).permute(0, 2, 1, 3)
-        k = self.to_k(ml_r).view(B, -1, self.heads, self.dim_head).permute(0, 2, 1, 3)
-        v = self.to_v(fl_r).view(B, -1, self.heads, self.dim_head).permute(0, 2, 1, 3)
+        print(f"After flattening: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+
+        # Compute Q, K, V
+        q = self.to_q(ml_c).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
+        k = self.to_k(ml_r).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
+        v = self.to_v(fl_r).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
         
+        print(f"Q: {q.shape}, K: {k.shape}, V: {v.shape}")
+
+        # Compute attention
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        attn = attn.softmax(dim=-1)
+        attn = F.softmax(attn, dim=-1)
         
+        print(f"Attention shape: {attn.shape}")
+
+        # Apply attention to values
         out = torch.matmul(attn, v)
-        out = out.permute(0, 2, 1, 3).contiguous().view(B, -1, self.heads * self.dim_head)
+        print(f"Output after attention: {out.shape}")
+        
+        # Reshape and project back to original dimensions
+        out = out.transpose(1, 2).contiguous().view(B, H*W, self.heads * self.dim_head)
         out = self.to_out(out)
+        out = out.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
         
-        # Reshape output back to (B, C, H, W)
-        out = out.permute(0, 2, 1).view(B, C, H, W)
-        
+        print(f"Final output shape: {out.shape}")
+
         return out
 
+# Test the module
+if __name__ == "__main__":
+    B, C, H, W = 2, 128, 64, 64
+    ml_c = torch.randn(B, C, H, W)
+    ml_r = torch.randn(B, C, H, W)
+    fl_r = torch.randn(B, C, H, W)
+
+    module = CrossAttentionModule()
+    output = module(ml_c, ml_r, fl_r)
 
 # Example usage
 if __name__ == "__main__":

@@ -102,8 +102,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                     # Style mixing (optional, based on probability)
                     # Style mixing (optional, based on probability)
-                    # print(f"Original t_c shape: {t_c.shape}")
-                    # print(f"Original t_r shape: {t_r.shape}")
+                    print(f"Original t_c shape: {t_c.shape}")
+                    print(f"Original t_r shape: {t_r.shape}")
 
                     if torch.rand(()).item() < style_mixing_prob:
                         batch_size = t_c.size(0)
@@ -111,24 +111,25 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                         rand_t_c = t_c[rand_indices]
                         rand_t_r = t_r[rand_indices]
                         
-                        # print(f"rand_t_c shape: {rand_t_c.shape}")
-                        # print(f"rand_t_r shape: {rand_t_r.shape}")
+                        print(f"rand_t_c shape: {rand_t_c.shape}")
+                        print(f"rand_t_r shape: {rand_t_r.shape}")
                         
                         # Create a mask for mixing
                         mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
                         mix_mask = mix_mask.float()
                         
-                        # print(f"mix_mask shape: {mix_mask.shape}")
+                        print(f"mix_mask shape: {mix_mask.shape}")
                         
                         # Mix the tokens
                         mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
                         mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
                     else:
+                        print(f"no mixing...")
                         mix_t_c = t_c
                         mix_t_r = t_r
 
-                    # print(f"Final mix_t_c shape: {mix_t_c.shape}")
-                    # print(f"Final mix_t_r shape: {mix_t_r.shape}")
+                    print(f"Final mix_t_c shape: {mix_t_c.shape}")
+                    print(f"Final mix_t_r shape: {mix_t_r.shape}")
 
                     # Now use mix_t_c and mix_t_r for the rest of the processing
                     m_c = model.latent_token_decoder(mix_t_c)
@@ -161,6 +162,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                         align_layer = model.implicit_motion_alignment[i]
                         m_c_i = m_c[i] 
                         m_r_i = m_r[i]
+                        print(f"fr:{f_r_i.shape} mc:{m_c_i.shape} mr:{m_r_i.shape}")
                         aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
                         aligned_features.append(aligned_feature)
 

@@ -389,16 +389,16 @@ class LatentTokenDecoder(nn.Module):
             StyledConv(const_dim, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),# 512
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 512, 3, latent_dim),# 512
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 256, 3, latent_dim, upsample=True),
+            StyledConv(512, 256, 3, latent_dim),# 512 ? 🤷 or 256??? https://github.com/hologerry/IMF/issues/4
+            StyledConv(256, 256, 3, latent_dim, upsample=True),
             StyledConv(256, 256, 3, latent_dim),
-            StyledConv(256, 256, 3, latent_dim)
+            StyledConv(256, 128, 3, latent_dim) #  256 ? 🤷 or 128 ??
         ])
 
     def forward(self, t):
@@ -449,8 +449,9 @@ class FrameDecoder(nn.Module):
         )
 
     def forward(self, features):
-        debug_print(f"🎒 FrameDecoder input shapes: {[f for f in features]}")
-
+        debug_print(f"🎒 FrameDecoder input shapes")
+        for f in features:
+            print(f"f:{f.shape}")
         # Reshape features
         reshaped_features = []
         for feat in features:
@@ -592,20 +593,17 @@ class IMFModel(nn.Module):
         
 
         self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
-        self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
+        self.latent_token_decoder = LatentTokenDecoder()
 
-        self.motion_dims = [256, 512, 512, 512]  # queries / keys
-        self.feature_dims = [128, 256, 512, 512]  # values
-        self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.feature_dims)
+        self.motion_dims = [128, 256, 512, 512] 
+        self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.motion_dims)
         # self.dense_feature_encoder = DenseFeatureEncoder()
         # self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
         
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
-            feature_dim = self.feature_dims[i]
             motion_dim = self.motion_dims[i]
             self.implicit_motion_alignment.append(ImplicitMotionAlignment(
-                feature_dim=feature_dim,
                 motion_dim=motion_dim,
                 heads=8,
                 dim_head=64
@@ -670,6 +668,7 @@ class IMFModel(nn.Module):
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
 
+    
         # Frame decoding
         reconstructed_frame = self.frame_decoder(aligned_features)
 
