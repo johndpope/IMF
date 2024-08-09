@@ -6,8 +6,9 @@ model:
 
 # Training parameters
 training:
+  use_ema: False
   use_r1_reg: False
-  batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
+  batch_size: 16 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
   save_steps: 250
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
@@ -60,7 +61,7 @@ logging:
   sample_size: 1 # for images on wandb
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
-  print_model_details:
+  print_model_details: False
 
 # Accelerator settings
 accelerator:

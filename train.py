@@ -39,12 +39,21 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
     scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
 
-    ema = EMA(model, decay=0.9999)
 
-    model, discriminator, optimizer_g, optimizer_d, train_dataloader,ema = accelerator.prepare(
-        model, discriminator, optimizer_g, optimizer_d, train_dataloader,ema
+    # Make EMA conditional based on config
+    if config.training.use_ema:
+        ema = EMA(model, decay=config.training.ema_decay)
+    else:
+        ema = None
+
+    model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
+        model, discriminator, optimizer_g, optimizer_d, train_dataloader
     )
-    ema.register()
+    # Prepare EMA if it's being used
+    if ema:
+        ema = accelerator.prepare(ema)
+        ema.register()
+
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
     perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
@@ -203,7 +212,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     
                     accelerator.backward(d_loss)
                     optimizer_d.step()
-                    ema.update()
+                    # Update EMA if it's being used
+                    if ema:
+                        ema.update()
                     # Train Generator
                     optimizer_g.zero_grad()
                     fake_outputs = discriminator(x_reconstructed)
