@@ -4,7 +4,8 @@ import torch.nn.functional as F
 import torchvision.models as models
 from torch.utils.checkpoint import checkpoint
 import torch.nn.utils.spectral_norm as spectral_norm
-from vit import ImplicitMotionAlignment
+# from vit import ImplicitMotionAlignment
+from vit_mlgffn import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
@@ -577,20 +578,17 @@ class IMFModel(nn.Module):
         self.latent_token_encoder = LatentTokenEncoder() 
         self.latent_token_decoder = LatentTokenDecoder(latent_dim=latent_dim)
 
-
+        depth = 4
+        num_heads = 8
+        window_size = 8
+        mlp_ratio = 4
 
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             feature_dim = self.feature_dims[i]
             motion_dim = self.motion_dims[i]
-            self.implicit_motion_alignment.append(ImplicitMotionAlignment(
-                feature_dim=feature_dim,
-                motion_dim=motion_dim,
-                heads=8,
-                dim_head=64,
-                mlp_dim=1024
-            ))
-
+            model = ImplicitMotionAlignment(feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio)
+            self.implicit_motion_alignment.append(model)
 
 
         self.frame_decoder = FrameDecoder()
