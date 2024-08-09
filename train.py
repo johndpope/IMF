@@ -73,8 +73,14 @@ def train(config, model, discriminator, train_dataloader, accelerator):
             batch_size, num_frames, channels, height, width = source_frames.shape
 
             ref_idx = 0
-            for ref_idx in range(0, num_frames, config.training.every_xref_frames):  # Step by 16 for reference frames
 
+            
+            if config.training.use_many_xrefs:
+                ref_indices = range(0, num_frames, config.training.every_xref_frames)
+            else:
+                ref_indices = [0]  # Only use the first frame as reference
+
+            for ref_idx in ref_indices:
                 x_reference = source_frames[:, ref_idx]
 
                 for current_idx in range(num_frames):
