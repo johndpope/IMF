@@ -450,8 +450,8 @@ class FrameDecoder(nn.Module):
 
     def forward(self, features):
         debug_print(f"🎒 FrameDecoder input shapes")
-        for f in features:
-            print(f"f:{f.shape}")
+        # for f in features:
+        #     print(f"f:{f.shape}")
         # Reshape features
         reshaped_features = []
         for feat in features:

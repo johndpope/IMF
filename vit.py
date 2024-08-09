@@ -7,6 +7,10 @@ from sklearn.manifold import TSNE
 import numpy as np
 from torch.utils.checkpoint import checkpoint
 
+DEBUG = False
+def debug_print(*args, **kwargs):
+    if DEBUG:
+        print(*args, **kwargs)
 
 # https://medium.com/pytorch/training-compact-transformers-from-scratch-in-30-minutes-with-pytorch-ff5c21668ed5
 class PositionalEncoding(nn.Module):
@@ -60,13 +64,13 @@ class ImplicitMotionAlignment(nn.Module):
         ])
 
     def forward(self, ml_c, ml_r, fl_r):
-        print(f"ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        debug_print(f"ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
         
         for i, transformer in enumerate(self.transformer_blocks):
             V_prime = transformer(V_prime)
-            print(f"Layer {i+1} output shape: {V_prime.shape}")
+            debug_print(f"Layer {i+1} output shape: {V_prime.shape}")
         
         return V_prime
 
@@ -119,7 +123,7 @@ class CrossAttentionModule(nn.Module):
         self.to_out = nn.Linear(heads * dim_head, dim)
 
     def forward(self, ml_c, ml_r, fl_r):
-        print(f"🌻 CrossAttentionModule Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        debug_print(f"🌻 CrossAttentionModule Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         
         B, C, H, W = fl_r.shape
         
@@ -128,31 +132,31 @@ class CrossAttentionModule(nn.Module):
         ml_r = ml_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
         fl_r = fl_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
         
-        print(f"After flattening: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        debug_print(f"After flattening: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
 
         # Compute Q, K, V
         q = self.to_q(ml_c).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
         k = self.to_k(ml_r).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
         v = self.to_v(fl_r).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
         
-        print(f"Q: {q.shape}, K: {k.shape}, V: {v.shape}")
+        debug_print(f"Q: {q.shape}, K: {k.shape}, V: {v.shape}")
 
         # Compute attention
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         attn = F.softmax(attn, dim=-1)
         
-        print(f"Attention shape: {attn.shape}")
+        debug_print(f"Attention shape: {attn.shape}")
 
         # Apply attention to values
         out = torch.matmul(attn, v)
-        print(f"Output after attention: {out.shape}")
+        debug_print(f"Output after attention: {out.shape}")
         
         # Reshape and project back to original dimensions
         out = out.transpose(1, 2).contiguous().view(B, H*W, self.heads * self.dim_head)
         out = self.to_out(out)
         out = out.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
         
-        print(f"Final output shape: {out.shape}")
+        debug_print(f"Final output shape: {out.shape}")
 
         return out
 
@@ -170,7 +174,7 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #print(f"Using device: {device}")
+    #debug_print(f"Using device: {device}")
 
     # Example dimensions
     B, C_f, C_m, H, W = 1, 256, 256, 64, 64
@@ -195,9 +199,9 @@ if __name__ == "__main__":
     with torch.no_grad():
         output, embeddings = model(ml_c, ml_r, fl_r)
 
-    #print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-    #print(f"Output shape: {output.shape}")
+    #debug_print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+    #debug_print(f"Output shape: {output.shape}")
 
     # Visualize embeddings
     model.visualize_embeddings(embeddings, "embeddings_visualization.png")
-    #print("Embedding visualization saved as 'embeddings_visualization.png'")
+    #debug_print("Embedding visualization saved as 'embeddings_visualization.png'")
