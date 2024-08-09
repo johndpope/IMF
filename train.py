@@ -330,10 +330,22 @@ def main():
         collate_fn=gpu_padded_collate 
     )
 
-    accelerator.print("The Model parameters: imfmodel {:.2f}M, discriminator: {:.2f}M".format(
-        count_model_params(model), count_model_params(discriminator)
-    ))
+   # Count parameters for both models
+    imf_params, imf_breakdown = count_model_params(model, verbose=False)
+    disc_params, disc_breakdown = count_model_params(discriminator, verbose=False)
 
+    accelerator.print("🎯 Model parameters:")
+    accelerator.print(f"   IMFModel: {imf_params:.2f}M")
+    accelerator.print(f"   Discriminator: {disc_params:.2f}M")
+ 
+    if config.logging.print_model_details:
+        accelerator.print("\nIMFModel parameter breakdown:")
+        for layer_type, count in sorted(imf_breakdown.items(), key=lambda x: x[1], reverse=True):
+            accelerator.print(f"{layer_type:<20} {count:,}")
+        
+        accelerator.print("\nDiscriminator parameter breakdown:")
+        for layer_type, count in sorted(disc_breakdown.items(), key=lambda x: x[1], reverse=True):
+            accelerator.print(f"{layer_type:<20} {count:,}")
 
 
     train(config, model, discriminator, dataloader, accelerator)
