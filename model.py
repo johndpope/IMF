@@ -306,34 +306,43 @@ class FrameDecoder(nn.Module):
 
     def forward(self, features):
         debug_print(f"🎒 FrameDecoder input shapes")
-        # for f in features:
-        #     print(f"f:{f.shape}")
+        for f in features:
+            print(f"f:{f.shape}")
         # Reshape features
         reshaped_features = []
+        for feat in features:
+            if len(feat.shape) == 3:  # (batch, hw, channels)
+                b, hw, c = feat.shape
+                h = w = int(math.sqrt(hw))
+                reshaped_feat = feat.permute(0, 2, 1).view(b, c, h, w)
+            else:  # Already in (batch, channels, height, width) format
+                reshaped_feat = feat
+            reshaped_features.append(reshaped_feat)
 
+        print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
 
         x = reshaped_features[-1]  # Start with the smallest feature map
-        debug_print(f"    Initial x shape: {x.shape}")
+        print(f"    Initial x shape: {x.shape}")
         
         for i in range(len(self.upconv_blocks)):
-            debug_print(f"\n    Processing upconv_block {i+1}")
+            print(f"\n    Processing upconv_block {i+1}")
             x = self.upconv_blocks[i](x)
-            debug_print(f"    After upconv_block {i+1}: {x.shape}")
+            print(f"    After upconv_block {i+1}: {x.shape}")
             
             if i < len(self.feat_blocks):
-                debug_print(f"    Processing feat_block {i+1}")
+                print(f"    Processing feat_block {i+1}")
                 feat_input = reshaped_features[-(i+2)]
-                debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
+                print(f"    feat_block {i+1} input shape: {feat_input.shape}")
                 feat = self.feat_blocks[i](feat_input)
-                debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
+                print(f"    feat_block {i+1} output shape: {feat.shape}")
                 
-                debug_print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
+                print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
                 x = torch.cat([x, feat], dim=1)
-                debug_print(f"    After concatenation: {x.shape}")
+                print(f"    After concatenation: {x.shape}")
         
-        debug_print("\n    Applying final convolution")
+        print("\n    Applying final convolution")
         x = self.final_conv(x)
-        debug_print(f"    FrameDecoder final output shape: {x.shape}")
+        print(f"    FrameDecoder final output shape: {x.shape}")
 
         return x
 '''
