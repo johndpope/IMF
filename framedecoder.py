@@ -5,7 +5,7 @@ import math
 
 
 class EnhancedFrameDecoder(nn.Module):
-    def __init__(self, input_dims=[512, 512, 256, 128], output_dim=3, use_attention=True):
+    def __init__(self, input_dims=[512, 512, 256, 128, 64], output_dim=3, use_attention=True):
         super().__init__()
         
         self.input_dims = input_dims
@@ -128,17 +128,16 @@ class PositionalEncoding2D(nn.Module):
         self.register_buffer('inv_freq', inv_freq)
 
     def forward(self, tensor):
-        tensor = tensor.permute(0, 2, 3, 1)
-        _, h, w, _ = tensor.shape
-        pos_x, pos_y = torch.meshgrid(torch.arange(w), torch.arange(h))
+        _, _, h, w = tensor.shape
+        pos_x, pos_y = torch.meshgrid(torch.arange(w), torch.arange(h), indexing='ij')
         pos_x = pos_x.to(tensor.device).float()
         pos_y = pos_y.to(tensor.device).float()
-        sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
-        sin_inp_y = torch.einsum("i,j->ij", pos_y, self.inv_freq)
-        emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(1)
-        emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1)
-        emb = torch.zeros((h, w, self.channels * 2)).to(tensor.device)
-        emb[:, :, :self.channels] = emb_x
-        emb[:, :, self.channels:] = emb_y
-        emb = emb[None, :, :, :self.org_channels].permute(0, 3, 1, 2)
-        return tensor.permute(0, 3, 1, 2) + emb
+        
+        sin_inp_x = pos_x.unsqueeze(-1) @ self.inv_freq.unsqueeze(0)
+        sin_inp_y = pos_y.unsqueeze(-1) @ self.inv_freq.unsqueeze(0)
+        
+        emb_x = torch.cat((sin_inp_x.sin(), sin_inp_x.cos()), dim=-1).unsqueeze(0)
+        emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1).unsqueeze(0)
+        
+        emb = torch.cat((emb_x, emb_y), dim=-1).permute(0, 3, 1, 2)
+        return tensor + emb[:, :self.org_channels, :, :]
