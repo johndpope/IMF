@@ -10,76 +10,78 @@ def debug_print(*args, **kwargs):
         print(*args, **kwargs)
 
 class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1):
         super().__init__()
-
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block = FeatResBlock(out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
         
-        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
-
+        self.feat_res_block1 = FeatResBlock(out_channels)
+        self.feat_res_block2 = FeatResBlock(out_channels)
+        self.feat_res_block3 = FeatResBlock(out_channels)
         
-        # Add a 1x1 convolution for the residual connection if channel sizes differ
-        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
-        residual = self.upsample(x)
-        if self.residual_conv:
-            residual = self.residual_conv(residual)
+        x = self.upsample(x)
+        residual = self.residual_conv(x)
         
-        out = self.upsample(x)
-        out = self.conv1(out)
+        out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
         out = self.conv2(out)
+        out = self.bn2(out)
         out = out + residual
         out = self.relu(out)
-        out = self.feat_res_block(out)
+        out = self.dropout(out)
+        out = self.feat_res_block1(out)
+        out = self.feat_res_block2(out)
+        out = self.feat_res_block3(out)
         return out
 
 
 class DownConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
+        self.feat_res_block3 = FeatResBlock(out_channels)
 
     def forward(self, x):
-        debug_print(f"DownConvResBlock input shape: {x.shape}")
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        debug_print(f"After conv1, bn1, relu: {out.shape}")
         out = self.avgpool(out)
-        debug_print(f"After avgpool: {out.shape}")
         out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
+        out = self.bn2(out)
+        out = self.relu(out)
+        out = self.dropout(out)
         out = self.feat_res_block1(out)
-        debug_print(f"After feat_res_block1: {out.shape}")
         out = self.feat_res_block2(out)
-        debug_print(f"DownConvResBlock output shape: {out.shape}")
+        out = self.feat_res_block3(out)
         return out
 
 
-
 class FeatResBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels, dropout_rate=0.1):
         super().__init__()
-
         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
         self.relu1 = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm2d(channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
         self.relu2 = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -89,45 +91,46 @@ class FeatResBlock(nn.Module):
         out = self.relu1(out)
         out = self.conv2(out)
         out = self.bn2(out)
+        out = self.dropout(out)
         out += residual
         out = self.relu2(out)
         return out
     
 
 class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
+    def __init__(self, in_channels, out_channels, downsample=False, dropout_rate=0.1):
         super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels  # Add this line
+        self.downsample = downsample
+        
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, 
                                stride=2 if downsample else 1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
         
         if downsample or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, 
-                          stride=2 if downsample else 1, bias=False),
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, 
+                          stride=2 if downsample else 1, padding=1),
                 nn.BatchNorm2d(out_channels)
             )
         else:
             self.shortcut = nn.Identity()
 
-        self.downsample = downsample
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
     def forward(self, x):
-        identity = self.shortcut(x)
+        residual = self.shortcut(x)
         
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        
         out = self.conv2(out)
         out = self.bn2(out)
-        
-        out += identity
+        out = self.dropout(out)
+        out += residual
         out = self.relu(out)
         
         return out
@@ -315,6 +318,7 @@ def test_block_with_dropout(block, input_shape, block_name):
         print(f"{name} gradient shape: {param.grad.shape}")
 
     print(f"{block_name} test passed successfully!")
+
 def visualize_feature_maps(block, input_shape, num_channels=4, latent_dim=None):
     x = torch.randn(input_shape)
     if isinstance(block, StyledConv):
@@ -323,14 +327,42 @@ def visualize_feature_maps(block, input_shape, num_channels=4, latent_dim=None):
     else:
         output = block(x)
     
-    fig, axs = plt.subplots(1, num_channels, figsize=(20, 5))
-    for i in range(num_channels):
-        axs[i].imshow(output[0, i].detach().cpu().numpy(), cmap='viridis')
-        axs[i].axis('off')
-        axs[i].set_title(f'Channel {i}')
+    # Determine the number of intermediate outputs
+    if isinstance(block, UpConvResBlock):
+        intermediate_outputs = [
+            block.conv2(block.relu(block.bn1(block.conv1(x)))),
+            block.feat_res_block1(block.dropout(block.relu(block.bn2(block.conv2(block.relu(block.bn1(block.conv1(x))))) + block.residual_conv(x)))),
+            block.feat_res_block2(block.feat_res_block1(block.dropout(block.relu(block.bn2(block.conv2(block.relu(block.bn1(block.conv1(x))))) + block.residual_conv(x))))),
+            output
+        ]
+        titles = ['After Conv2', 'After FeatResBlock1', 'After FeatResBlock2', 'Final Output']
+    elif isinstance(block, DownConvResBlock):
+        intermediate_outputs = [
+            block.conv2(block.avgpool(block.relu(block.bn1(block.conv1(x))))),
+            block.feat_res_block1(block.dropout(block.relu(block.bn2(block.conv2(block.avgpool(block.relu(block.bn1(block.conv1(x))))))))),
+            block.feat_res_block2(block.feat_res_block1(block.dropout(block.relu(block.bn2(block.conv2(block.avgpool(block.relu(block.bn1(block.conv1(x)))))))))),
+            output
+        ]
+        titles = ['After Conv2', 'After FeatResBlock1', 'After FeatResBlock2', 'Final Output']
+    else:
+        intermediate_outputs = [output]
+        titles = ['Output']
+
+    fig, axs = plt.subplots(len(intermediate_outputs), num_channels, figsize=(20, 5 * len(intermediate_outputs)))
+    if len(intermediate_outputs) == 1:
+        axs = [axs]  # Make it 2D for consistency
+
+    for i, out in enumerate(intermediate_outputs):
+        for j in range(num_channels):
+            axs[i][j].imshow(out[0, j].detach().cpu().numpy(), cmap='viridis')
+            axs[i][j].axis('off')
+            if j == 0:
+                axs[i][j].set_title(f'{titles[i]}\nChannel {j}')
+            else:
+                axs[i][j].set_title(f'Channel {j}')
+
     plt.tight_layout()
     plt.show()
-
 
 
 if __name__ == "__main__":
@@ -363,3 +395,17 @@ if __name__ == "__main__":
     # Usage
     resblock = ResBlock(64, 64)
     test_resblock(resblock, (1, 64, 56, 56))
+
+
+    # dropout
+    upconv = UpConvResBlock(64, 128, dropout_rate=0.1)
+    test_block_with_dropout(upconv, (1, 64, 56, 56), "UpConvResBlock")
+
+    downconv = DownConvResBlock(128, 256, dropout_rate=0.1)
+    test_block_with_dropout(downconv, (1, 128, 56, 56), "DownConvResBlock")
+
+    featres = FeatResBlock(256, dropout_rate=0.1)
+    test_block_with_dropout(featres, (1, 256, 28, 28), "FeatResBlock")
+
+    resblock = ResBlock(64, 128, downsample=True, dropout_rate=0.1)
+    test_block_with_dropout(resblock, (1, 64, 56, 56), "ResBlock")
