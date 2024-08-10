@@ -13,7 +13,6 @@ jobs:
     steps:
     - name: Run tests
       run: python test.py
-      working-directory: ../
+      working-directory: /media/oem/12TB/IMF
 
 
-      

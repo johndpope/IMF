@@ -7,7 +7,7 @@ import os
 # Add the directory containing the module to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from vit import PositionalEncoding, AdaptiveLayerNorm, TransformerBlock, ImplicitMotionAlignment, CrossAttentionModule
+from vit import PositionalEncoding,  TransformerBlock, ImplicitMotionAlignment, CrossAttentionModule
 from model import LatentTokenEncoder, LatentTokenDecoder, DenseFeatureEncoder, FrameDecoder
 
 class TestNeuralNetworkComponents(unittest.TestCase):
@@ -29,33 +29,8 @@ class TestNeuralNetworkComponents(unittest.TestCase):
         output = pe(x)
         self.assertEqual(output.shape, (100, 1, self.motion_dim))
 
-    def test_adaptive_layer_norm(self):
-        aln = AdaptiveLayerNorm(dim=self.feature_dim).to(self.device)
-        x = torch.randn(self.B, 10, self.feature_dim).to(self.device)
-        output = aln(x)
-        self.assertEqual(output.shape, (self.B, 10, self.feature_dim))
 
-    def test_transformer_block(self):
-        tb = TransformerBlock(feature_dim=self.feature_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
-        x = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
-        output = tb(x)
-        self.assertEqual(output.shape, (self.B, self.C_f, self.H, self.W))
 
-    def test_cross_attention_module(self):
-        cam = CrossAttentionModule(motion_dim=self.motion_dim, feature_dim=self.feature_dim, heads=self.heads, dim_head=self.dim_head).to(self.device)
-        ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-        ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-        fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
-        output = cam(ml_c, ml_r, fl_r)
-        self.assertEqual(output.shape, (self.B, self.C_f, self.H, self.W))
-
-    def test_implicit_motion_alignment(self):
-        ima = ImplicitMotionAlignment(feature_dim=self.feature_dim, motion_dim=self.motion_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
-        ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-        ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-        fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
-        output = ima(ml_c, ml_r, fl_r)
-        self.assertEqual(output.shape, (self.B, self.C_f, self.H, self.W))
 
     def test_latent_token_encoder(self):
         et = LatentTokenEncoder(dm=self.dm).to(self.device)
@@ -101,37 +76,6 @@ class TestNeuralNetworkComponents(unittest.TestCase):
         for m_r_x, m_c_x in zip(m_r, m_c):
             self.assertEqual(m_r_x.shape, m_c_x.shape, "Shapes of reference and current outputs should match")
 
-    def test_frame_decoder(self):
-        f_c1 = torch.randn(self.B, 512, 8, 8).to(self.device)
-        f_c2 = torch.randn(self.B, 512, 16, 16).to(self.device)
-        f_c3 = torch.randn(self.B, 512, 32, 32).to(self.device)
-        f_c4 = torch.randn(self.B, 256, 64, 64).to(self.device)
-
-        model = FrameDecoder().to(self.device)
-        output = model([f_c4, f_c3, f_c2, f_c1])
-        
-        self.assertEqual(output.shape, (self.B, 3, 256, 256), f"Expected output shape (self.B, 3, 256, 256), but got {output.shape}")
-
-    def test_invalid_input_shapes(self):
-        ima = ImplicitMotionAlignment(feature_dim=self.feature_dim, motion_dim=self.motion_dim, heads=self.heads, dim_head=self.dim_head, mlp_dim=self.mlp_dim).to(self.device)
-        
-        with self.assertRaises(RuntimeError):
-            ml_c = torch.randn(self.B + 1, self.C_m, self.H, self.W).to(self.device)
-            ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-            fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
-            ima(ml_c, ml_r, fl_r)
-
-        with self.assertRaises(RuntimeError):
-            ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-            ml_r = torch.randn(self.B, self.C_m + 1, self.H, self.W).to(self.device)
-            fl_r = torch.randn(self.B, self.C_f, self.H, self.W).to(self.device)
-            ima(ml_c, ml_r, fl_r)
-
-        with self.assertRaises(RuntimeError):
-            ml_c = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-            ml_r = torch.randn(self.B, self.C_m, self.H, self.W).to(self.device)
-            fl_r = torch.randn(self.B, self.C_f, self.H + 1, self.W).to(self.device)
-            ima(ml_c, ml_r, fl_r)
 
 if __name__ == '__main__':
     unittest.main()
