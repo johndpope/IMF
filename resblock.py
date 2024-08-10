@@ -22,7 +22,6 @@ class UpConvResBlock(nn.Module):
         
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
-        self.feat_res_block3 = FeatResBlock(out_channels)
         
         self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
@@ -40,7 +39,6 @@ class UpConvResBlock(nn.Module):
         out = self.dropout(out)
         out = self.feat_res_block1(out)
         out = self.feat_res_block2(out)
-        out = self.feat_res_block3(out)
         return out
 
 
@@ -56,7 +54,6 @@ class DownConvResBlock(nn.Module):
         self.dropout = nn.Dropout2d(dropout_rate)
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
-        self.feat_res_block3 = FeatResBlock(out_channels)
 
     def forward(self, x):
         out = self.conv1(x)
@@ -69,7 +66,6 @@ class DownConvResBlock(nn.Module):
         out = self.dropout(out)
         out = self.feat_res_block1(out)
         out = self.feat_res_block2(out)
-        out = self.feat_res_block3(out)
         return out
 
 
