@@ -427,7 +427,7 @@ class IMFModel(nn.Module):
             self.implicit_motion_alignment.append(model)
         
         
-        self.frame_decoder = CIPSFrameDecoder(feature_dims=self.motion_dims)
+        self.frame_decoder = FrameDecoder() #CIPSFrameDecoder(feature_dims=self.motion_dims)
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
 
