@@ -167,8 +167,14 @@ def log_grad_flow(named_parameters, global_step):
         if wandb.run is not None:
             wandb.run.config.update({"gradient_flow_columns": new_columns})
             
-            # Delete the existing table
-            wandb.run.delete_artifact('gradient_flow_table:latest')
+            # Delete the existing table artifact
+            api = wandb.Api()
+            try:
+                artifact = api.artifact(f"{wandb.run.entity}/{wandb.run.project}/gradient_flow_table:latest")
+                artifact.delete(delete_aliases=True)
+                print("Deleted existing gradient_flow_table artifact.")
+            except wandb.errors.CommError:
+                print("No existing gradient_flow_table artifact found.")
         
         current_table_columns = new_columns
 
@@ -189,14 +195,22 @@ def log_grad_flow(named_parameters, global_step):
     issues = check_gradient_issues(grads, layers)
 
     # Log everything
-    wandb.log({
+    log_dict = {
         "gradient_flow_plot": img,
-        "gradient_flow_data": table,
         **stats,
         "gradient_issues": wandb.Html(issues),
         "step": global_step
-    })
+    }
 
+    # Log the table as an artifact
+    artifact = wandb.Artifact('gradient_flow_table', type='table')
+    artifact.add(table, 'gradient_flow_data')
+    wandb.log_artifact(artifact)
+
+    # Log other metrics
+    wandb.log(log_dict)
+
+    
 def check_gradient_issues(grads, layers):
     issues = []
     mean_grad = np.mean(grads)
@@ -215,7 +229,7 @@ def check_gradient_issues(grads, layers):
 
 def count_model_params(model, trainable_only=False, verbose=False):
     """
-    Count the number of parameters in a PyTorch model.
+    Count the number of parameters in a PyTorch model, distinguishing between system native and custom modules.
     
     Args:
     model (nn.Module): The PyTorch model to analyze.
@@ -230,6 +244,9 @@ def count_model_params(model, trainable_only=False, verbose=False):
     trainable_params = 0
     param_counts = defaultdict(int)
     
+    # List of PyTorch native modules
+    native_modules = set([name for name, obj in nn.__dict__.items() if isinstance(obj, type)])
+
     for name, module in model.named_modules():
         for param_name, param in module.named_parameters():
             if param.requires_grad:
@@ -238,23 +255,39 @@ def count_model_params(model, trainable_only=False, verbose=False):
             
             # Count parameters for each layer type
             layer_type = module.__class__.__name__
+            if layer_type in native_modules:
+                layer_type = f"Native_{layer_type}"
+            else:
+                layer_type = f"Custom_{layer_type}"
             param_counts[layer_type] += param.numel()
     
     if verbose:
-        print(f"{'Layer Type':<20} {'Parameter Count':<15} {'% of Total':<10}")
-        print("-" * 45)
+        print(f"{'Layer Type':<30} {'Parameter Count':<15} {'% of Total':<10}")
+        print("-" * 55)
+        
+        native_total = 0
+        custom_total = 0
+        
         for layer_type, count in sorted(param_counts.items(), key=lambda x: x[1], reverse=True):
             percentage = count / total_params * 100
-            print(f"{layer_type:<20} {count:<15,d} {percentage:.2f}%")
-        print("-" * 45)
-        print(f"{'Total':<20} {total_params:<15,d} 100.00%")
-        print(f"{'Trainable':<20} {trainable_params:<15,d} {trainable_params/total_params*100:.2f}%")
+            print(f"{layer_type:<30} {count:<15,d} {percentage:.2f}%")
+            
+            if layer_type.startswith("Native_"):
+                native_total += count
+            else:
+                custom_total += count
+        
+        print("-" * 55)
+        print(f"{'Native Modules Total':<30} {native_total:<15,d} {native_total/total_params*100:.2f}%")
+        print(f"{'Custom Modules Total':<30} {custom_total:<15,d} {custom_total/total_params*100:.2f}%")
+        print("-" * 55)
+        print(f"{'Total':<30} {total_params:<15,d} 100.00%")
+        print(f"{'Trainable':<30} {trainable_params:<15,d} {trainable_params/total_params*100:.2f}%")
     
     if trainable_only:
         return trainable_params / 1e6, dict(param_counts)
     else:
         return total_params / 1e6, dict(param_counts)
-
 def normalize(tensor):
     mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(tensor.device)
     std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(tensor.device)
