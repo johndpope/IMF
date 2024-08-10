@@ -15,7 +15,7 @@ import math
 import random
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
-from framedecoder import CIPSFrameDecoder
+from framedecoder import EnhancedFrameDecoder
 DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
@@ -397,7 +397,7 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_cips_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
+    def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_enhanced_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
         self.encoder_dims = [64, 128, 256, 512]
@@ -426,7 +426,7 @@ class IMFModel(nn.Module):
             )
             self.implicit_motion_alignment.append(model)
         
-        FrameDecode = CIPSFrameDecoder if use_cips_generator else FrameDecoder
+        FrameDecode = EnhancedFrameDecoder if use_enhanced_generator else FrameDecoder
         self.frame_decoder = FrameDecode() #CIPSFrameDecoder(feature_dims=self.motion_dims)
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
