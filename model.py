@@ -10,7 +10,7 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from vit import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
-from resnet import UpConvResBlock,DownConvResBlock,FeatResBlock,ModulatedConv2d,StyledConv,ResBlock
+from resblock import UpConvResBlock,DownConvResBlock,FeatResBlock,StyledConv,ResBlock
 
 
 # from common import DownConvResBlock,UpConvResBlock
