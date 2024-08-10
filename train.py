@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader,random_split
 from torchvision import transforms
 from accelerate import Accelerator
 from tqdm.auto import tqdm
@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,PatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import log_grad_flow,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
+from helper import log_loss_landscape,log_grad_flow,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -53,7 +53,7 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
 
 
 
-def train(config, model, discriminator, train_dataloader, accelerator):
+def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
     # optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
     optimizer_g = AdamW(model.parameters(), lr=config.training.learning_rate_g, weight_decay=0.01)
     optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
@@ -309,9 +309,12 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                         })
 
                     # Log gradient flow for generator and discriminator
+                    criterion = [perceptual_loss_fn,pixel_loss_fn]
                     if accelerator.is_main_process and batch_idx % config.logging.log_every == 0:
                         log_grad_flow(model.named_parameters(),global_step),
                         log_grad_flow(discriminator.named_parameters(),global_step)
+                        log_loss_landscape(model, criterion, val_loader, global_step)
+
 
 
             progress_bar.close()
@@ -364,30 +367,33 @@ def main():
     ])
 
 
-    # dataset = EMODataset(
-    #     use_gpu=True,
-    #     remove_background=False,
-    #     width=256,
-    #     height=256,
-    #     sample_rate=24,
-    #     img_scale=(1.0, 1.0),
-    #     video_dir=config.dataset.root_dir,
-    #     json_file=config.dataset.json_file,
-    #     transform=transform,
-    #     apply_crop_warping=False
-    # )
+    full_dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
+                                transform=transform, 
+                                frame_skip=0, 
+                                num_frames=240)
+    
+    # Split the dataset into training and validation sets
+    train_size = int(0.8 * len(full_dataset))
+    val_size = len(full_dataset) - train_size
+    train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
 
 
-    dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
-                           transform=transform, 
-                           frame_skip=0, 
-                           num_frames=240)
-    dataloader = DataLoader(
-        dataset,
+
+
+    train_dataloader = DataLoader(
+        train_dataset,
         batch_size=config.training.batch_size,
         num_workers=1,
         shuffle=True,
-        # persistent_workers=True,
+        pin_memory=True,
+        collate_fn=gpu_padded_collate 
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config.training.batch_size,
+        num_workers=1,
+        shuffle=False,
         pin_memory=True,
         collate_fn=gpu_padded_collate 
     )
@@ -410,7 +416,7 @@ def main():
             accelerator.print(f"{layer_type:<20} {count:,}")
 
 
-    train(config, model, discriminator, dataloader, accelerator)
+    train(config, model, discriminator, train_dataloader, val_loader,  accelerator)
 
 if __name__ == "__main__":
     main()

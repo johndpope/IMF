@@ -12,10 +12,125 @@ import matplotlib.pyplot as plt
 import os
 import io
 from PIL import Image
+from mpl_toolkits.mplot3d import Axes3D
 
-def log_grad_flow(named_parameters,_global_step):
-    # global _global_step
-    # _global_step += 1
+def plot_loss_landscape(model, loss_fns, dataloader, num_points=20, alpha=1.0):
+    # Store original parameters
+    original_params = [p.clone() for p in model.parameters()]
+    
+    # Calculate two random directions
+    direction1 = [torch.randn_like(p) for p in model.parameters()]
+    direction2 = [torch.randn_like(p) for p in model.parameters()]
+    
+    # Normalize directions
+    norm1 = torch.sqrt(sum(torch.sum(d**2) for d in direction1))
+    norm2 = torch.sqrt(sum(torch.sum(d**2) for d in direction2))
+    direction1 = [d / norm1 for d in direction1]
+    direction2 = [d / norm2 for d in direction2]
+    
+    # Create grid
+    x = np.linspace(-alpha, alpha, num_points)
+    y = np.linspace(-alpha, alpha, num_points)
+    X, Y = np.meshgrid(x, y)
+    
+    # Calculate loss for each point and each loss function
+    Z = {f'loss_{i}': np.zeros_like(X) for i in range(len(loss_fns))}
+    Z['total_loss'] = np.zeros_like(X)
+    
+    for i in range(num_points):
+        for j in range(num_points):
+            # Update model parameters
+            for p, d1, d2 in zip(model.parameters(), direction1, direction2):
+                p.data = p.data + X[i,j] * d1 + Y[i,j] * d2
+            
+            # Calculate loss for each loss function
+            total_loss = 0
+            num_batches = 0
+            for batch in dataloader:
+                inputs, targets = batch
+                outputs = model(inputs)
+                for k, loss_fn in enumerate(loss_fns):
+                    loss = loss_fn(outputs, targets)
+                    Z[f'loss_{k}'][i,j] += loss.item()
+                    total_loss += loss.item()
+                num_batches += 1
+            
+            # Average the losses
+            for k in range(len(loss_fns)):
+                Z[f'loss_{k}'][i,j] /= num_batches
+            Z['total_loss'][i,j] = total_loss / num_batches
+            
+            # Reset model parameters
+            for p, orig_p in zip(model.parameters(), original_params):
+                p.data = orig_p.clone()
+    
+    # Plot the loss landscapes
+    figs = []
+    for loss_key in Z.keys():
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        surf = ax.plot_surface(X, Y, Z[loss_key], cmap='viridis')
+        ax.set_xlabel('Direction 1')
+        ax.set_ylabel('Direction 2')
+        ax.set_zlabel('Loss')
+        ax.set_title(f'Loss Landscape - {loss_key}')
+        fig.colorbar(surf)
+        figs.append(fig)
+    
+    # Save the plots to buffers
+    bufs = []
+    for fig in figs:
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        bufs.append(buf)
+        plt.close(fig)
+    
+    return bufs
+
+def log_loss_landscape(model, loss_fns, dataloader, step):
+    # Generate the loss landscape plots
+    bufs = plot_loss_landscape(model, loss_fns, dataloader)
+    
+    # Log the plots to wandb
+    log_dict = {
+        f"loss_landscape_{i}": wandb.Image(buf, caption=f"Loss Landscape - Loss {i}")
+        for i, buf in enumerate(bufs[:-1])
+    }
+    log_dict["loss_landscape_total"] = wandb.Image(bufs[-1], caption="Loss Landscape - Total Loss")
+    log_dict["step"] = step
+    
+    wandb.log(log_dict)
+
+
+# Usage example:
+# model = YourModel()
+# loss_fns = [nn.MSELoss(), nn.CrossEntropyLoss(), YourCustomLoss()]
+# dataloader = YourDataLoader()
+# step = current_training_step
+# log_loss_landscape(model, loss_fns, dataloader, step)
+
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from collections import defaultdict
+import numpy as np
+import wandb
+import os
+from torchvision.utils import save_image
+import torch.nn.functional as F
+import torch
+import matplotlib.pyplot as plt
+import os
+import io
+from PIL import Image
+
+# Global variable to store the persistent table
+gradient_flow_table = None
+
+def log_grad_flow(named_parameters, _global_step):
+    global gradient_flow_table
 
     grads = []
     layers = []
@@ -51,9 +166,12 @@ def log_grad_flow(named_parameters,_global_step):
     
     plt.close()
 
-    # Create a wandb.Table with the data
-    data = [[layer, grad, norm_grad] for layer, grad, norm_grad in zip(layers, grads, normalized_grads)]
-    table = wandb.Table(data=data, columns=["layer", "average_gradient", "normalized_gradient"])
+    # Update or create the wandb.Table
+    if gradient_flow_table is None:
+        gradient_flow_table = wandb.Table(columns=["step"] + layers)
+
+    # Add new row to the table
+    gradient_flow_table.add_data(_global_step, *normalized_grads)
     
     # Calculate statistics
     stats = {
@@ -70,7 +188,7 @@ def log_grad_flow(named_parameters,_global_step):
     # Log everything
     wandb.log({
         "gradient_flow_plot": img,
-        "gradient_flow_data": table,
+        "gradient_flow_data": gradient_flow_table,
         **stats,
     }, step=_global_step)
 
@@ -84,14 +202,14 @@ def check_gradient_issues(grads, layers):
     
     for layer, grad in zip(layers, grads):
         if grad > mean_grad + 3 * std_grad:
-            issues.append(f"Potential exploding gradient in {layer}: {grad:.2e}")
+            issues.append(f"🔥 Potential exploding gradient in {layer}: {grad:.2e}")
         elif grad < mean_grad - 3 * std_grad:
-            issues.append(f"Potential vanishing gradient in {layer}: {grad:.2e}")
+            issues.append(f"🥶 Potential vanishing gradient in {layer}: {grad:.2e}")
     
     if issues:
         return "<br>".join(issues)
     else:
-        return "No significant gradient issues detected"
+        return "✅ No significant gradient issues detected"
 
 def count_model_params(model, trainable_only=False, verbose=False):
     """
