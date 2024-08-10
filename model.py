@@ -300,6 +300,7 @@ class FrameDecoder(nn.Module):
         
         self.final_conv = nn.Sequential(
             nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(3),
             nn.Sigmoid()
         )
 
@@ -560,62 +561,62 @@ Channel progression: 64 -> 128 -> 256 -> 512 -> 1
 Output: The forward method returns a list containing the outputs from both scales.
 Weight Initialization: A helper function init_weights is provided to initialize the weights of the network, which can be applied using the apply method.
 '''
-class PatchDiscriminator(nn.Module):
-    def __init__(self, input_nc=3, ndf=64):
-        super(PatchDiscriminator, self).__init__()
+# class PatchDiscriminator(nn.Module):
+#     def __init__(self, input_nc=3, ndf=64):
+#         super(PatchDiscriminator, self).__init__()
         
           
-        self.scale1 = nn.Sequential(
-            spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(ndf * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(ndf * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0))
-        )
+#         self.scale1 = nn.Sequential(
+#             spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1)),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1)),
+#             nn.InstanceNorm2d(ndf * 2),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1)),
+#             nn.InstanceNorm2d(ndf * 4),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1)),
+#             nn.InstanceNorm2d(ndf * 8),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0))
+#         )
         
-        self.scale2 = nn.Sequential(
-            spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1)),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(ndf * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(ndf * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1)),
-            nn.InstanceNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            spectral_norm(nn.Conv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0))
-        )
+#         self.scale2 = nn.Sequential(
+#             spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1)),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1)),
+#             nn.InstanceNorm2d(ndf * 2),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1)),
+#             nn.InstanceNorm2d(ndf * 4),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1)),
+#             nn.InstanceNorm2d(ndf * 8),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             spectral_norm(nn.Conv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0))
+#         )
 
 
-    def forward(self, x):
-        debug_print(f"PatchDiscriminator input shape: {x.shape}")
+#     def forward(self, x):
+#         debug_print(f"PatchDiscriminator input shape: {x.shape}")
 
-        # Scale 1
-        output1 = x
-        for i, layer in enumerate(self.scale1):
-            output1 = layer(output1)
-            debug_print(f"Scale 1 - Layer {i} output shape: {output1.shape}")
+#         # Scale 1
+#         output1 = x
+#         for i, layer in enumerate(self.scale1):
+#             output1 = layer(output1)
+#             debug_print(f"Scale 1 - Layer {i} output shape: {output1.shape}")
 
-        # Scale 2
-        x_downsampled = F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False)
-        debug_print(f"Scale 2 - Downsampled input shape: {x_downsampled.shape}")
+#         # Scale 2
+#         x_downsampled = F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False)
+#         debug_print(f"Scale 2 - Downsampled input shape: {x_downsampled.shape}")
         
-        output2 = x_downsampled
-        for i, layer in enumerate(self.scale2):
-            output2 = layer(output2)
-            debug_print(f"Scale 2 - Layer {i} output shape: {output2.shape}")
+#         output2 = x_downsampled
+#         for i, layer in enumerate(self.scale2):
+#             output2 = layer(output2)
+#             debug_print(f"Scale 2 - Layer {i} output shape: {output2.shape}")
 
-        debug_print(f"PatchDiscriminator final output shapes: {output1.shape}, {output2.shape}")
-        return [output1, output2]
+#         debug_print(f"PatchDiscriminator final output shapes: {output1.shape}, {output2.shape}")
+#         return [output1, output2]
 
 
 class ConvBlock(nn.Module):

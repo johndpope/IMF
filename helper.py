@@ -250,8 +250,7 @@ def count_model_params(model, trainable_only=False, verbose=False):
             param_counts[layer_type] += param.numel()
     
     if verbose:
-        print(f"{'Layer Type':<30} {'Parameter Count':<15} {'% of Total':<10}")
-        print("-" * 55)
+     
         
         native_counts = {k: v for k, v in param_counts.items() if k.startswith("Native_")}
         custom_counts = {k: v for k, v in param_counts.items() if k.startswith("Custom_")}
@@ -276,7 +275,8 @@ def count_model_params(model, trainable_only=False, verbose=False):
             percentage = count / total_params * 100
             print(f"   {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
         
-
+        print(f"{'Layer Type':<30} {'Parameter Count':<15} {'% of Total':<10}")
+        print("-" * 55)
         print(f"{'Total':<30} {total_params:<15,d} 100.00%")
         print(f"{'Trainable':<30} {trainable_params:<15,d} {trainable_params/total_params*100:.2f}%")
     
