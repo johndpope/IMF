@@ -8,7 +8,6 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from vit import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
-from pixelwise import cn.conv2d, SNcn.conv2d
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
 # from common import DownConvResBlock,UpConvResBlock
