@@ -8,7 +8,6 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from vit import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
-from pixelwise import PixelwiseSeparateConv, SNPixelwiseSeparateConv
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
 # from common import DownConvResBlock,UpConvResBlock
@@ -19,7 +18,7 @@ def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
 
-use_pixelwise = True
+
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
 class EfficientFeatureExtractor(nn.Module):
     def __init__(self, output_channels=[24, 40, 112, 320]):
@@ -108,7 +107,7 @@ class ResNetFeatureExtractor(nn.Module):
         return features
       
 class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, use_pixelwise=True):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
 
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
@@ -116,7 +115,7 @@ class UpConvResBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block = FeatResBlock(out_channels, use_pixelwise)
+        self.feat_res_block = FeatResBlock(out_channels)
         
         self.residual_conv = Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
 
@@ -186,10 +185,10 @@ Each DownConvResBlock performs downsampling using a strided convolution, maintai
 
 
 class FeatResBlock(nn.Module):
-    def __init__(self, channels, use_pixelwise=False):
+    def __init__(self, channels):
         super().__init__()
-        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
-        self.conv1 = Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
         self.relu1 = nn.ReLU(inplace=True)
         self.conv2 = Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
@@ -499,7 +498,6 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, downsample=False):
         super().__init__()
-        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu1 = nn.ReLU(inplace=True)
