@@ -157,7 +157,7 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 
 
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, initial_channels=64, output_channels=[128, 256, 512, 512], dm=32):
+    def __init__(self, initial_channels=64, output_channels=[128, 256, 512, 512,512, 512], dm=32):
         super(LatentTokenEncoder, self).__init__()
 
         self.conv1 = nn.Conv2d(3, initial_channels, kernel_size=3, stride=1, padding=1)
@@ -402,7 +402,7 @@ class IMFModel(nn.Module):
         self.encoder_dims = [64, 128, 256, 512]
         self.latent_token_encoder = LatentTokenEncoder(
             initial_channels=64,
-            output_channels=self.encoder_dims,
+            output_channels=[128, 256, 512, 512,512, 512],
             dm=32
         ) 
         self.motion_dims = [128, 256, 512, 512] 
