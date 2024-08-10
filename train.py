@@ -33,6 +33,24 @@ def load_config(config_path):
 def get_video_repeat(epoch, max_epochs, initial_repeat, final_repeat):
     return max(final_repeat, initial_repeat - (initial_repeat - final_repeat) * (epoch / max_epochs))
 
+def get_ema_decay(epoch, max_epochs, initial_decay=0.95, final_decay=0.9999):
+    return min(final_decay, initial_decay + (final_decay - initial_decay) * (epoch / max_epochs))
+
+def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitude=0.001):
+    """
+    Calculate the noise magnitude for the current epoch.
+    
+    Args:
+    epoch (int): Current epoch number
+    max_epochs (int): Total number of epochs
+    initial_magnitude (float): Starting noise magnitude
+    final_magnitude (float): Ending noise magnitude
+    
+    Returns:
+    float: Calculated noise magnitude for the current epoch
+    """
+    return max(final_magnitude, initial_magnitude - (initial_magnitude - final_magnitude) * (epoch / max_epochs))
+
 
 
 def train(config, model, discriminator, train_dataloader, accelerator):
@@ -85,6 +103,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         total_g_loss = 0
         total_d_loss = 0
+         
+        current_decay = get_ema_decay(epoch, config.training.num_epochs)
+        ema.decay = current_decay
 
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
@@ -94,7 +115,13 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                 ref_idx = 0
 
-                
+                # Calculate noise magnitude for this epoch
+                noise_magnitude = get_noise_magnitude(
+                    epoch, 
+                    config.training.num_epochs, 
+                    initial_magnitude=config.training.initial_noise_magnitude,
+                    final_magnitude=config.training.final_noise_magnitude
+                )
                 if config.training.use_many_xrefs:
                     ref_indices = range(0, num_frames, config.training.every_xref_frames)
                 else:
@@ -267,6 +294,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # Logging
                     if accelerator.is_main_process:
                         wandb.log({
+                            "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),
                             "batch_d_loss": d_loss.item(),
                             "pixel_loss": l_p.item(),
