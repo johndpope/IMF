@@ -8,6 +8,7 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from vit import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
+from pixelwise import PixelwiseSeparateConv, SNPixelwiseSeparateConv
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
 # from common import DownConvResBlock,UpConvResBlock
@@ -31,7 +32,7 @@ class EfficientFeatureExtractor(nn.Module):
         
         # Add 1x1 convolutions to adjust channel dimensions if needed
         self.adjustments = nn.ModuleList([
-            (self.backbone[i][-1].out_channels, out_channels, kernel_size=1)
+            nn.Conv2d(self.backbone[i][-1].out_channels, out_channels, kernel_size=1)
             for i, out_channels in zip(self.feature_indices, output_channels)
         ])
 
@@ -61,10 +62,10 @@ class ResNetFeatureExtractor(nn.Module):
         self.layer4 = self.resnet.layer4
 
         # Add additional convolutional layers to adjust channel dimensions
-        self.adjust1 = (256, output_channels[0], kernel_size=1)
-        self.adjust2 = (512, output_channels[1], kernel_size=1)
-        self.adjust3 = (1024, output_channels[2], kernel_size=1)
-        self.adjust4 = (2048, output_channels[3], kernel_size=1)
+        self.adjust1 = nn.Conv2d(256, output_channels[0], kernel_size=1)
+        self.adjust2 = nn.Conv2d(512, output_channels[1], kernel_size=1)
+        self.adjust3 = nn.Conv2d(1024, output_channels[2], kernel_size=1)
+        self.adjust4 = nn.Conv2d(2048, output_channels[3], kernel_size=1)
 
         # for param in self.resnet.parameters(): Shoots up vram by 10gb
         #     param.requires_grad = False
@@ -109,9 +110,9 @@ class ResNetFeatureExtractor(nn.Module):
 class UpConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, use_pixelwise=True):
         super().__init__()
-        Conv2d = cn.conv2d if use_pixelwise else 
+
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv1 = Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
@@ -121,7 +122,7 @@ class UpConvResBlock(nn.Module):
 
         
         # Add a 1x1 convolution for the residual connection if channel sizes differ
-        self.residual_conv = (in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
 
     def forward(self, x):
         residual = self.upsample(x)
@@ -142,11 +143,11 @@ class UpConvResBlock(nn.Module):
 class DownConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv1 = (in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = (out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
 
@@ -187,7 +188,7 @@ Each DownConvResBlock performs downsampling using a strided convolution, maintai
 class FeatResBlock(nn.Module):
     def __init__(self, channels, use_pixelwise=False):
         super().__init__()
-        Conv2d = cn.conv2d if use_pixelwise else 
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
         self.conv1 = Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
         self.relu1 = nn.ReLU(inplace=True)
@@ -211,7 +212,7 @@ class DenseFeatureEncoder(nn.Module):
     def __init__(self, in_channels=3):
         super().__init__()
         self.initial_conv = nn.Sequential(
-            (in_channels, 64, kernel_size=7, stride=1, padding=3),
+            nn.Conv2d(in_channels, 64, kernel_size=7, stride=1, padding=3),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True)
         )
@@ -251,8 +252,8 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 class LatentTokenEncoder(nn.Module):
     def __init__(self, dm=32):
         super(LatentTokenEncoder, self).__init__()
-        # self.conv1 = (3, 64, kernel_size=3, stride=1, padding=1)
-        self.conv1 = cn.conv2d(3, 64, kernel_size=3, stride=1, padding=1)
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
         self.activation = nn.LeakyReLU(0.2)
 
         self.res1 = ResBlock(64, 64, downsample=True)  # ResBlock-64, ↓2
@@ -443,7 +444,7 @@ class FrameDecoder(nn.Module):
         ])
         
         self.final_conv = nn.Sequential(
-            cn.conv2d(64, 3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
 
@@ -498,17 +499,17 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, downsample=False):
         super().__init__()
-        Conv2d = cn.conv2d if use_pixelwise else 
-        self.conv1 = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1) # this used to have stride = 2
+        Conv2d = PixelwiseSeparateConv if use_pixelwise else nn.Conv2d
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = (out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.relu2 = nn.ReLU(inplace=True)
         
         if downsample or in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                (in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
                 nn.BatchNorm2d(out_channels)
             )
         else:
@@ -720,7 +721,7 @@ class NoiseInjection(nn.Module):
 
 
 
-class SNConv2d():
+class SNConv2d(nn.Conv2d):
     def __init__(self, *args, **kwargs):
         super(SNConv2d, self).__init__(*args, **kwargs)
         self = spectral_norm(self)
@@ -750,34 +751,35 @@ class PatchDiscriminator(nn.Module):
         
           
         self.scale1 = nn.Sequential(
-            SNcn.conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1)),
             nn.LeakyReLU(0.2, inplace=True),
-            SNcn.conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1)),
             nn.InstanceNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
-            SNcn.conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1)),
             nn.InstanceNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
-            SNcn.conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1)),
             nn.InstanceNorm2d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
-            SNcn.conv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+            spectral_norm(nn.Conv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0))
         )
         
         self.scale2 = nn.Sequential(
-            SNConv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1)),
             nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1)),
             nn.InstanceNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1)),
             nn.InstanceNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1),
+            spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1)),
             nn.InstanceNorm2d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
-            SNConv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0)
+            spectral_norm(nn.Conv2d(ndf * 8, 1, kernel_size=1, stride=1, padding=0))
         )
+
 
     def forward(self, x):
         debug_print(f"PatchDiscriminator input shape: {x.shape}")
