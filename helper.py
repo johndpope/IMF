@@ -11,7 +11,7 @@ import torch
 import matplotlib.pyplot as plt
 import os
 import io
-
+from PIL import Image
 
 def log_grad_flow(named_parameters, step=1):
     ave_grads = []
@@ -24,7 +24,6 @@ def log_grad_flow(named_parameters, step=1):
     if not ave_grads:  # If no valid gradients were found
         print("No valid gradients found for logging.")
         return
-    
     
     # Create the matplotlib figure
     plt.figure(figsize=(12, 6))
@@ -44,7 +43,7 @@ def log_grad_flow(named_parameters, step=1):
     buf.seek(0)
     
     # Create a wandb.Image from the buffer
-    img = wandb.Image(buf)
+    img = wandb.Image(Image.open(buf))
     
     # Close the matplotlib figure to free up memory
     plt.close()
