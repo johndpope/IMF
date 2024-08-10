@@ -69,10 +69,8 @@ class CIPSFrameDecoder(nn.Module):
         # Project input features to style vectors
         styles = []
         for proj, feat in zip(self.feature_projection, features):
-            print(f"Feature shape before view: {feat.shape}")
-            feat_flat = feat.reshape(batch_size, -1)
-            print(f"Feature shape after reshape: {feat_flat.shape}")
-            style = proj(feat_flat)
+            print(f"Feature shape before projection: {feat.shape}")
+            style = proj(feat)
             print(f"Style shape after projection: {style.shape}")
             styles.append(style)
         
