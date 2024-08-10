@@ -365,7 +365,7 @@ def main():
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers,
         use_resnet_feature=config.model.use_resnet_feature,
-        use_mlgffn=config.model.use_mlgffn
+        use_mlgffn=config.model.use_mlgffn,
         use_cips_generator=config.model.use_cips_generator
     )
     add_gradient_hooks(model)
