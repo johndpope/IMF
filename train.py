@@ -291,6 +291,7 @@ def main():
     )
 
     model = IMFModel(
+        use_resnet_feature=config.model.use_resnet_feature,
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers

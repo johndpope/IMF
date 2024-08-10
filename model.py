@@ -208,20 +208,20 @@ class FeatResBlock(nn.Module):
 
 
 class DenseFeatureEncoder(nn.Module):
-    def __init__(self, in_channels=3):
+    def __init__(self, in_channels=3,base_channels=64,output_channels=[128, 256, 512, 512]):
         super().__init__()
         self.initial_conv = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=7, stride=1, padding=3),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(in_channels, base_channels, kernel_size=7, stride=1, padding=3),
+            nn.BatchNorm2d(base_channels),
             nn.ReLU(inplace=True)
         )
         
         self.down_blocks = nn.ModuleList([
-            DownConvResBlock(64, 64),
-            DownConvResBlock(64, 128),
-            DownConvResBlock(128, 256),
-            DownConvResBlock(256, 512),
-            DownConvResBlock(512, 512)
+            DownConvResBlock(base_channels, base_channels),
+            DownConvResBlock(base_channels, output_channels[1]),
+            DownConvResBlock(output_channels[1], output_channels[2]),
+            DownConvResBlock(output_channels[2], output_channels[3]),
+            DownConvResBlock(output_channels[3], output_channels[3])
         ])
 
     def forward(self, x):
@@ -586,7 +586,7 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
+    def __init__(self,use_resnet_feature=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
 
@@ -594,10 +594,9 @@ class IMFModel(nn.Module):
         self.latent_token_decoder = LatentTokenDecoder()
 
         self.motion_dims = [128, 256, 512, 512] 
-        # self.dense_feature_encoder = ResNetFeatureExtractor(output_channels=self.motion_dims)
-        self.dense_feature_encoder = DenseFeatureEncoder()
-        # self.dense_feature_encoder = EfficientFeatureExtractor(output_channels=self.feature_dims)
-        
+        FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder
+        self.dense_feature_encoder = FeatureExtractor(output_channels=self.motion_dims))
+ 
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             motion_dim = self.motion_dims[i]
