@@ -310,8 +310,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                     # Log gradient flow for generator and discriminator
                     if accelerator.is_main_process and batch_idx % config.logging.log_every == 0:
-                        log_grad_flow(model.named_parameters())
-                        log_grad_flow(discriminator.named_parameters())
+                        log_grad_flow(model.named_parameters()),global_step
+                        log_grad_flow(discriminator.named_parameters(),global_step)
 
 
             progress_bar.close()

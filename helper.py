@@ -13,7 +13,7 @@ import os
 import io
 
 
-def log_grad_flow(named_parameters, step):
+def log_grad_flow(named_parameters, step=1):
     ave_grads = []
     layers = []
     for n, p in named_parameters:
