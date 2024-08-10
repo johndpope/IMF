@@ -16,7 +16,7 @@ class EnhancedFrameDecoder(nn.Module):
         self.feat_blocks = nn.ModuleList()
         
         for i in range(len(input_dims) - 1):
-            in_dim = input_dims[i]
+            in_dim = input_dims[i] * 2 if i > 0 else input_dims[i]  # Double the input channels for concatenation
             out_dim = input_dims[i+1]
             self.upconv_blocks.append(UpConvResBlock(in_dim, out_dim))
             self.feat_blocks.append(nn.Sequential(*[FeatResBlock(out_dim) for _ in range(3)]))
@@ -83,21 +83,18 @@ class EnhancedFrameDecoder(nn.Module):
 class UpConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         
     def forward(self, x):
         print(f"UpConvResBlock input shape: {x.shape}")
-        x = self.conv(x)
-        print(f"UpConvResBlock after conv shape: {x.shape}")
         x = self.upsample(x)
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.relu(self.bn2(self.conv2(x)))
         print(f"UpConvResBlock output shape: {x.shape}")
         return x
 
