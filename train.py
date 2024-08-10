@@ -88,7 +88,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
-            for _ in range(video_repeat):
+            for _ in range(int(video_repeat)):
                 source_frames = batch['frames']
                 batch_size, num_frames, channels, height, width = source_frames.shape
 
