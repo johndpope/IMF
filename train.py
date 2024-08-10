@@ -262,9 +262,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
 
                         # 4. Total Loss
-                        g_loss = (config.training.lambda_pixel * l_p +
-                                config.training.lambda_perceptual * l_v +
-                                config.training.lambda_adv * g_loss_gan)
+                        g_loss = (config.training.lambda_pixel * l_p.mean() +
+                            config.training.lambda_perceptual * l_v.mean() +
+                            config.training.lambda_adv * g_loss_gan.mean())
 
                         # C. Optimization
                         accelerator.backward(g_loss)
