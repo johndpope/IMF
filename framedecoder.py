@@ -25,7 +25,7 @@ class ModulatedFC(nn.Module):
         return x
 
 class CIPSFrameDecoder(nn.Module):
-    def __init__(self, feature_dims=[128, 256, 512, 512] , ngf=64, max_resolution=256, style_dim=512, num_layers=8):
+    def __init__(self, feature_dims=[128, 256, 512, 512], ngf=64, max_resolution=256, style_dim=512, num_layers=8):
         super(CIPSFrameDecoder, self).__init__()
         
         self.feature_dims = feature_dims
@@ -35,7 +35,7 @@ class CIPSFrameDecoder(nn.Module):
         self.num_layers = num_layers
         
         self.feature_projection = nn.ModuleList([
-            nn.Linear(dim, style_dim) for dim in feature_dims
+            nn.Conv2d(dim, style_dim, kernel_size=1) for dim in feature_dims
         ])
         
         self.fourier_features = FourierFeatures(2, 256)
@@ -71,6 +71,7 @@ class CIPSFrameDecoder(nn.Module):
         for proj, feat in zip(self.feature_projection, features):
             print(f"Feature shape before projection: {feat.shape}")
             style = proj(feat)
+            style = style.view(batch_size, self.style_dim, -1).mean(dim=2)
             print(f"Style shape after projection: {style.shape}")
             styles.append(style)
         
