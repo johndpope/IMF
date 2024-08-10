@@ -79,8 +79,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
+    # perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
     # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
+    perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
 
@@ -294,6 +295,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # Logging
                     if accelerator.is_main_process:
                         wandb.log({
+                            "ema":current_decay,
                             "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),
                             "batch_d_loss": d_loss.item(),
