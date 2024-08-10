@@ -587,17 +587,17 @@ class IMFModel(nn.Module):
     def __init__(self,use_resnet_feature=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
-
+        self.feature_dims = [64, 128, 256, 512]
         self.latent_token_encoder = LatentTokenEncoder(
             initial_channels=64,
-            output_channels=[64, 128, 256, 512],
+            output_channels=self.feature_dims,
             dm=32
         )
         self.latent_token_decoder = LatentTokenDecoder()
 
-        self.motion_dims = [128, 256, 512, 512] 
+        
         FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder
-        self.dense_feature_encoder = FeatureExtractor(output_channels=self.motion_dims)
+        self.dense_feature_encoder = FeatureExtractor(output_channels=self.feature_dims)
  
         depth = 4
         num_heads = 8
@@ -606,9 +606,8 @@ class IMFModel(nn.Module):
 
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
-            feature_dim = self.feature_dims[i]
-            motion_dim = self.motion_dims[i]
-            model = ImplicitMotionAlignment(feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio)
+            dim = self.feature_dims[i]
+            model = ImplicitMotionAlignment(dim, dim, depth, num_heads, window_size, mlp_ratio)
             self.implicit_motion_alignment.append(model)
         
         self.frame_decoder = FrameDecoder()
