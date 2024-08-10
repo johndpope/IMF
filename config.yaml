@@ -6,7 +6,7 @@ model:
   use_resnet_feature: True
 # Training parameters
 training:
-  video_repeat: 5
+  video_repeat: 2
   use_ema: False
   use_r1_reg: False
   batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
@@ -18,7 +18,7 @@ training:
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
   ema_decay: 0.999
   style_mixing_prob: 0.9
-  noise_magnitude: 0.01
+  noise_magnitude: 0.001
   gradient_accumulation_steps: 1
   lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10

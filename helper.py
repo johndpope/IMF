@@ -71,7 +71,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
             # Select a subset of images if batch_size > num_samples
             x_reconstructed = x_reconstructed[:num_samples]
             x_reference = x_reference[:num_samples]
-
+            x_current = x_current[:num_samples]
             
             # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
             frames = torch.cat((x_reconstructed,x_current, x_reference), dim=0)

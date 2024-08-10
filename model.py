@@ -253,57 +253,51 @@ The FeatResBlock is now a subclass of ResBlock with downsample=False, as it does
 
 
 class LatentTokenEncoder(nn.Module):
-    def __init__(self, dm=32):
+    def __init__(self, initial_channels=64, output_channels=[128, 256, 512, 512], dm=32):
         super(LatentTokenEncoder, self).__init__()
 
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(3, initial_channels, kernel_size=3, stride=1, padding=1)
         self.activation = nn.LeakyReLU(0.2)
 
-        self.res1 = ResBlock(64, 64, downsample=True)  # ResBlock-64, ↓2
-        self.res2 = ResBlock(64, 128, downsample=True)  # ResBlock-128, ↓2
-        self.res3 = ResBlock(128, 256, downsample=True)  # ResBlock-256, ↓2
-        
-        # 3× ResBlock-512, ↓2
-        self.res4 = ResBlock(256, 512, downsample=True)
-        self.res5 = ResBlock(512, 512, downsample=True)
-        self.res6 = ResBlock(512, 512, downsample=True)
-        
-        self.equalconv = EqualConv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        # Dynamically create ResBlocks
+        self.res_blocks = nn.ModuleList()
+        in_channels = initial_channels
+        for out_channels in output_channels:
+            self.res_blocks.append(ResBlock(in_channels, out_channels, downsample=True))
+            in_channels = out_channels
 
-        
-        # 4× EqualLinear-512
-        self.linear1 = EqualLinear(512, 512)
-        self.linear2 = EqualLinear(512, 512)
-        self.linear3 = EqualLinear(512, 512)
-        self.linear4 = EqualLinear(512, 512)
-        
-        self.final_linear = EqualLinear(512, dm) # EqualLinear-dm
+        self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding=1)
 
-    
+        # 4× EqualLinear layers
+        self.linear_layers = nn.ModuleList([EqualLinear(output_channels[-1], output_channels[-1]) for _ in range(4)])
+        
+        self.final_linear = EqualLinear(output_channels[-1], dm)
+
     def forward(self, x):
+        debug_print(f"LatentTokenEncoder input shape: {x.shape}")
+
         x = self.activation(self.conv1(x))
+        debug_print(f"After initial conv and activation: {x.shape}")
         
-        x = self.res1(x)
-        x = self.res2(x)
-        x = self.res3(x)
-        x = self.res4(x)
-        x = self.res5(x)
-        x = self.res6(x)
+        for i, res_block in enumerate(self.res_blocks):
+            x = res_block(x)
+            debug_print(f"After res_block {i+1}: {x.shape}")
         
         x = self.equalconv(x)
+        debug_print(f"After equalconv: {x.shape}")
         
-        # Global average pooling instead of flattening
-        x = x.mean([2, 3])
+        # Global average pooling
+        x = x.view(x.size(0), x.size(1), -1).mean(dim=2)
+        debug_print(f"After global average pooling: {x.shape}")
         
-        x = self.activation(self.linear1(x))
-        x = self.activation(self.linear2(x))
-        x = self.activation(self.linear3(x))
-        x = self.activation(self.linear4(x))
+        for i, linear_layer in enumerate(self.linear_layers):
+            x = self.activation(linear_layer(x))
+            debug_print(f"After linear layer {i+1}: {x.shape}")
         
         x = self.final_linear(x)
+        debug_print(f"Final output: {x.shape}")
         
         return x
-
 
 
 
@@ -594,7 +588,11 @@ class IMFModel(nn.Module):
         super().__init__()
         
 
-        self.latent_token_encoder = LatentTokenEncoder(dm=latent_dim) 
+        self.latent_token_encoder = LatentTokenEncoder(
+            initial_channels=64,
+            output_channels=[64, 128, 256, 512],
+            dm=32
+        )
         self.latent_token_decoder = LatentTokenDecoder()
 
         self.motion_dims = [128, 256, 512, 512] 
@@ -624,13 +622,11 @@ class IMFModel(nn.Module):
     def style_mixing(self, t_c, t_r):
         device = t_c.device
         if random.random() < self.style_mix_prob:
-            batch_size = t_c.size(0)
-            perm = torch.randperm(batch_size, device=device)
-            t_c_mixed = t_c[perm]
-            t_r_mixed = t_r[perm]
-            mix_mask = (torch.rand(batch_size, 1, device=device) < 0.5).to(device)
-            t_c = torch.where(mix_mask, t_c, t_c_mixed)
-            t_r = torch.where(mix_mask, t_r, t_r_mixed)
+            batch_size, token_dim = t_c.size()
+            mix_mask = (torch.rand(batch_size, token_dim, device=device) < 0.5).float()
+            t_c_mixed = t_c * mix_mask + t_r * (1 - mix_mask)
+            t_r_mixed = t_r * mix_mask + t_c * (1 - mix_mask)
+            return t_c_mixed, t_r_mixed
         return t_c, t_r
 
     def forward(self, x_current, x_reference):
