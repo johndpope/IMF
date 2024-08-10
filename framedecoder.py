@@ -25,7 +25,7 @@ class ModulatedFC(nn.Module):
         return x
 
 class CIPSFrameDecoder(nn.Module):
-    def __init__(self, feature_dims, ngf=64, max_resolution=256, style_dim=512, num_layers=8):
+    def __init__(self, feature_dims=[128, 256, 512, 512] , ngf=64, max_resolution=256, style_dim=512, num_layers=8):
         super(CIPSFrameDecoder, self).__init__()
         
         self.feature_dims = feature_dims
