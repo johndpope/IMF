@@ -13,3 +13,4 @@ jobs:
     steps:
     - name: Run tests
       run: python test.py
+      working-directory: ../
