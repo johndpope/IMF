@@ -24,15 +24,20 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
 from vggloss import VGGLoss
 from stylegan import EMA
+from torch.optim import AdamW, SGD
+from transformers import Adafactor
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
+def get_video_repeat(epoch, max_epochs, initial_repeat, final_repeat):
+    return max(final_repeat, initial_repeat - (initial_repeat - final_repeat) * (epoch / max_epochs))
 
 
-# from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 def train(config, model, discriminator, train_dataloader, accelerator):
-    optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
+    # optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
+    optimizer_g = AdamW(model.parameters(), lr=config.training.learning_rate_g, weight_decay=0.01)
     optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
 
     # dynamic learning rate
@@ -70,6 +75,10 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     global_step = 0
 
     for epoch in range(config.training.num_epochs):
+        video_repeat = get_video_repeat(epoch, config.training.num_epochs, 
+                                        config.training.initial_video_repeat, 
+                                        config.training.final_video_repeat)
+        
         model.train()
         discriminator.train()
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
@@ -79,7 +88,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
-            for _ in range(config.training.video_repeat):
+            for _ in range(video_repeat):
                 source_frames = batch['frames']
                 batch_size, num_frames, channels, height, width = source_frames.shape
 
