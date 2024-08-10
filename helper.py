@@ -105,21 +105,6 @@ def log_loss_landscape(model, loss_fns, dataloader, step):
 
 
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from collections import defaultdict
-import numpy as np
-import wandb
-import os
-from torchvision.utils import save_image
-import torch.nn.functional as F
-import torch
-import matplotlib.pyplot as plt
-import os
-import io
-from PIL import Image
-
 # Global variable to store the current table structure
 current_table_columns = None
 
@@ -165,7 +150,7 @@ def log_grad_flow(named_parameters, global_step):
     if current_table_columns != new_columns:
         # If the structure has changed, delete the existing table and create a new one
         if wandb.run is not None:
-            wandb.run.config.update({"gradient_flow_columns": new_columns})
+            wandb.run.config.update({"gradient_flow_columns": new_columns}, allow_val_change=True)
             
             # Delete the existing table artifact
             api = wandb.Api()
@@ -210,7 +195,7 @@ def log_grad_flow(named_parameters, global_step):
     # Log other metrics
     wandb.log(log_dict)
 
-    
+
 def check_gradient_issues(grads, layers):
     issues = []
     mean_grad = np.mean(grads)
@@ -226,6 +211,9 @@ def check_gradient_issues(grads, layers):
         return "<br>".join(issues)
     else:
         return "✅ No significant gradient issues detected"
+
+
+
 
 def count_model_params(model, trainable_only=False, verbose=False):
     """
@@ -265,20 +253,27 @@ def count_model_params(model, trainable_only=False, verbose=False):
         print(f"{'Layer Type':<30} {'Parameter Count':<15} {'% of Total':<10}")
         print("-" * 55)
         
-        native_total = 0
-        custom_total = 0
+        native_counts = {k: v for k, v in param_counts.items() if k.startswith("Native_")}
+        custom_counts = {k: v for k, v in param_counts.items() if k.startswith("Custom_")}
         
-        for layer_type, count in sorted(param_counts.items(), key=lambda x: x[1], reverse=True):
+        native_total = sum(native_counts.values())
+        custom_total = sum(custom_counts.values())
+        
+        # Print native modules
+        for i, (layer_type, count) in enumerate(sorted(native_counts.items(), key=lambda x: x[1], reverse=True), 1):
             percentage = count / total_params * 100
-            print(f"{layer_type:<30} {count:<15,d} {percentage:.2f}%")
-            
-            if layer_type.startswith("Native_"):
-                native_total += count
-            else:
-                custom_total += count
+            print(f"Native {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
         
         print("-" * 55)
         print(f"{'Native Modules Total':<30} {native_total:<15,d} {native_total/total_params*100:.2f}%")
+        print("-" * 55)
+        
+        # Print custom modules
+        for i, (layer_type, count) in enumerate(sorted(custom_counts.items(), key=lambda x: x[1], reverse=True), 1):
+            percentage = count / total_params * 100
+            print(f"Custom {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
+        
+        print("-" * 55)
         print(f"{'Custom Modules Total':<30} {custom_total:<15,d} {custom_total/total_params*100:.2f}%")
         print("-" * 55)
         print(f"{'Total':<30} {total_params:<15,d} 100.00%")
@@ -288,6 +283,7 @@ def count_model_params(model, trainable_only=False, verbose=False):
         return trainable_params / 1e6, dict(param_counts)
     else:
         return total_params / 1e6, dict(param_counts)
+    
 def normalize(tensor):
     mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(tensor.device)
     std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(tensor.device)
