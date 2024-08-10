@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
-
 class EnhancedFrameDecoder(nn.Module):
     def __init__(self, input_dims=[512, 512, 256, 128, 64], output_dim=3, use_attention=True):
         super().__init__()
@@ -38,27 +37,39 @@ class EnhancedFrameDecoder(nn.Module):
         self.pos_encoding = PositionalEncoding2D(input_dims[0])
 
     def forward(self, features):
+        print(f"EnhancedFrameDecoder input features shapes: {[f.shape for f in features]}")
+        
         # Reshape and reverse features list
         reshaped_features = self.reshape_features(features)[::-1]
+        print(f"Reshaped features shapes: {[f.shape for f in reshaped_features]}")
         
         x = reshaped_features[0]  # Start with the smallest feature map
+        print(f"Initial x shape: {x.shape}")
+        
         x = self.pos_encoding(x)  # Add positional encoding
+        print(f"After positional encoding, x shape: {x.shape}")
         
         for i, (upconv, feat_block) in enumerate(zip(self.upconv_blocks, self.feat_blocks)):
             x = upconv(x)
+            print(f"After upconv {i}, x shape: {x.shape}")
+            
             feat = feat_block(reshaped_features[i+1])
+            print(f"Feature {i} shape: {feat.shape}")
             
             if self.use_attention:
                 feat = self.attention_layers[i](feat)
+                print(f"After attention {i}, feat shape: {feat.shape}")
             
             x = torch.cat([x, feat], dim=1)
+            print(f"After concatenation {i}, x shape: {x.shape}")
         
         x = self.final_conv(x)
+        print(f"Final output shape: {x.shape}")
         return x
 
     def reshape_features(self, features):
         reshaped = []
-        for feat in features:
+        for i, feat in enumerate(features):
             if len(feat.shape) == 3:  # (batch, hw, channels)
                 b, hw, c = feat.shape
                 h = w = int(math.sqrt(hw))
@@ -66,6 +77,7 @@ class EnhancedFrameDecoder(nn.Module):
             else:  # Already in (batch, channels, height, width) format
                 reshaped_feat = feat
             reshaped.append(reshaped_feat)
+            print(f"Reshaped feature {i} shape: {reshaped_feat.shape}")
         return reshaped
 
 class UpConvResBlock(nn.Module):
@@ -82,7 +94,12 @@ class UpConvResBlock(nn.Module):
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         
     def forward(self, x):
-        return self.upsample(self.conv(x))
+        print(f"UpConvResBlock input shape: {x.shape}")
+        x = self.conv(x)
+        print(f"UpConvResBlock after conv shape: {x.shape}")
+        x = self.upsample(x)
+        print(f"UpConvResBlock output shape: {x.shape}")
+        return x
 
 class FeatResBlock(nn.Module):
     def __init__(self, channels):
@@ -96,7 +113,12 @@ class FeatResBlock(nn.Module):
         )
         
     def forward(self, x):
-        return F.relu(x + self.conv(x))
+        print(f"FeatResBlock input shape: {x.shape}")
+        residual = self.conv(x)
+        print(f"FeatResBlock residual shape: {residual.shape}")
+        out = F.relu(x + residual)
+        print(f"FeatResBlock output shape: {out.shape}")
+        return out
 
 class SelfAttention(nn.Module):
     def __init__(self, in_dim):
@@ -107,6 +129,7 @@ class SelfAttention(nn.Module):
         self.gamma = nn.Parameter(torch.zeros(1))
 
     def forward(self, x):
+        print(f"SelfAttention input shape: {x.shape}")
         B, C, W, H = x.size()
         proj_query = self.query_conv(x).view(B, -1, W*H).permute(0, 2, 1)
         proj_key = self.key_conv(x).view(B, -1, W*H)
@@ -116,6 +139,7 @@ class SelfAttention(nn.Module):
         out = torch.bmm(proj_value, attention.permute(0, 2, 1))
         out = out.view(B, C, W, H)
         out = self.gamma * out + x
+        print(f"SelfAttention output shape: {out.shape}")
         return out
 
 class PositionalEncoding2D(nn.Module):
@@ -128,6 +152,7 @@ class PositionalEncoding2D(nn.Module):
         self.register_buffer('inv_freq', inv_freq)
 
     def forward(self, tensor):
+        print(f"PositionalEncoding2D input shape: {tensor.shape}")
         _, _, h, w = tensor.shape
         pos_x, pos_y = torch.meshgrid(torch.arange(w), torch.arange(h), indexing='ij')
         pos_x = pos_x.to(tensor.device).float()
@@ -140,4 +165,6 @@ class PositionalEncoding2D(nn.Module):
         emb_y = torch.cat((sin_inp_y.sin(), sin_inp_y.cos()), dim=-1).unsqueeze(0)
         
         emb = torch.cat((emb_x, emb_y), dim=-1).permute(0, 3, 1, 2)
-        return tensor + emb[:, :self.org_channels, :, :]
+        out = tensor + emb[:, :self.org_channels, :, :]
+        print(f"PositionalEncoding2D output shape: {out.shape}")
+        return out
