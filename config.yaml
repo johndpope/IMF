@@ -6,19 +6,19 @@ model:
   use_resnet_feature: True
 # Training parameters
 training:
-  video_repeat: 5
+  video_repeat: 2
   use_ema: False
   use_r1_reg: False
   batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
   save_steps: 250
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
-  learning_rate_d: 1.0e-5  # Reduced learning rate for discriminator
+  initial_learning_rate_d: 3e-6  # Set a lower initial learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
   ema_decay: 0.999
   style_mixing_prob: 0.9
-  noise_magnitude: 0.01
+  noise_magnitude: 0.001
   gradient_accumulation_steps: 1
   lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10
@@ -31,8 +31,6 @@ training:
   r1_interval: 16
   label_smoothing: 0.1
 
-  # dynamic discriminator learning to overcome mode collapse
-  initial_learning_rate_d: 1.0e-5
   min_learning_rate_d: 1.0e-6
   max_learning_rate_d: 1.0e-3
   d_lr_adjust_frequency: 100  # Adjust D learning rate every 100 steps

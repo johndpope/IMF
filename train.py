@@ -245,7 +245,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     
                     # Sample and save reconstructions every save_steps
                     sample_path = f"recon_step_{global_step}.png"
-                    sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                    sample_recon(model, (x_reconstructed, x_current,x_reference), accelerator, sample_path, 
                                 num_samples=config.logging.sample_size)
 
 
@@ -339,6 +339,7 @@ def main():
         dataset,
         batch_size=config.training.batch_size,
         num_workers=1,
+        shuffle=True,
         # persistent_workers=True,
         pin_memory=True,
         collate_fn=gpu_padded_collate 

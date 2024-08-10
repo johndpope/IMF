@@ -131,32 +131,22 @@ class CrossAttentionModule(nn.Module):
         ml_c = ml_c.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
         ml_r = ml_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
         fl_r = fl_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
-        
         debug_print(f"After flattening: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
 
         # Compute Q, K, V
-        q = self.to_q(ml_c).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
-        k = self.to_k(ml_r).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
-        v = self.to_v(fl_r).view(B, H*W, self.heads, self.dim_head).transpose(1, 2)
-        
-        debug_print(f"Q: {q.shape}, K: {k.shape}, V: {v.shape}")
+        q = self.to_q(ml_c).view(B, -1, self.heads, self.dim_head).transpose(1, 2)
+        k = self.to_k(ml_r).view(B, -1, self.heads, self.dim_head).transpose(1, 2)
+        v = self.to_v(fl_r).view(B, -1, self.heads, self.dim_head).transpose(1, 2)
 
-        # Compute attention
+        # Compute attention for each sample in the batch
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         attn = F.softmax(attn, dim=-1)
-        
-        debug_print(f"Attention shape: {attn.shape}")
-
-        # Apply attention to values
         out = torch.matmul(attn, v)
-        debug_print(f"Output after attention: {out.shape}")
-        
+
         # Reshape and project back to original dimensions
         out = out.transpose(1, 2).contiguous().view(B, H*W, self.heads * self.dim_head)
         out = self.to_out(out)
         out = out.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
-        
-        debug_print(f"Final output shape: {out.shape}")
 
         return out
 
