@@ -39,12 +39,21 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
     scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
 
-    ema = EMA(model, decay=0.9999)
 
-    model, discriminator, optimizer_g, optimizer_d, train_dataloader,ema = accelerator.prepare(
-        model, discriminator, optimizer_g, optimizer_d, train_dataloader,ema
+    # Make EMA conditional based on config
+    if config.training.use_ema:
+        ema = EMA(model, decay=config.training.ema_decay)
+    else:
+        ema = None
+
+    model, discriminator, optimizer_g, optimizer_d, train_dataloader = accelerator.prepare(
+        model, discriminator, optimizer_g, optimizer_d, train_dataloader
     )
-    ema.register()
+    # Prepare EMA if it's being used
+    if ema:
+        ema = accelerator.prepare(ema)
+        ema.register()
+
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
     perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
@@ -69,203 +78,212 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         total_d_loss = 0
 
         for batch_idx, batch in enumerate(train_dataloader):
-            source_frames = batch['frames']
-            batch_size, num_frames, channels, height, width = source_frames.shape
+            # Repeat the current video for the specified number of times
+            for _ in range(config.training.video_repeat):
+                source_frames = batch['frames']
+                batch_size, num_frames, channels, height, width = source_frames.shape
 
-            ref_idx = 0
-            for ref_idx in range(0, num_frames, config.training.every_xref_frames):  # Step by 16 for reference frames
+                ref_idx = 0
 
-                x_reference = source_frames[:, ref_idx]
-
-                for current_idx in range(num_frames):
-                    if current_idx == ref_idx:
-                        continue  # Skip when current frame is the reference frame
-                    
-                    x_current = source_frames[:, current_idx]
-
-                    # A. Forward Pass
-                    # 1. Dense Feature Encoding
-                    f_r = model.dense_feature_encoder(x_reference)
-
-                    # 2. Latent Token Encoding (with noise addition)
-                    t_r = model.latent_token_encoder(x_reference)
-                    t_c = model.latent_token_encoder(x_current)
-
-
-
-                    # Add noise to latent tokens
-                    noise_r = torch.randn_like(t_r) * noise_magnitude
-                    noise_c = torch.randn_like(t_c) * noise_magnitude
-                    t_r = t_r + noise_r
-                    t_c = t_c + noise_c
-
-                    # Style mixing (optional, based on probability)
-                    # Style mixing (optional, based on probability)
-                    # print(f"Original t_c shape: {t_c.shape}")
-                    # print(f"Original t_r shape: {t_r.shape}")
-
-                    if torch.rand(()).item() < style_mixing_prob:
-                        batch_size = t_c.size(0)
-                        rand_indices = torch.randperm(batch_size)
-                        rand_t_c = t_c[rand_indices]
-                        rand_t_r = t_r[rand_indices]
-                        
-                        # print(f"rand_t_c shape: {rand_t_c.shape}")
-                        # print(f"rand_t_r shape: {rand_t_r.shape}")
-                        
-                        # Create a mask for mixing
-                        mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
-                        mix_mask = mix_mask.float()
-                        
-                        # print(f"mix_mask shape: {mix_mask.shape}")
-                        
-                        # Mix the tokens
-                        mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
-                        mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
-                    else:
-                        mix_t_c = t_c
-                        mix_t_r = t_r
-
-                    # print(f"Final mix_t_c shape: {mix_t_c.shape}")
-                    # print(f"Final mix_t_r shape: {mix_t_r.shape}")
-
-                    # Now use mix_t_c and mix_t_r for the rest of the processing
-                    m_c = model.latent_token_decoder(mix_t_c)
-                    m_r = model.latent_token_decoder(mix_t_r)
-
-
-
-
-                    # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
-                    # if batch_idx % config.logging.visualize_every == 0:
-                    #     os.makedirs(f"latent_visualizations/epoch_{epoch}", exist_ok=True)
-                    #     visualize_latent_token(
-                    #         t_r,  # Visualize the first token in the batch
-                    #         f"latent_visualizations/epoch_{epoch}/t_r_token_reference_batch{batch_idx}.png"
-                    #     )
-                    #     visualize_latent_token(
-                    #         m_c[0],  # Visualize the first token in the batch
-                    #         f"latent_visualizations/epoch_{epoch}/m_c_token_current_batch{batch_idx}.png"
-                    #     )
-
-
-                    # 4. Implicit Motion Alignment
-                    # Implicit Motion Alignment
-                    aligned_features = []
-                    for i in range(len(model.implicit_motion_alignment)):
-                        f_r_i = f_r[i]
-                        align_layer = model.implicit_motion_alignment[i]
-                        m_c_i = m_c[i] 
-                        m_r_i = m_r[i]
-                        aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                        aligned_features.append(aligned_feature)
-
-
-                    # 5. Frame Decoding
-                    x_reconstructed = model.frame_decoder(aligned_features)
-                    x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
-
-                    # B. Loss Calculation
-                    # 1. Pixel-wise Loss
-                    l_p = pixel_loss_fn(x_reconstructed, x_current)
-
-                    # 2. Perceptual Loss
-                    l_v = perceptual_loss_fn(x_reconstructed, x_current)
-
-                    # 3. GAN Loss
-                    # Train Discriminator
-                    optimizer_d.zero_grad()
-                    
-                    # R1 regularization
-                    x_current.requires_grad = True
-                    real_outputs = discriminator(x_current)
-                    r1_reg = 0
-                    for real_output in real_outputs:
-                        grad_real = torch.autograd.grad(
-                            outputs=real_output.sum(), inputs=x_current, create_graph=True
-                        )[0]
-                        r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
-                    
-                    fake_outputs = discriminator(x_reconstructed.detach())
-                    d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
-
-                    # Add R1 regularization to the discriminator loss
-                    d_loss = d_loss + r1_gamma * r1_reg
-
-
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
-                    
-                    accelerator.backward(d_loss)
-                    optimizer_d.step()
-                    ema.update()
-                    # Train Generator
-                    optimizer_g.zero_grad()
-                    fake_outputs = discriminator(x_reconstructed)
-                    g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
-
-
-                    # 4. Total Loss
-                    g_loss = (config.training.lambda_pixel * l_p +
-                            config.training.lambda_perceptual * l_v +
-                            config.training.lambda_adv * g_loss_gan)
-
-                    # C. Optimization
-                    accelerator.backward(g_loss)
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optimizer_g.step()
-
-
-                    total_g_loss += g_loss.item()
-                    total_d_loss += d_loss.item()
-                    progress_bar.update(1)
-                    progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
                 
-                    # Update global step
-                    global_step += 1
-                
-                # Sample and save reconstructions every save_steps
-                sample_path = f"recon_step_{global_step}.png"
-                sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
-                            num_samples=config.logging.sample_size)
+                if config.training.use_many_xrefs:
+                    ref_indices = range(0, num_frames, config.training.every_xref_frames)
+                else:
+                    ref_indices = [0]  # Only use the first frame as reference
+
+                for ref_idx in ref_indices:
+                    x_reference = source_frames[:, ref_idx]
+
+                    for current_idx in range(num_frames):
+                        if current_idx == ref_idx:
+                            continue  # Skip when current frame is the reference frame
+                        
+                        x_current = source_frames[:, current_idx]
+
+                        # A. Forward Pass
+                        # 1. Dense Feature Encoding
+                        f_r = model.dense_feature_encoder(x_reference)
+
+                        # 2. Latent Token Encoding (with noise addition)
+                        t_r = model.latent_token_encoder(x_reference)
+                        t_c = model.latent_token_encoder(x_current)
 
 
-                # Calculate average losses for the epoch
-                avg_g_loss = total_g_loss / len(train_dataloader)
-                avg_d_loss = total_d_loss / len(train_dataloader)
-                # Step the schedulers
-                scheduler_g.step(avg_g_loss)
-                scheduler_d.step(avg_d_loss)
-                # Logging
-                if accelerator.is_main_process:
-                    wandb.log({
-                        "batch_g_loss": g_loss.item(),
-                        "batch_d_loss": d_loss.item(),
-                        "pixel_loss": l_p.item(),
-                        "perceptual_loss": l_v.item(),
-                        "gan_loss": g_loss_gan.item(),
-                        "batch": batch_idx + epoch * len(train_dataloader),
-                        "lr_g": optimizer_g.param_groups[0]['lr'],
-                        "lr_d": optimizer_d.param_groups[0]['lr']
-                    })
 
-    
+                        # Add noise to latent tokens
+                        noise_r = torch.randn_like(t_r) * noise_magnitude
+                        noise_c = torch.randn_like(t_c) * noise_magnitude
+                        t_r = t_r + noise_r
+                        t_c = t_c + noise_c
 
-        progress_bar.close()
+                        # Style mixing (optional, based on probability)
+                        # Style mixing (optional, based on probability)
+                        # print(f"Original t_c shape: {t_c.shape}")
+                        # print(f"Original t_r shape: {t_r.shape}")
 
-        # Checkpoint saving
-        if (epoch + 1) % config.checkpoints.interval == 0:
-            accelerator.wait_for_everyone()
-            unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_discriminator = accelerator.unwrap_model(discriminator)
-            accelerator.save({
-                'epoch': epoch,
-                'model_state_dict': unwrapped_model.state_dict(),
-                'discriminator_state_dict': unwrapped_discriminator.state_dict(),
-                'optimizer_g_state_dict': optimizer_g.state_dict(),
-                'optimizer_d_state_dict': optimizer_d.state_dict(),
-            }, f"{config.checkpoints.dir}/checkpoint_{epoch+1}.pth")
+                        if torch.rand(()).item() < style_mixing_prob:
+                            batch_size = t_c.size(0)
+                            rand_indices = torch.randperm(batch_size)
+                            rand_t_c = t_c[rand_indices]
+                            rand_t_r = t_r[rand_indices]
+                            
+                            # print(f"rand_t_c shape: {rand_t_c.shape}")
+                            # print(f"rand_t_r shape: {rand_t_r.shape}")
+                            
+                            # Create a mask for mixing
+                            mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
+                            mix_mask = mix_mask.float()
+                            
+                            # print(f"mix_mask shape: {mix_mask.shape}")
+                            
+                            # Mix the tokens
+                            mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
+                            mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
+                        else:
+                            # print(f"no mixing...")
+                            mix_t_c = t_c
+                            mix_t_r = t_r
+
+                        # print(f"Final mix_t_c shape: {mix_t_c.shape}")
+                        # print(f"Final mix_t_r shape: {mix_t_r.shape}")
+
+                        # Now use mix_t_c and mix_t_r for the rest of the processing
+                        m_c = model.latent_token_decoder(mix_t_c)
+                        m_r = model.latent_token_decoder(mix_t_r)
+
+
+                        # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
+                        # if batch_idx % config.logging.visualize_every == 0:
+                        #     os.makedirs(f"latent_visualizations/epoch_{epoch}", exist_ok=True)
+                        #     visualize_latent_token(
+                        #         t_r,  # Visualize the first token in the batch
+                        #         f"latent_visualizations/epoch_{epoch}/t_r_token_reference_batch{batch_idx}.png"
+                        #     )
+                        #     visualize_latent_token(
+                        #         m_c[0],  # Visualize the first token in the batch
+                        #         f"latent_visualizations/epoch_{epoch}/m_c_token_current_batch{batch_idx}.png"
+                        #     )
+
+
+                        # 4. Implicit Motion Alignment
+                        # Implicit Motion Alignment
+                        aligned_features = []
+                        for i in range(len(model.implicit_motion_alignment)):
+                            f_r_i = f_r[i]
+                            align_layer = model.implicit_motion_alignment[i]
+                            m_c_i = m_c[i] 
+                            m_r_i = m_r[i]
+                            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                            aligned_features.append(aligned_feature)
+
+
+                        # 5. Frame Decoding
+                        x_reconstructed = model.frame_decoder(aligned_features)
+                        x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
+
+                        # B. Loss Calculation
+                        # 1. Pixel-wise Loss
+                        l_p = pixel_loss_fn(x_reconstructed, x_current)
+
+                        # 2. Perceptual Loss
+                        l_v = perceptual_loss_fn(x_reconstructed, x_current)
+
+                        # 3. GAN Loss
+                        # Train Discriminator
+                        optimizer_d.zero_grad()
+                        
+                        # R1 regularization
+                        x_current.requires_grad = True
+                        real_outputs = discriminator(x_current)
+                        r1_reg = 0
+                        for real_output in real_outputs:
+                            grad_real = torch.autograd.grad(
+                                outputs=real_output.sum(), inputs=x_current, create_graph=True
+                            )[0]
+                            r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+                        
+                        fake_outputs = discriminator(x_reconstructed.detach())
+                        d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
+
+                        # Add R1 regularization to the discriminator loss
+                        d_loss = d_loss + r1_gamma * r1_reg
+
+
+                        # Clip gradients
+                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+                        
+                        accelerator.backward(d_loss)
+                        optimizer_d.step()
+                        # Update EMA if it's being used
+                        if ema:
+                            ema.update()
+                        # Train Generator
+                        optimizer_g.zero_grad()
+                        fake_outputs = discriminator(x_reconstructed)
+                        g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
+
+
+                        # 4. Total Loss
+                        g_loss = (config.training.lambda_pixel * l_p +
+                                config.training.lambda_perceptual * l_v +
+                                config.training.lambda_adv * g_loss_gan)
+
+                        # C. Optimization
+                        accelerator.backward(g_loss)
+                        # Clip gradients
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        optimizer_g.step()
+
+
+                        total_g_loss += g_loss.item()
+                        total_d_loss += d_loss.item()
+                        progress_bar.update(1)
+                        progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+                    
+                        # Update global step
+                        global_step += 1
+                    
+                    # Sample and save reconstructions every save_steps
+                    sample_path = f"recon_step_{global_step}.png"
+                    sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                                num_samples=config.logging.sample_size)
+
+
+                    # Calculate average losses for the epoch
+                    avg_g_loss = total_g_loss / len(train_dataloader)
+                    avg_d_loss = total_d_loss / len(train_dataloader)
+                    # Step the schedulers
+                    scheduler_g.step(avg_g_loss)
+                    scheduler_d.step(avg_d_loss)
+                    # Logging
+                    if accelerator.is_main_process:
+                        wandb.log({
+                            "batch_g_loss": g_loss.item(),
+                            "batch_d_loss": d_loss.item(),
+                            "pixel_loss": l_p.item(),
+                            "perceptual_loss": l_v.item(),
+                            "gan_loss": g_loss_gan.item(),
+                            "batch": batch_idx + epoch * len(train_dataloader),
+                            "lr_g": optimizer_g.param_groups[0]['lr'],
+                            "lr_d": optimizer_d.param_groups[0]['lr']
+                        })
+
+        
+
+            progress_bar.close()
+
+            # Checkpoint saving
+            if (epoch + 1) % config.checkpoints.interval == 0:
+                accelerator.wait_for_everyone()
+                unwrapped_model = accelerator.unwrap_model(model)
+                unwrapped_discriminator = accelerator.unwrap_model(discriminator)
+                accelerator.save({
+                    'epoch': epoch,
+                    'model_state_dict': unwrapped_model.state_dict(),
+                    'discriminator_state_dict': unwrapped_discriminator.state_dict(),
+                    'optimizer_g_state_dict': optimizer_g.state_dict(),
+                    'optimizer_d_state_dict': optimizer_d.state_dict(),
+                }, f"{config.checkpoints.dir}/checkpoint_{epoch+1}.pth")
 
     # Final model saving
     accelerator.wait_for_everyone()
@@ -299,24 +317,24 @@ def main():
     ])
 
 
-    dataset = EMODataset(
-        use_gpu=True,
-        remove_background=False,
-        width=256,
-        height=256,
-        sample_rate=24,
-        img_scale=(1.0, 1.0),
-        video_dir=config.dataset.root_dir,
-        json_file=config.dataset.json_file,
-        transform=transform,
-        apply_crop_warping=False
-    )
+    # dataset = EMODataset(
+    #     use_gpu=True,
+    #     remove_background=False,
+    #     width=256,
+    #     height=256,
+    #     sample_rate=24,
+    #     img_scale=(1.0, 1.0),
+    #     video_dir=config.dataset.root_dir,
+    #     json_file=config.dataset.json_file,
+    #     transform=transform,
+    #     apply_crop_warping=False
+    # )
 
 
-    # dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
-    #                        transform=transform, 
-    #                        frame_skip=0, 
-    #                        num_frames=240)
+    dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
+                           transform=transform, 
+                           frame_skip=0, 
+                           num_frames=240)
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
@@ -326,10 +344,22 @@ def main():
         collate_fn=gpu_padded_collate 
     )
 
-    accelerator.print("The Model parameters: imfmodel {:.2f}M, discriminator: {:.2f}M".format(
-        count_model_params(model), count_model_params(discriminator)
-    ))
+   # Count parameters for both models
+    imf_params, imf_breakdown = count_model_params(model, verbose=False)
+    disc_params, disc_breakdown = count_model_params(discriminator, verbose=False)
 
+    accelerator.print("🎯 Model parameters:")
+    accelerator.print(f"   IMFModel: {imf_params:.2f}M")
+    accelerator.print(f"   Discriminator: {disc_params:.2f}M")
+ 
+    if config.logging.print_model_details:
+        accelerator.print("\nIMFModel parameter breakdown:")
+        for layer_type, count in sorted(imf_breakdown.items(), key=lambda x: x[1], reverse=True):
+            accelerator.print(f"{layer_type:<20} {count:,}")
+        
+        accelerator.print("\nDiscriminator parameter breakdown:")
+        for layer_type, count in sorted(disc_breakdown.items(), key=lambda x: x[1], reverse=True):
+            accelerator.print(f"{layer_type:<20} {count:,}")
 
 
     train(config, model, discriminator, dataloader, accelerator)

@@ -3,9 +3,11 @@ model:
   latent_dim: 32
   base_channels: 64
   num_layers: 4
-
+  use_resnet_feature: True
 # Training parameters
 training:
+  video_repeat: 5
+  use_ema: False
   use_r1_reg: False
   batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
@@ -17,7 +19,7 @@ training:
   ema_decay: 0.999
   style_mixing_prob: 0.9
   noise_magnitude: 0.01
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 1
   lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10
   lambda_adv: 1 # adverserial = 1
@@ -37,6 +39,7 @@ training:
   d_lr_adjust_factor: 2.0  # Factor to increase/decrease D learning rate
   target_d_loss_ratio: 0.6  # Target ratio of D loss to G loss
   every_xref_frames: 16
+  use_many_xrefs: False
   
   scales: [1, 0.5, 0.25, 0.125]
   enable_xformers_memory_efficient_attention: True
@@ -45,8 +48,8 @@ training:
 dataset:
   # celeb-hq torrent https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666" # for overfitting M2Ohb0FAaJU_1.mp4 use https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
-  # json_file: './data/overfit.json'  # Selena Gomez
-  json_file: './data/celebvhq_info.json' # 35k
+  json_file: './data/overfit.json'  # Selena Gomez
+  # json_file: './data/celebvhq_info.json' # 35k
 
 # Checkpointing
 checkpoints:
@@ -59,7 +62,7 @@ logging:
   sample_size: 1 # for images on wandb
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
-
+  print_model_details: False
 
 # Accelerator settings
 accelerator:
