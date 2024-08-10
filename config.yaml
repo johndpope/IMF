@@ -64,7 +64,7 @@ logging:
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
   print_model_details: False
-
+  log_every: 100
 # Accelerator settings
 accelerator:
   mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"

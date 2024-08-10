@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,PatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
+from helper import log_grad_flow,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -308,7 +308,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                             "lr_d": optimizer_d.param_groups[0]['lr']
                         })
 
-        
+                    # Log gradient flow for generator and discriminator
+                    if accelerator.is_main_process and batch_idx % config.logging.log_every == 0:
+                        log_grad_flow(model.named_parameters())
+                        log_grad_flow(discriminator.named_parameters())
+
 
             progress_bar.close()
 

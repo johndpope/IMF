@@ -10,7 +10,53 @@ import torch.nn.functional as F
 import torch
 import matplotlib.pyplot as plt
 import os
+import io
 
+
+def log_grad_flow(named_parameters, step):
+    ave_grads = []
+    layers = []
+    for n, p in named_parameters:
+        if p.requires_grad and "bias" not in n:
+            layers.append(n)
+            ave_grads.append(p.grad.abs().mean().item())
+    
+    # Create the matplotlib figure
+    plt.figure(figsize=(12, 6))
+    plt.plot(ave_grads, alpha=0.3, color="b")
+    plt.hlines(0, 0, len(ave_grads), linewidth=1, color="k")
+    plt.xticks(range(0, len(ave_grads), 1), layers, rotation="vertical")
+    plt.xlim(left=0, right=len(ave_grads))
+    plt.xlabel("Layers")
+    plt.ylabel("Average Gradient")
+    plt.title("Gradient Flow")
+    plt.grid(True)
+    plt.tight_layout()
+
+    # Save the figure to a bytes buffer
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    
+    # Create a wandb.Image from the buffer
+    img = wandb.Image(buf)
+    
+    # Close the matplotlib figure to free up memory
+    plt.close()
+
+    # Create a wandb.Table with the data
+    data = [[layer, grad] for layer, grad in zip(layers, ave_grads)]
+    table = wandb.Table(data=data, columns=["layer", "average_gradient"])
+    
+    # Log the image and table
+    wandb.log({
+        "gradient_flow_plot": img,
+        "gradient_flow_data": table,
+        "max_gradient": np.max(ave_grads),
+        "min_gradient": np.min(ave_grads),
+        "mean_gradient": np.mean(ave_grads),
+        "median_gradient": np.median(ave_grads)
+    }, step=step)
 
 def count_model_params(model, trainable_only=False, verbose=False):
     """
