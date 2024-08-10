@@ -15,7 +15,7 @@ training:
   num_epochs: 1000
   save_steps: 250
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
-  initial_learning_rate_d: 3e-6  # Set a lower initial learning rate for discriminator
+  initial_learning_rate_d: 1.0e-4  # Set a lower initial learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
   ema_decay: 0.999
