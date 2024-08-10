@@ -5,8 +5,9 @@ import torchvision.models as models
 from torch.utils.checkpoint import checkpoint
 import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_scaled import ImplicitMotionAlignment #- SLOW but reduces memory 2x/3x
-from vit_mlgffn import ImplicitMotionAlignment
+# from vit_mlgffn import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
+from vit import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 
@@ -584,31 +585,35 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self,use_resnet_feature=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
+    def __init__(self,use_resnet_feature=False,use_mlgffn=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
-        self.feature_dims = [64, 128, 256, 512]
+        self.encoder_dims = [64, 128, 256, 512]
         self.latent_token_encoder = LatentTokenEncoder(
             initial_channels=64,
-            output_channels=self.feature_dims,
+            output_channels=self.encoder_dims,
             dm=32
-        )
+        ) 
+        self.motion_dims = [128, 256, 512, 512] 
         self.latent_token_decoder = LatentTokenDecoder()
-
-        
+       
         FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder
-        self.dense_feature_encoder = FeatureExtractor(output_channels=self.feature_dims)
+        self.dense_feature_encoder = FeatureExtractor(output_channels=self.motion_dims)
  
-        depth = 4
-        num_heads = 8
-        window_size = 8
-        mlp_ratio = 4
-
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
-            dim = self.feature_dims[i]
-            model = ImplicitMotionAlignment(dim, dim, depth, num_heads, window_size, mlp_ratio)
+            dim = self.motion_dims[i]
+            model = ImplicitMotionAlignment(
+                feature_dim=dim,
+                motion_dim=dim,
+                depth=4,
+                num_heads=8,
+                window_size=8,
+                mlp_ratio=4,
+                use_mlgffn=use_mlgffn
+            )
             self.implicit_motion_alignment.append(model)
+        
         
         self.frame_decoder = FrameDecoder()
         self.noise_level = noise_level

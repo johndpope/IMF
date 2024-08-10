@@ -303,7 +303,10 @@ def main():
     model = IMFModel(
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
-        num_layers=config.model.num_layers
+        num_layers=config.model.num_layers,
+        use_resnet_feature=config.model.use_resnet_feature,
+        use_mlgffn=config.model.use_mlgffn
+        
     )
     add_gradient_hooks(model)
 

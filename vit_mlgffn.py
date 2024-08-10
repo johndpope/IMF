@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -38,7 +38,8 @@ class WindowAttention(nn.Module):
         debug_print(f"After reshaping and permuting: {x_unfolded.shape}")
         
         # Apply QKV
-        qkv = self.qkv(x_unfolded.view(-1, C, self.window_size[0], self.window_size[1]))
+        x_unfolded = x_unfolded.contiguous().view(-1, C, self.window_size[0], self.window_size[1])
+        qkv = self.qkv(x_unfolded)
         debug_print(f"After QKV: {qkv.shape}")
         
         q, k, v = qkv.chunk(3, dim=1)
@@ -242,25 +243,6 @@ class HSCATB(nn.Module):
         debug_print(f"HSCATB output shape: {x.shape}")
         return x
 
-class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth=2, num_heads=8, window_size=4, mlp_ratio=4):
-        super().__init__()
-        self.cross_attention = CrossAttentionModule(feature_dim, motion_dim, num_heads)
-        self.hscatb_blocks = nn.ModuleList([
-            HSCATB(feature_dim, num_heads, window_size, mlp_ratio) for _ in range(depth)
-        ])
-
-    def forward(self, ml_c, ml_r, fl_r):
-        debug_print(f"ImprovedImplicitMotionAlignment input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-        V_prime = self.cross_attention(ml_c, ml_r, fl_r)
-        debug_print(f"ImprovedImplicitMotionAlignment after cross attention: {V_prime.shape}")
-        
-        for i, block in enumerate(self.hscatb_blocks):
-            V_prime = block(V_prime)
-            debug_print(f"ImprovedImplicitMotionAlignment after HSCATB block {i+1}: {V_prime.shape}")
-
-        debug_print(f"ImprovedImplicitMotionAlignment output shape: {V_prime.shape}")
-        return V_prime
 
 class CrossAttentionModule(nn.Module):
     def __init__(self, feature_dim, motion_dim, num_heads):
