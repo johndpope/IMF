@@ -63,7 +63,7 @@ logging:
   sample_size: 1 # for images on wandb
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
-  print_model_details: False
+  print_model_details: True
   log_every: 100
 # Accelerator settings
 accelerator:
