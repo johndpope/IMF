@@ -94,7 +94,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
             for i in range(num_samples):
                 wandb_images.extend([
                     wandb.Image(x_reconstructed[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"x_reconstructed {i}"),
-                    wandb.Image(x_current[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"x_current {i}")
+                    wandb.Image(x_current[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"x_current {i}"),
                     wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"x_reference {i}")
                 ])
             
