@@ -10,7 +10,9 @@ class FourierFeatures(nn.Module):
         self.B = nn.Parameter(torch.randn((input_dim, mapping_size)) * scale, requires_grad=False)
     
     def forward(self, x):
+        print(f"FourierFeatures input shape: {x.shape}")
         x = x.matmul(self.B)
+        print(f"FourierFeatures output shape: {x.shape}")
         return torch.sin(x)
 
 class ModulatedFC(nn.Module):
@@ -29,9 +31,12 @@ class ModulatedFC(nn.Module):
         )
         
     def forward(self, x, style):
+        print(f"ModulatedFC input shapes - x: {x.shape}, style: {style.shape}")
         style = self.style_mlp(style).unsqueeze(1)
         scale = self.scale_mlp(style).unsqueeze(1)
+        print(f"ModulatedFC processed shapes - style: {style.shape}, scale: {scale.shape}")
         x = self.fc(x * style) * scale
+        print(f"ModulatedFC output shape: {x.shape}")
         return x
 
 class CIPSFrameDecoder(nn.Module):
@@ -63,10 +68,12 @@ class CIPSFrameDecoder(nn.Module):
             current_dim = ngf * 8
         
     def get_coord_grid(self, batch_size, resolution):
+        print(f"get_coord_grid input - batch_size: {batch_size}, resolution: {resolution}")
         x = torch.linspace(-1, 1, resolution)
         y = torch.linspace(-1, 1, resolution)
         x, y = torch.meshgrid(x, y, indexing='ij')
         coords = torch.stack((x, y), dim=-1).unsqueeze(0).repeat(batch_size, 1, 1, 1)
+        print(f"get_coord_grid output shape: {coords.shape}")
         return coords.to(next(self.parameters()).device)
     
     def forward(self, features):
@@ -78,11 +85,11 @@ class CIPSFrameDecoder(nn.Module):
         
         # Project input features to style vectors
         styles = []
-        for proj, feat in zip(self.feature_projection, features):
-            print(f"Feature shape before projection: {feat.shape}")
+        for i, (proj, feat) in enumerate(zip(self.feature_projection, features)):
+            print(f"Feature {i} shape before projection: {feat.shape}")
             style = proj(feat)
             style = style.view(batch_size, -1, style.size(2) * style.size(3)).mean(dim=2)
-            print(f"Style shape after projection: {style.shape}")
+            print(f"Style {i} shape after projection: {style.shape}")
             styles.append(style)
         
         w = torch.cat(styles, dim=1)
