@@ -402,9 +402,7 @@ def main():
     imf_params, imf_breakdown = count_model_params(model, verbose=config.logging.print_model_details)
     disc_params, disc_breakdown = count_model_params(discriminator, verbose=config.logging.print_model_details)
 
-    accelerator.print("🎯 Model parameters:")
-    accelerator.print(f"   IMFModel: {imf_params:.2f}M")
-    accelerator.print(f"   Discriminator: {disc_params:.2f}M")
+
 
 
     train(config, model, discriminator, train_dataloader, val_loader,  accelerator)
