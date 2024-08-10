@@ -3,7 +3,7 @@ model:
   latent_dim: 32
   base_channels: 64
   num_layers: 4
-  use_resnet_feature: False
+  use_resnet_feature: True
   use_mlgffn: False
   use_enhanced_generator: True
 # Training parameters
