@@ -262,7 +262,7 @@ def count_model_params(model, trainable_only=False, verbose=False):
         # Print native modules
         for i, (layer_type, count) in enumerate(sorted(native_counts.items(), key=lambda x: x[1], reverse=True), 1):
             percentage = count / total_params * 100
-            print(f"Native {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
+            print(f"    {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
         
         print("-" * 55)
         print(f"{'☕ Native Modules Total':<30} {native_total:<15,d} {native_total/total_params*100:.2f}%")
@@ -271,7 +271,7 @@ def count_model_params(model, trainable_only=False, verbose=False):
         # Print custom modules
         for i, (layer_type, count) in enumerate(sorted(custom_counts.items(), key=lambda x: x[1], reverse=True), 1):
             percentage = count / total_params * 100
-            print(f"Custom {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
+            print(f"   {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
         
         print("-" * 55)
         print(f"{'🍄 Custom Modules Total':<30} {custom_total:<15,d} {custom_total/total_params*100:.2f}%")
