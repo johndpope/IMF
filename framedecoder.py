@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 
 class EnhancedFrameDecoder(nn.Module):
-    def __init__(self, input_dims=[512, 512, 256, 128, 64], output_dim=3, use_attention=True):
+    def __init__(self, input_dims=[512, 512, 256, 128], output_dim=3, use_attention=True):
         super().__init__()
         
         self.input_dims = input_dims
@@ -29,7 +29,7 @@ class EnhancedFrameDecoder(nn.Module):
         
         # Final convolution
         self.final_conv = nn.Sequential(
-            nn.Conv2d(input_dims[-1], output_dim, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(input_dims[-1] * 2, output_dim, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
         
@@ -49,19 +49,20 @@ class EnhancedFrameDecoder(nn.Module):
         x = self.pos_encoding(x)  # Add positional encoding
         print(f"After positional encoding, x shape: {x.shape}")
         
-        for i, (upconv, feat_block) in enumerate(zip(self.upconv_blocks, self.feat_blocks)):
-            x = upconv(x)
+        for i in range(len(self.upconv_blocks)):
+            x = self.upconv_blocks[i](x)
             print(f"After upconv {i}, x shape: {x.shape}")
             
-            feat = feat_block(reshaped_features[i+1])
-            print(f"Feature {i} shape: {feat.shape}")
-            
-            if self.use_attention:
-                feat = self.attention_layers[i](feat)
-                print(f"After attention {i}, feat shape: {feat.shape}")
-            
-            x = torch.cat([x, feat], dim=1)
-            print(f"After concatenation {i}, x shape: {x.shape}")
+            if i + 1 < len(reshaped_features):
+                feat = self.feat_blocks[i](reshaped_features[i+1])
+                print(f"Feature {i} shape: {feat.shape}")
+                
+                if self.use_attention:
+                    feat = self.attention_layers[i](feat)
+                    print(f"After attention {i}, feat shape: {feat.shape}")
+                
+                x = torch.cat([x, feat], dim=1)
+                print(f"After concatenation {i}, x shape: {x.shape}")
         
         x = self.final_conv(x)
         print(f"Final output shape: {x.shape}")
