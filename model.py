@@ -300,7 +300,7 @@ class FrameDecoder(nn.Module):
         
         self.final_conv = nn.Sequential(
             nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(3),
+            # nn.BatchNorm2d(3),
             nn.Sigmoid()
         )
 
