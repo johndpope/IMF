@@ -399,21 +399,12 @@ def main():
     )
 
    # Count parameters for both models
-    imf_params, imf_breakdown = count_model_params(model, verbose=False)
-    disc_params, disc_breakdown = count_model_params(discriminator, verbose=False)
+    imf_params, imf_breakdown = count_model_params(model, verbose=config.logging.print_model_details)
+    disc_params, disc_breakdown = count_model_params(discriminator, verbose=config.logging.print_model_details)
 
     accelerator.print("🎯 Model parameters:")
     accelerator.print(f"   IMFModel: {imf_params:.2f}M")
     accelerator.print(f"   Discriminator: {disc_params:.2f}M")
- 
-    if config.logging.print_model_details:
-        accelerator.print("\nIMFModel parameter breakdown:")
-        for layer_type, count in sorted(imf_breakdown.items(), key=lambda x: x[1], reverse=True):
-            accelerator.print(f"{layer_type:<20} {count:,}")
-        
-        accelerator.print("\nDiscriminator parameter breakdown:")
-        for layer_type, count in sorted(disc_breakdown.items(), key=lambda x: x[1], reverse=True):
-            accelerator.print(f"{layer_type:<20} {count:,}")
 
 
     train(config, model, discriminator, train_dataloader, val_loader,  accelerator)
