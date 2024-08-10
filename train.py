@@ -9,7 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from model import IMFModel, debug_print,PatchDiscriminator
+from model import IMFModel, debug_print,PatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
@@ -357,7 +357,8 @@ def main():
     )
     add_gradient_hooks(model)
 
-    discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
+    # discriminator = PatchDiscriminator(ndf=config.discriminator.ndf) Original
+    discriminator =  MultiScalePatchDiscriminator()
     add_gradient_hooks(discriminator)
 
     transform = transforms.Compose([

@@ -146,26 +146,26 @@ def log_grad_flow(named_parameters, global_step):
     plt.close()
 
     # Check if the table structure has changed
-    new_columns = ["step"] + layers
-    if current_table_columns != new_columns:
-        # If the structure has changed, delete the existing table and create a new one
-        if wandb.run is not None:
-            wandb.run.config.update({"gradient_flow_columns": new_columns}, allow_val_change=True)
+    # new_columns = ["step"] + layers
+    # if current_table_columns != new_columns:
+    #     # If the structure has changed, delete the existing table and create a new one
+    #     if wandb.run is not None:
+    #         wandb.run.config.update({"gradient_flow_columns": new_columns}, allow_val_change=True)
             
-            # Delete the existing table artifact
-            api = wandb.Api()
-            try:
-                artifact = api.artifact(f"{wandb.run.entity}/{wandb.run.project}/gradient_flow_table:latest")
-                artifact.delete(delete_aliases=True)
-                print("Deleted existing gradient_flow_table artifact.")
-            except wandb.errors.CommError:
-                print("No existing gradient_flow_table artifact found.")
+    #         # Delete the existing table artifact
+    #         api = wandb.Api()
+    #         try:
+    #             artifact = api.artifact(f"{wandb.run.entity}/{wandb.run.project}/gradient_flow_table:latest")
+    #             artifact.delete(delete_aliases=True)
+    #             print("Deleted existing gradient_flow_table artifact.")
+    #         except wandb.errors.CommError:
+    #             print("No existing gradient_flow_table artifact found.")
         
-        current_table_columns = new_columns
+    #     current_table_columns = new_columns
 
-    # Create or update the wandb.Table
-    data = [[global_step] + normalized_grads]
-    table = wandb.Table(data=data, columns=current_table_columns)
+    # # Create or update the wandb.Table
+    # data = [[global_step] + normalized_grads]
+    # table = wandb.Table(data=data, columns=current_table_columns)
     
     # Calculate statistics
     stats = {
@@ -188,9 +188,9 @@ def log_grad_flow(named_parameters, global_step):
     }
 
     # Log the table as an artifact
-    artifact = wandb.Artifact('gradient_flow_table', type='table')
-    artifact.add(table, 'gradient_flow_data')
-    wandb.log_artifact(artifact)
+    # artifact = wandb.Artifact('gradient_flow_table', type='table')
+    # artifact.add(table, 'gradient_flow_data')
+    # wandb.log_artifact(artifact)
 
     # Log other metrics
     wandb.log(log_dict)
@@ -266,7 +266,7 @@ def count_model_params(model, trainable_only=False, verbose=False):
         # Print native modules
         for i, (layer_type, count) in enumerate(sorted(native_counts.items(), key=lambda x: x[1], reverse=True), 1):
             percentage = count / total_params * 100
-            print(f"    {i}. {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
+            print(f"    {i}. ⅀ {layer_type[7:]:<23} {count:<15,d} {percentage:.2f}%")
         
         print("-" * 55)
         print(f"{'🍄 Custom Modules Total':<30} {custom_total:<15,d} {custom_total/total_params*100:.2f}%")

@@ -12,7 +12,7 @@ from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from resblock import UpConvResBlock,DownConvResBlock,FeatResBlock,StyledConv,ResBlock
 import math
-
+import random
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
 
@@ -617,15 +617,64 @@ class PatchDiscriminator(nn.Module):
         debug_print(f"PatchDiscriminator final output shapes: {output1.shape}, {output2.shape}")
         return [output1, output2]
 
-# Helper function to initialize weights
-def init_weights(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.constant_(m.bias.data, 0)
 
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=4, stride=2, padding=1, use_instance_norm=True):
+        super(ConvBlock, self).__init__()
+        layers = [
+            spectral_norm(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)),
+            nn.LeakyReLU(0.2, inplace=True)
+        ]
+        if use_instance_norm:
+            layers.insert(1, nn.InstanceNorm2d(out_channels))
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.block(x)
+
+class PatchDiscriminator(nn.Module):
+    def __init__(self, input_nc, ndf=64, n_layers=3):
+        super(PatchDiscriminator, self).__init__()
+        sequence = [ConvBlock(input_nc, ndf, use_instance_norm=False)]
+        
+        nf_mult = 1
+        for n in range(1, n_layers):
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            sequence += [ConvBlock(ndf * nf_mult_prev, ndf * nf_mult)]
+
+        sequence += [
+            ConvBlock(ndf * nf_mult, ndf * nf_mult, stride=1),
+            spectral_norm(nn.Conv2d(ndf * nf_mult, 1, kernel_size=4, stride=1, padding=1))
+        ]
+
+        self.model = nn.Sequential(*sequence)
+
+    def forward(self, x):
+        return self.model(x)
+
+class MultiScalePatchDiscriminator(nn.Module):
+    def __init__(self, input_nc, ndf=64, n_layers=3, num_D=3):
+        super(MultiScalePatchDiscriminator, self).__init__()
+        self.num_D = num_D
+        self.n_layers = n_layers
+
+        for i in range(num_D):
+            subnetD = PatchDiscriminator(input_nc, ndf, n_layers)
+            setattr(self, f'scale_{i}', subnetD)
+
+    def singleD_forward(self, model, input):
+        return model(input)
+
+    def forward(self, input):
+        result = []
+        input_downsampled = input
+        for i in range(self.num_D):
+            model = getattr(self, f'scale_{i}')
+            result.append(self.singleD_forward(model, input_downsampled))
+            if i != self.num_D - 1:
+                input_downsampled = F.avg_pool2d(input_downsampled, kernel_size=3, stride=2, padding=1, count_include_pad=False)
+        return result
 
 
         
