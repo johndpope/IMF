@@ -103,12 +103,6 @@ def log_loss_landscape(model, loss_fns, dataloader, step):
     wandb.log(log_dict)
 
 
-# Usage example:
-# model = YourModel()
-# loss_fns = [nn.MSELoss(), nn.CrossEntropyLoss(), YourCustomLoss()]
-# dataloader = YourDataLoader()
-# step = current_training_step
-# log_loss_landscape(model, loss_fns, dataloader, step)
 
 
 import torch
@@ -126,11 +120,11 @@ import os
 import io
 from PIL import Image
 
-# Global variable to store the persistent table
-gradient_flow_table = None
+# Global variable to store the current table structure
+current_table_columns = None
 
-def log_grad_flow(named_parameters, _global_step):
-    global gradient_flow_table
+def log_grad_flow(named_parameters, global_step):
+    global current_table_columns
 
     grads = []
     layers = []
@@ -153,7 +147,7 @@ def log_grad_flow(named_parameters, _global_step):
     plt.xticks(range(len(grads)), layers, rotation="vertical")
     plt.xlabel("Layers")
     plt.ylabel("Normalized Gradient Magnitude")
-    plt.title(f"Normalized Gradient Flow (Step {_global_step})")
+    plt.title(f"Normalized Gradient Flow (Step {global_step})")
     plt.tight_layout()
 
     # Save the figure to a bytes buffer
@@ -166,12 +160,21 @@ def log_grad_flow(named_parameters, _global_step):
     
     plt.close()
 
-    # Update or create the wandb.Table
-    if gradient_flow_table is None:
-        gradient_flow_table = wandb.Table(columns=["step"] + layers)
+    # Check if the table structure has changed
+    new_columns = ["step"] + layers
+    if current_table_columns != new_columns:
+        # If the structure has changed, delete the existing table and create a new one
+        if wandb.run is not None:
+            wandb.run.config.update({"gradient_flow_columns": new_columns})
+            
+            # Delete the existing table
+            wandb.run.delete_artifact('gradient_flow_table:latest')
+        
+        current_table_columns = new_columns
 
-    # Add new row to the table
-    gradient_flow_table.add_data(_global_step, *normalized_grads)
+    # Create or update the wandb.Table
+    data = [[global_step] + normalized_grads]
+    table = wandb.Table(data=data, columns=current_table_columns)
     
     # Calculate statistics
     stats = {
@@ -188,12 +191,11 @@ def log_grad_flow(named_parameters, _global_step):
     # Log everything
     wandb.log({
         "gradient_flow_plot": img,
-        "gradient_flow_data": gradient_flow_table,
+        "gradient_flow_data": table,
         **stats,
-    }, step=_global_step)
-
-    # Log gradient issues separately
-    wandb.log({"gradient_issues": wandb.Html(issues)}, step=_global_step)
+        "gradient_issues": wandb.Html(issues),
+        "step": global_step
+    })
 
 def check_gradient_issues(grads, layers):
     issues = []
