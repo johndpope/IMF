@@ -33,14 +33,18 @@ class ModulatedFC(nn.Module):
     def forward(self, x, style):
         print(f"ModulatedFC input shapes - x: {x.shape}, style: {style.shape}")
         
-        batch_size, num_pixels, _ = x.shape
+        batch_size, num_pixels, in_features = x.shape
         
-        style = self.style_mlp(style).view(batch_size, 1, -1)
+        style = self.style_mlp(style).view(batch_size, in_features, 1)
         scale = self.scale_mlp(style).view(batch_size, 1, -1)
         
         print(f"ModulatedFC processed shapes - style: {style.shape}, scale: {scale.shape}")
         
-        x = self.fc(x * style) * scale
+        x = x.transpose(1, 2)  # [batch_size, in_features, num_pixels]
+        x = x * style
+        x = self.fc(x.transpose(1, 2))  # [batch_size, num_pixels, out_features]
+        x = x * scale
+        
         print(f"ModulatedFC output shape: {x.shape}")
         return x
 class CIPSFrameDecoder(nn.Module):
