@@ -5,7 +5,7 @@ import torchvision.models as models
 from torch.utils.checkpoint import checkpoint
 import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_scaled import ImplicitMotionAlignment #- SLOW but reduces memory 2x/3x
-from vit import ImplicitMotionAlignment
+from vit_mlgfnn import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
