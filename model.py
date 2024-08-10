@@ -208,35 +208,39 @@ class FeatResBlock(nn.Module):
 
 
 class DenseFeatureEncoder(nn.Module):
-    def __init__(self, in_channels=3,base_channels=64,output_channels=[128, 256, 512, 512]):
+    def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64):
         super().__init__()
         self.initial_conv = nn.Sequential(
-            nn.Conv2d(in_channels, base_channels, kernel_size=7, stride=1, padding=3),
-            nn.BatchNorm2d(base_channels),
+            nn.Conv2d(in_channels, initial_channels, kernel_size=7, stride=1, padding=3),
+            nn.BatchNorm2d(initial_channels),
             nn.ReLU(inplace=True)
         )
         
-        self.down_blocks = nn.ModuleList([
-            DownConvResBlock(base_channels, base_channels),
-            DownConvResBlock(base_channels, output_channels[1]),
-            DownConvResBlock(output_channels[1], output_channels[2]),
-            DownConvResBlock(output_channels[2], output_channels[3]),
-            DownConvResBlock(output_channels[3], output_channels[3])
-        ])
+        self.down_blocks = nn.ModuleList()
+        current_channels = initial_channels
+        
+        # Add an initial down block that doesn't change the number of channels
+        self.down_blocks.append(DownConvResBlock(current_channels, current_channels))
+        
+        # Add down blocks for each specified output channel
+        for out_channels in output_channels:
+            self.down_blocks.append(DownConvResBlock(current_channels, out_channels))
+            current_channels = out_channels
 
     def forward(self, x):
         debug_print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
         features = []
         x = self.initial_conv(x)
         debug_print(f"    After initial conv: {x.shape}")
+        
         for i, block in enumerate(self.down_blocks):
             x = block(x)
             debug_print(f"    After down_block {i+1}: {x.shape}")
             if i >= 1:  # Start collecting features from the second block
                 features.append(x)
+        
         debug_print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
-
 
 '''
 The upsample parameter is replaced with downsample to match the diagram.
