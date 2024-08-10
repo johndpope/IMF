@@ -310,16 +310,7 @@ class FrameDecoder(nn.Module):
         #     print(f"f:{f.shape}")
         # Reshape features
         reshaped_features = []
-        for feat in features:
-            if len(feat.shape) == 3:  # (batch, hw, channels)
-                b, hw, c = feat.shape
-                h = w = int(math.sqrt(hw))
-                reshaped_feat = feat.permute(0, 2, 1).view(b, c, h, w)
-            else:  # Already in (batch, channels, height, width) format
-                reshaped_feat = feat
-            reshaped_features.append(reshaped_feat)
 
-        debug_print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
 
         x = reshaped_features[-1]  # Start with the smallest feature map
         debug_print(f"    Initial x shape: {x.shape}")
