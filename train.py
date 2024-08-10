@@ -234,6 +234,19 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                             # Clip gradients
                             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                             optimizer_g.step()
+
+                        # Update losses
+                        total_g_loss += g_loss.item()
+                        total_d_loss += d_loss.item()
+
+                        # Update progress bar for each frame processed
+                        progress_bar.update(1)
+                        progress_bar.set_postfix({
+                            "G Loss": f"{g_loss.item():.4f}",
+                            "D Loss": f"{d_loss.item():.4f}",
+                            "Frame": f"{current_idx}/{num_frames}",
+                            "Batch": f"{batch_idx+1}/{len(train_dataloader)}"
+                        })
                         
                 
                
