@@ -17,12 +17,20 @@ class ModulatedFC(nn.Module):
     def __init__(self, in_features, out_features, style_dim):
         super().__init__()
         self.fc = nn.Linear(in_features, out_features)
-        self.modulation = nn.Linear(style_dim, in_features)
-        self.scale = nn.Linear(style_dim, out_features)
+        self.style_mlp = nn.Sequential(
+            nn.Linear(style_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, in_features)
+        )
+        self.scale_mlp = nn.Sequential(
+            nn.Linear(style_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, out_features)
+        )
         
     def forward(self, x, style):
-        style = self.modulation(style).unsqueeze(1)
-        scale = self.scale(style).unsqueeze(1)
+        style = self.style_mlp(style).unsqueeze(1)
+        scale = self.scale_mlp(style).unsqueeze(1)
         x = self.fc(x * style) * scale
         return x
 
@@ -73,11 +81,11 @@ class CIPSFrameDecoder(nn.Module):
         for proj, feat in zip(self.feature_projection, features):
             print(f"Feature shape before projection: {feat.shape}")
             style = proj(feat)
-            style = style.view(batch_size, self.style_dim // len(self.feature_dims), -1).mean(dim=2)
+            style = style.view(batch_size, -1, style.size(2) * style.size(3)).mean(dim=2)
             print(f"Style shape after projection: {style.shape}")
             styles.append(style)
         
-        w = torch.cat(styles, dim=-1)
+        w = torch.cat(styles, dim=1)
         print(f"Combined style vector shape: {w.shape}")
         
         # Generate coordinate grid
