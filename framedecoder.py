@@ -70,7 +70,7 @@ class CIPSFrameDecoder(nn.Module):
         styles = []
         for proj, feat in zip(self.feature_projection, features):
             # Ensure features are flattened correctly before projection
-            feat = feat.view(feat.size(0), -1)  # Flatten to (batch_size, channels * height * width)
+            feat = feat.reshape(feat.size(0), -1)  # Flatten to (batch_size, channels * height * width)
             style = proj(feat)
             print(f"Style shape after projection: {style.shape}")
             styles.append(style)
