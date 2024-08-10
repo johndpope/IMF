@@ -248,20 +248,22 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                             "Batch": f"{batch_idx+1}/{len(train_dataloader)}"
                         })
                         
+                        global_step += 1
+            
+                        if global_step % config.training.save_steps == 0:
+                            sample_path = f"recon_step_{global_step}.png"
+                            sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                                        num_samples=config.logging.sample_size)
+
+                        
                 
                
 
                 total_g_loss += g_loss.item() * config.training.gradient_accumulation_steps
                 total_d_loss += d_loss.item() * config.training.gradient_accumulation_steps
-                progress_bar.update(1)
-                progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+                # progress_bar.update(1)
+                # progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
             
-                global_step += 1
-            
-                if global_step % config.training.save_steps == 0:
-                    sample_path = f"recon_step_{global_step}.png"
-                    sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
-                                num_samples=config.logging.sample_size)
 
         progress_bar.close()
 
