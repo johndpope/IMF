@@ -6,6 +6,7 @@ model:
   use_resnet_feature: True
 # Training parameters
 training:
+  video_repeat: 3
   use_ema: False
   use_r1_reg: False
   batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
