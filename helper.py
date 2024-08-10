@@ -13,28 +13,32 @@ import os
 import io
 from PIL import Image
 
-def log_grad_flow(named_parameters, step=1):
-    ave_grads = []
+def log_grad_flow(named_parameters,_global_step):
+    # global _global_step
+    # _global_step += 1
+
+    grads = []
     layers = []
     for n, p in named_parameters:
         if p.requires_grad and "bias" not in n and p.grad is not None:
             layers.append(n)
-            ave_grads.append(p.grad.abs().mean().item())
+            grads.append(p.grad.abs().mean().item())
     
-    if not ave_grads:  # If no valid gradients were found
+    if not grads:
         print("No valid gradients found for logging.")
         return
     
+    # Normalize gradients
+    max_grad = max(grads)
+    normalized_grads = [g / max_grad for g in grads]
+
     # Create the matplotlib figure
     plt.figure(figsize=(12, 6))
-    plt.plot(ave_grads, alpha=0.3, color="b")
-    plt.hlines(0, 0, len(ave_grads), linewidth=1, color="k")
-    plt.xticks(range(0, len(ave_grads), 1), layers, rotation="vertical")
-    plt.xlim(left=0, right=len(ave_grads))
+    plt.bar(range(len(grads)), normalized_grads, alpha=0.5)
+    plt.xticks(range(len(grads)), layers, rotation="vertical")
     plt.xlabel("Layers")
-    plt.ylabel("Average Gradient")
-    plt.title("Gradient Flow")
-    plt.grid(True)
+    plt.ylabel("Normalized Gradient Magnitude")
+    plt.title(f"Normalized Gradient Flow (Step {_global_step})")
     plt.tight_layout()
 
     # Save the figure to a bytes buffer
@@ -45,23 +49,41 @@ def log_grad_flow(named_parameters, step=1):
     # Create a wandb.Image from the buffer
     img = wandb.Image(Image.open(buf))
     
-    # Close the matplotlib figure to free up memory
     plt.close()
 
     # Create a wandb.Table with the data
-    data = [[layer, grad] for layer, grad in zip(layers, ave_grads)]
-    table = wandb.Table(data=data, columns=["layer", "average_gradient"])
+    data = [[layer, grad, norm_grad] for layer, grad, norm_grad in zip(layers, grads, normalized_grads)]
+    table = wandb.Table(data=data, columns=["layer", "average_gradient", "normalized_gradient"])
     
-    # Log the image and table
+    # Calculate statistics
+    stats = {
+        "max_gradient": max_grad,
+        "min_gradient": min(grads),
+        "mean_gradient": np.mean(grads),
+        "median_gradient": np.median(grads),
+        "gradient_variance": np.var(grads),
+    }
+
+    # Log everything
     wandb.log({
         "gradient_flow_plot": img,
         "gradient_flow_data": table,
-        "max_gradient": np.max(ave_grads),
-        "min_gradient": np.min(ave_grads),
-        "mean_gradient": np.mean(ave_grads),
-        "median_gradient": np.median(ave_grads)
-    }, step=step)
+        **stats,
+        "gradient_issues": check_gradient_issues(grads, layers)
+    }, step=_global_step)
 
+def check_gradient_issues(grads, layers):
+    issues = []
+    mean_grad = np.mean(grads)
+    std_grad = np.std(grads)
+    
+    for layer, grad in zip(layers, grads):
+        if grad > mean_grad + 3 * std_grad:
+            issues.append(f"Potential exploding gradient in {layer}: {grad:.2e}")
+        elif grad < mean_grad - 3 * std_grad:
+            issues.append(f"Potential vanishing gradient in {layer}: {grad:.2e}")
+    
+    return "\n".join(issues) if issues else "No significant gradient issues detected"
 def count_model_params(model, trainable_only=False, verbose=False):
     """
     Count the number of parameters in a PyTorch model.
