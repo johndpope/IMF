@@ -11,7 +11,6 @@ The frame_skip in VideoDataset - is only at 1.
 
 
 
-
 **xformers + cuda **
 https://github.com/facebookresearch/xformers
 
