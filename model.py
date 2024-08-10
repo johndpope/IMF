@@ -15,7 +15,7 @@ import math
 import random
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
-
+from framedecoder import CIPSFrameDecoder
 DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
@@ -427,7 +427,7 @@ class IMFModel(nn.Module):
             self.implicit_motion_alignment.append(model)
         
         
-        self.frame_decoder = FrameDecoder()
+        self.frame_decoder = CIPSFrameDecoder()
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
 

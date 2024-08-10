@@ -54,9 +54,22 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
 
 
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
-    # optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
-    optimizer_g = AdamW(model.parameters(), lr=config.training.learning_rate_g, weight_decay=0.01)
-    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
+
+    # Generator optimizer
+    optimizer_g = AdamW(
+        model.parameters(),
+        lr=config.training.learning_rate_g,
+        betas=(config.optimizer.beta1, config.optimizer.beta2),
+        weight_decay=config.training.weight_decay
+    )
+
+    # Discriminator optimizer
+    optimizer_d = AdamW(
+        discriminator.parameters(),
+        lr=config.training.learning_rate_d,
+        betas=(config.optimizer.beta1, config.optimizer.beta2),
+        weight_decay=config.training.weight_decay
+    )
 
     # dynamic learning rate
     scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.25, patience=10, verbose=True)
