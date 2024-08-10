@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 import numpy as np
 from torch.utils.checkpoint import checkpoint
+from vit_mlgffn import HSCATB, CrossAttentionModule as MLGFFNCrossAttention
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -55,23 +56,33 @@ class TransformerBlock(nn.Module):
         return output
 
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, motion_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
+    def __init__(self, feature_dim, motion_dim, depth=2, num_heads=8, window_size=4, mlp_ratio=4, use_mlgffn=False):
         super().__init__()
-        self.cross_attention = CrossAttentionModule(dim=motion_dim, heads=heads, dim_head=dim_head)
-        self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(motion_dim, heads, dim_head, mlp_dim)
-            for _ in range(depth)
-        ])
+        self.use_mlgffn = use_mlgffn
+        
+        if use_mlgffn:
+            self.cross_attention = MLGFFNCrossAttention(feature_dim, motion_dim, num_heads)
+            self.blocks = nn.ModuleList([
+                HSCATB(feature_dim, num_heads, window_size, mlp_ratio) for _ in range(depth)
+            ])
+        else:
+            self.cross_attention = CrossAttentionModule(dim=feature_dim, heads=num_heads, dim_head=feature_dim // num_heads)
+            self.blocks = nn.ModuleList([
+                TransformerBlock(feature_dim, num_heads, feature_dim // num_heads, feature_dim * mlp_ratio)
+                for _ in range(depth)
+            ])
 
     def forward(self, ml_c, ml_r, fl_r):
-        debug_print(f"ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        debug_print(f"ImplicitMotionAlignment input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
+        debug_print(f"ImplicitMotionAlignment after cross attention: {V_prime.shape}")
         
-        for i, transformer in enumerate(self.transformer_blocks):
-            V_prime = transformer(V_prime)
-            debug_print(f"Layer {i+1} output shape: {V_prime.shape}")
+        for i, block in enumerate(self.blocks):
+            V_prime = block(V_prime)
+            debug_print(f"ImplicitMotionAlignment after block {i+1}: {V_prime.shape}")
         
+        debug_print(f"ImplicitMotionAlignment output shape: {V_prime.shape}")
         return V_prime
 
 

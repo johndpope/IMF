@@ -24,15 +24,38 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
 from vggloss import VGGLoss
 from stylegan import EMA
+from torch.optim import AdamW, SGD
+from transformers import Adafactor
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
+def get_video_repeat(epoch, max_epochs, initial_repeat, final_repeat):
+    return max(final_repeat, initial_repeat - (initial_repeat - final_repeat) * (epoch / max_epochs))
+
+def get_ema_decay(epoch, max_epochs, initial_decay=0.95, final_decay=0.9999):
+    return min(final_decay, initial_decay + (final_decay - initial_decay) * (epoch / max_epochs))
+
+def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitude=0.001):
+    """
+    Calculate the noise magnitude for the current epoch.
+    
+    Args:
+    epoch (int): Current epoch number
+    max_epochs (int): Total number of epochs
+    initial_magnitude (float): Starting noise magnitude
+    final_magnitude (float): Ending noise magnitude
+    
+    Returns:
+    float: Calculated noise magnitude for the current epoch
+    """
+    return max(final_magnitude, initial_magnitude - (initial_magnitude - final_magnitude) * (epoch / max_epochs))
 
 
-# from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 def train(config, model, discriminator, train_dataloader, accelerator):
-    optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
+    # optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
+    optimizer_g = AdamW(model.parameters(), lr=config.training.learning_rate_g, weight_decay=0.01)
     optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
 
     # dynamic learning rate
@@ -56,8 +79,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
+    # perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
     # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
+    perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
 
@@ -70,22 +94,35 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     global_step = 0
 
     for epoch in range(config.training.num_epochs):
+        video_repeat = get_video_repeat(epoch, config.training.num_epochs, 
+                                        config.training.initial_video_repeat, 
+                                        config.training.final_video_repeat)
+        
         model.train()
         discriminator.train()
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
         total_g_loss = 0
         total_d_loss = 0
+         
+        current_decay = get_ema_decay(epoch, config.training.num_epochs)
+        ema.decay = current_decay
 
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
-            for _ in range(config.training.video_repeat):
+            for _ in range(int(video_repeat)):
                 source_frames = batch['frames']
                 batch_size, num_frames, channels, height, width = source_frames.shape
 
                 ref_idx = 0
 
-                
+                # Calculate noise magnitude for this epoch
+                noise_magnitude = get_noise_magnitude(
+                    epoch, 
+                    config.training.num_epochs, 
+                    initial_magnitude=config.training.initial_noise_magnitude,
+                    final_magnitude=config.training.final_noise_magnitude
+                )
                 if config.training.use_many_xrefs:
                     ref_indices = range(0, num_frames, config.training.every_xref_frames)
                 else:
@@ -183,10 +220,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                         # B. Loss Calculation
                         # 1. Pixel-wise Loss
-                        l_p = pixel_loss_fn(x_reconstructed, x_current)
+                        l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
 
                         # 2. Perceptual Loss
-                        l_v = perceptual_loss_fn(x_reconstructed, x_current)
+                        l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
+
 
                         # 3. GAN Loss
                         # Train Discriminator
@@ -224,9 +262,9 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
 
                         # 4. Total Loss
-                        g_loss = (config.training.lambda_pixel * l_p +
-                                config.training.lambda_perceptual * l_v +
-                                config.training.lambda_adv * g_loss_gan)
+                        g_loss = (config.training.lambda_pixel * l_p.mean() +
+                            config.training.lambda_perceptual * l_v.mean() +
+                            config.training.lambda_adv * g_loss_gan.mean())
 
                         # C. Optimization
                         accelerator.backward(g_loss)
@@ -258,6 +296,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # Logging
                     if accelerator.is_main_process:
                         wandb.log({
+                            "ema":current_decay,
+                            "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),
                             "batch_d_loss": d_loss.item(),
                             "pixel_loss": l_p.item(),
@@ -303,7 +343,10 @@ def main():
     model = IMFModel(
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
-        num_layers=config.model.num_layers
+        num_layers=config.model.num_layers,
+        use_resnet_feature=config.model.use_resnet_feature,
+        use_mlgffn=config.model.use_mlgffn
+        
     )
     add_gradient_hooks(model)
 
