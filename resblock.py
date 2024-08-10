@@ -332,31 +332,34 @@ def visualize_feature_maps(block, input_shape, num_channels=4, latent_dim=None):
     plt.show()
 
 
-# Run all tests
-upconv = UpConvResBlock(64, 128)
-test_upconvresblock(upconv, (1, 64, 56, 56))
-visualize_feature_maps(upconv, (1, 64, 56, 56))
 
-downconv = DownConvResBlock(128, 256)
-test_downconvresblock(downconv, (1, 128, 56, 56))
-visualize_feature_maps(downconv, (1, 128, 56, 56))
+if __name__ == "__main__":
 
-featres = FeatResBlock(256)
-test_featresblock(featres, (1, 256, 28, 28))
-visualize_feature_maps(featres, (1, 256, 28, 28))
+    # Run all tests
+    upconv = UpConvResBlock(64, 128)
+    test_upconvresblock(upconv, (1, 64, 56, 56))
+    visualize_feature_maps(upconv, (1, 64, 56, 56))
 
-modconv = ModulatedConv2d(64, 128, 3)
-test_modulatedconv2d(modconv, (1, 64, 56, 56), 64)
+    downconv = DownConvResBlock(128, 256)
+    test_downconvresblock(downconv, (1, 128, 56, 56))
+    visualize_feature_maps(downconv, (1, 128, 56, 56))
 
-styledconv = StyledConv(64, 128, 3, 32, upsample=True)
-test_styledconv(styledconv, (1, 64, 56, 56), 32)
-visualize_feature_maps(styledconv, (1, 64, 56, 56), num_channels=4, latent_dim=32)
+    featres = FeatResBlock(256)
+    test_featresblock(featres, (1, 256, 28, 28))
+    visualize_feature_maps(featres, (1, 256, 28, 28))
+
+    modconv = ModulatedConv2d(64, 128, 3)
+    test_modulatedconv2d(modconv, (1, 64, 56, 56), 64)
+
+    styledconv = StyledConv(64, 128, 3, 32, upsample=True)
+    test_styledconv(styledconv, (1, 64, 56, 56), 32)
+    visualize_feature_maps(styledconv, (1, 64, 56, 56), num_channels=4, latent_dim=32)
 
 
-resblock = ResBlock(64, 128, downsample=True)
-test_resblock(resblock, (1, 64, 56, 56))
-visualize_feature_maps(resblock, (1, 64, 56, 56))
+    resblock = ResBlock(64, 128, downsample=True)
+    test_resblock(resblock, (1, 64, 56, 56))
+    visualize_feature_maps(resblock, (1, 64, 56, 56))
 
-# Usage
-resblock = ResBlock(64, 64)
-test_resblock(resblock, (1, 64, 56, 56))
+    # Usage
+    resblock = ResBlock(64, 64)
+    test_resblock(resblock, (1, 64, 56, 56))
