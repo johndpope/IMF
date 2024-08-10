@@ -220,10 +220,11 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                         # B. Loss Calculation
                         # 1. Pixel-wise Loss
-                        l_p = pixel_loss_fn(x_reconstructed, x_current)
+                        l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
 
                         # 2. Perceptual Loss
-                        l_v = perceptual_loss_fn(x_reconstructed, x_current)
+                        l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
+
 
                         # 3. GAN Loss
                         # Train Discriminator
