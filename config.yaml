@@ -5,7 +5,7 @@ model:
   num_layers: 4
   use_resnet_feature: False
   use_mlgffn: False
-  use_cips_generator: False
+  use_cips_generator: True
 # Training parameters
 training:
   initial_video_repeat: 5
