@@ -76,6 +76,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
         total_g_loss = 0
         total_d_loss = 0
+        global_step = 0
 
         for batch_idx, batch in enumerate(train_dataloader):
             source_frames = batch['frames']
@@ -188,7 +189,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                     # 3. GAN Loss
                     # Train Discriminator
-                    optimizer_d.zero_grad()
+                    if batch_idx % config.training.gradient_accumulation_steps == 0:
+                        optimizer_d.zero_grad()
                     
                     # R1 regularization
                     x_current.requires_grad = True
@@ -205,8 +207,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                     # Add R1 regularization to the discriminator loss
                     d_loss = d_loss + r1_gamma * r1_reg
-
-
+                    d_loss = d_loss / config.training.gradient_accumulation_steps
+                   
                     # Clip gradients
                     torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
                     
@@ -216,61 +218,52 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     if ema:
                         ema.update()
                     # Train Generator
-                    optimizer_g.zero_grad()
+                    if batch_idx % config.training.gradient_accumulation_steps == 0:
+                        optimizer_g.zero_grad()
+
                     fake_outputs = discriminator(x_reconstructed)
                     g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
 
-
-                    # 4. Total Loss
                     g_loss = (config.training.lambda_pixel * l_p +
-                            config.training.lambda_perceptual * l_v +
-                            config.training.lambda_adv * g_loss_gan)
+                              config.training.lambda_perceptual * l_v +
+                              config.training.lambda_adv * g_loss_gan)
 
-                    # C. Optimization
+                    g_loss = g_loss / config.training.gradient_accumulation_steps
                     accelerator.backward(g_loss)
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optimizer_g.step()
 
+                    
+                    if (batch_idx + 1) % config.training.gradient_accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        optimizer_g.step()
 
-                    total_g_loss += g_loss.item()
-                    total_d_loss += d_loss.item()
+                    total_g_loss += g_loss.item() * config.training.gradient_accumulation_steps
+                    total_d_loss += d_loss.item() * config.training.gradient_accumulation_steps
                     progress_bar.update(1)
                     progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
                 
-                    # Update global step
                     global_step += 1
                 
-                # Sample and save reconstructions every save_steps
-                sample_path = f"recon_step_{global_step}.png"
-                sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
-                            num_samples=config.logging.sample_size)
-
-
-                # Calculate average losses for the epoch
-                avg_g_loss = total_g_loss / len(train_dataloader)
-                avg_d_loss = total_d_loss / len(train_dataloader)
-                # Step the schedulers
-                scheduler_g.step(avg_g_loss)
-                scheduler_d.step(avg_d_loss)
-                # Logging
-                if accelerator.is_main_process:
-                    wandb.log({
-                        "batch_g_loss": g_loss.item(),
-                        "batch_d_loss": d_loss.item(),
-                        "pixel_loss": l_p.item(),
-                        "perceptual_loss": l_v.item(),
-                        "gan_loss": g_loss_gan.item(),
-                        "batch": batch_idx + epoch * len(train_dataloader),
-                        "lr_g": optimizer_g.param_groups[0]['lr'],
-                        "lr_d": optimizer_d.param_groups[0]['lr']
-                    })
-
-    
+                    if global_step % config.training.save_steps == 0:
+                        sample_path = f"recon_step_{global_step}.png"
+                        sample_recon(model, (x_reconstructed, x_reference), accelerator, sample_path, 
+                                    num_samples=config.logging.sample_size)
 
         progress_bar.close()
 
-        # Checkpoint saving
+        avg_g_loss = total_g_loss / len(train_dataloader)
+        avg_d_loss = total_d_loss / len(train_dataloader)
+        scheduler_g.step(avg_g_loss)
+        scheduler_d.step(avg_d_loss)
+
+        if accelerator.is_main_process:
+            wandb.log({
+                "epoch_g_loss": avg_g_loss,
+                "epoch_d_loss": avg_d_loss,
+                "epoch": epoch,
+                "lr_g": optimizer_g.param_groups[0]['lr'],
+                "lr_d": optimizer_d.param_groups[0]['lr']
+            })
+
         if (epoch + 1) % config.checkpoints.interval == 0:
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
@@ -283,7 +276,6 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                 'optimizer_d_state_dict': optimizer_d.state_dict(),
             }, f"{config.checkpoints.dir}/checkpoint_{epoch+1}.pth")
 
-    # Final model saving
     accelerator.wait_for_everyone()
     unwrapped_model = accelerator.unwrap_model(model)
     accelerator.save(unwrapped_model.state_dict(), f"{config.checkpoints.dir}/final_model.pth")
