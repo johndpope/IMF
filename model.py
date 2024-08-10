@@ -11,7 +11,7 @@ from vit import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from resblock import UpConvResBlock,DownConvResBlock,FeatResBlock,StyledConv,ResBlock
-
+import math
 
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
