@@ -358,7 +358,8 @@ def main():
     add_gradient_hooks(model)
 
     # discriminator = PatchDiscriminator(ndf=config.discriminator.ndf) Original
-    discriminator =  MultiScalePatchDiscriminator()
+    discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
+
     add_gradient_hooks(discriminator)
 
     transform = transforms.Compose([
