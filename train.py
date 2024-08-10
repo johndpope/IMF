@@ -313,7 +313,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     if accelerator.is_main_process and batch_idx % config.logging.log_every == 0:
                         log_grad_flow(model.named_parameters(),global_step),
                         log_grad_flow(discriminator.named_parameters(),global_step)
-                        log_loss_landscape(model, criterion, val_loader, global_step)
+                        # log_loss_landscape(model, criterion, val_loader, global_step)
 
 
 
