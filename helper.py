@@ -64,13 +64,18 @@ def log_grad_flow(named_parameters,_global_step):
         "gradient_variance": np.var(grads),
     }
 
+    # Check for gradient issues
+    issues = check_gradient_issues(grads, layers)
+
     # Log everything
     wandb.log({
         "gradient_flow_plot": img,
         "gradient_flow_data": table,
         **stats,
-        "gradient_issues": check_gradient_issues(grads, layers)
     }, step=_global_step)
+
+    # Log gradient issues separately
+    wandb.log({"gradient_issues": wandb.Html(issues)}, step=_global_step)
 
 def check_gradient_issues(grads, layers):
     issues = []
@@ -83,7 +88,11 @@ def check_gradient_issues(grads, layers):
         elif grad < mean_grad - 3 * std_grad:
             issues.append(f"Potential vanishing gradient in {layer}: {grad:.2e}")
     
-    return "\n".join(issues) if issues else "No significant gradient issues detected"
+    if issues:
+        return "<br>".join(issues)
+    else:
+        return "No significant gradient issues detected"
+
 def count_model_params(model, trainable_only=False, verbose=False):
     """
     Count the number of parameters in a PyTorch model.
