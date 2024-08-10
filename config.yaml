@@ -10,7 +10,7 @@ model:
 training:
   initial_video_repeat: 5
   final_video_repeat: 2
-  use_ema: True
+  use_ema: False
   use_r1_reg: True
   batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
