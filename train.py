@@ -117,9 +117,11 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
         total_g_loss = 0
         total_d_loss = 0
-         
+        
+        
         current_decay = get_ema_decay(epoch, config.training.num_epochs)
-        ema.decay = current_decay
+        if ema:
+            ema.decay = current_decay 
 
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
