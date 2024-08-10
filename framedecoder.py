@@ -34,8 +34,9 @@ class CIPSFrameDecoder(nn.Module):
         self.style_dim = style_dim
         self.num_layers = num_layers
         
+        # Adjust the input dimension for each feature
         self.feature_projection = nn.ModuleList([
-            nn.Linear(dim, style_dim) for dim in feature_dims
+            nn.Linear(dim[0] * dim[1] * dim[2], style_dim) for dim in feature_dims
         ])
         
         self.fourier_features = FourierFeatures(2, 256)
@@ -61,7 +62,6 @@ class CIPSFrameDecoder(nn.Module):
     
     def forward(self, features):
         print(f"Input features shapes: {[f.shape for f in features]}")
-        
         batch_size = features[0].shape[0]
         target_resolution = self.max_resolution
         print(f"Batch size: {batch_size}, Target resolution: {target_resolution}")
@@ -69,52 +69,40 @@ class CIPSFrameDecoder(nn.Module):
         # Project input features to style vectors
         styles = []
         for proj, feat in zip(self.feature_projection, features):
-            # Ensure features are flattened correctly before projection
-            feat = feat.reshape(feat.size(0), -1)  # Flatten to (batch_size, channels * height * width)
+            # Flatten the feature map
+            feat = feat.reshape(batch_size, -1)
             style = proj(feat)
-            print(f"Style shape after projection: {style.shape}")
             styles.append(style)
         
         w = torch.cat(styles, dim=-1)
-        print(f"Combined style vector shape: {w.shape}")
         
         # Generate coordinate grid
         coords = self.get_coord_grid(batch_size, target_resolution)
-        print(f"Coordinate grid shape: {coords.shape}")
         coords_flat = coords.view(batch_size, -1, 2)
-        print(f"Flattened coordinate grid shape: {coords_flat.shape}")
         
         # Get Fourier features and coordinate embeddings
         fourier_features = self.fourier_features(coords_flat)
-        print(f"Fourier features shape: {fourier_features.shape}")
-        
         coord_embeddings = F.grid_sample(
             self.coord_embeddings.expand(batch_size, -1, -1, -1),
             coords,
             mode='bilinear',
             align_corners=True
         )
-        print(f"Coordinate embeddings shape after grid_sample: {coord_embeddings.shape}")
         coord_embeddings = coord_embeddings.permute(0, 2, 3, 1).reshape(batch_size, -1, 512)
-        print(f"Coordinate embeddings shape after reshape: {coord_embeddings.shape}")
         
         # Concatenate Fourier features and coordinate embeddings
         features = torch.cat([fourier_features, coord_embeddings], dim=-1)
-        print(f"Combined features shape: {features.shape}")
         
         rgb = 0
         for i, (layer, to_rgb) in enumerate(zip(self.layers, self.to_rgb)):
             features = layer(features, w)
-            print(f"Features shape after layer {i}: {features.shape}")
             features = F.leaky_relu(features, 0.2)
             
             if i % 2 == 0 or i == self.num_layers - 1:
                 rgb_out = to_rgb(features, w)
-                print(f"RGB output shape at layer {i}: {rgb_out.shape}")
                 rgb = rgb + rgb_out
         
         output = torch.sigmoid(rgb).view(batch_size, target_resolution, target_resolution, 3).permute(0, 3, 1, 2)
-        print(f"Final output shape: {output.shape}")
         
         # Ensure output is in [-1, 1] range
         output = (output * 2) - 1
