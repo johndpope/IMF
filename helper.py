@@ -64,7 +64,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
     model.eval()
     with torch.no_grad():
         try:
-            x_reconstructed, x_reference = data
+            x_reconstructed,x_current, x_reference = data
             batch_size = x_reconstructed.size(0)
             num_samples = min(num_samples, batch_size)
             
@@ -74,7 +74,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
 
             
             # Prepare frames for saving (2 rows: clamped reconstructed and original reference)
-            frames = torch.cat((x_reconstructed, x_reference), dim=0)
+            frames = torch.cat((x_reconstructed,x_current, x_reference), dim=0)
             
             # Ensure we have a valid output directory
             if output_path:
@@ -85,7 +85,7 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
                 
                 # Save frames as a grid (2 rows, num_samples columns)
                 save_image(accelerator.gather(frames), output_path, nrow=num_samples, padding=2, normalize=False)
-                accelerator.print(f"Saved sample reconstructions to {output_path}")
+                print(f"Saved sample reconstructions to {output_path}")
             else:
                 accelerator.print("Warning: No output path provided. Skipping image save.")
             
@@ -93,8 +93,9 @@ def sample_recon(model, data, accelerator, output_path, num_samples=1):
             wandb_images = []
             for i in range(num_samples):
                 wandb_images.extend([
-                    wandb.Image(x_reconstructed[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reconstructed {i}"),
-                    wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"Reference {i}")
+                    wandb.Image(x_reconstructed[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"x_reconstructed {i}"),
+                    wandb.Image(x_current[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"x_current {i}")
+                    wandb.Image(x_reference[i].cpu().detach().numpy().transpose(1, 2, 0), caption=f"x_reference {i}")
                 ])
             
             wandb.log({"Sample Reconstructions": wandb_images})
