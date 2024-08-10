@@ -20,22 +20,22 @@ class ModulatedFC(nn.Module):
         super().__init__()
         self.fc = nn.Linear(in_features, out_features)
         self.style_mlp = nn.Sequential(
-            nn.Linear(style_dim, 256),
+            nn.Linear(style_dim, 512),
             nn.ReLU(),
-            nn.Linear(256, in_features)
+            nn.Linear(512, in_features)
         )
         self.scale_mlp = nn.Sequential(
-            nn.Linear(style_dim, 256),
+            nn.Linear(style_dim, 512),
             nn.ReLU(),
-            nn.Linear(256, out_features)
+            nn.Linear(512, out_features)
         )
         
     def forward(self, x, style):
         print(f"ModulatedFC input shapes - x: {x.shape}, style: {style.shape}")
-        style = self.style_mlp(style).unsqueeze(1)
-        scale = self.scale_mlp(style).unsqueeze(1)
+        style = self.style_mlp(style)
+        scale = self.scale_mlp(style)
         print(f"ModulatedFC processed shapes - style: {style.shape}, scale: {scale.shape}")
-        x = self.fc(x * style) * scale
+        x = self.fc(x * style.unsqueeze(1)) * scale.unsqueeze(1)
         print(f"ModulatedFC output shape: {x.shape}")
         return x
 
@@ -65,7 +65,7 @@ class CIPSFrameDecoder(nn.Module):
             self.layers.append(ModulatedFC(current_dim, ngf * 8, self.style_dim))
             if i % 2 == 0 or i == num_layers - 1:
                 self.to_rgb.append(ModulatedFC(ngf * 8, 3, self.style_dim))
-            current_dim = ngf * 8
+            current_dim = ngf * 8 
         
     def get_coord_grid(self, batch_size, resolution):
         print(f"get_coord_grid input - batch_size: {batch_size}, resolution: {resolution}")
