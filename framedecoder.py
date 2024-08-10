@@ -18,10 +18,12 @@ class ModulatedFC(nn.Module):
         super().__init__()
         self.fc = nn.Linear(in_features, out_features)
         self.modulation = nn.Linear(style_dim, in_features)
+        self.scale = nn.Linear(style_dim, out_features)
         
     def forward(self, x, style):
         style = self.modulation(style).unsqueeze(1)
-        x = self.fc(x * style)
+        scale = self.scale(style).unsqueeze(1)
+        x = self.fc(x * style) * scale
         return x
 
 class CIPSFrameDecoder(nn.Module):
@@ -31,7 +33,7 @@ class CIPSFrameDecoder(nn.Module):
         self.feature_dims = feature_dims
         self.ngf = ngf
         self.max_resolution = max_resolution
-        self.style_dim = style_dim
+        self.style_dim = style_dim * len(feature_dims)  # Adjusted style_dim
         self.num_layers = num_layers
         
         self.feature_projection = nn.ModuleList([
@@ -47,9 +49,9 @@ class CIPSFrameDecoder(nn.Module):
         current_dim = 512 + 256  # Fourier features + coordinate embeddings
         
         for i in range(num_layers):
-            self.layers.append(ModulatedFC(current_dim, ngf * 8, style_dim))
+            self.layers.append(ModulatedFC(current_dim, ngf * 8, self.style_dim))
             if i % 2 == 0 or i == num_layers - 1:
-                self.to_rgb.append(ModulatedFC(ngf * 8, 3, style_dim))
+                self.to_rgb.append(ModulatedFC(ngf * 8, 3, self.style_dim))
             current_dim = ngf * 8
         
     def get_coord_grid(self, batch_size, resolution):
@@ -71,7 +73,7 @@ class CIPSFrameDecoder(nn.Module):
         for proj, feat in zip(self.feature_projection, features):
             print(f"Feature shape before projection: {feat.shape}")
             style = proj(feat)
-            style = style.view(batch_size, self.style_dim, -1).mean(dim=2)
+            style = style.view(batch_size, self.style_dim // len(self.feature_dims), -1).mean(dim=2)
             print(f"Style shape after projection: {style.shape}")
             styles.append(style)
         
