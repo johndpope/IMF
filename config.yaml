@@ -21,7 +21,7 @@ training:
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
   ema_decay: 0.999
   style_mixing_prob: 0.9
-  initial_noise_magnitude: 0.1
+  initial_noise_magnitude: 0.01
   final_noise_magnitude: 0.001
   gradient_accumulation_steps: 1
   lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
