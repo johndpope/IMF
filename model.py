@@ -319,30 +319,30 @@ class FrameDecoder(nn.Module):
                 reshaped_feat = feat
             reshaped_features.append(reshaped_feat)
 
-        print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
+        debug_print(f"Reshaped features: {[f.shape for f in reshaped_features]}")
 
         x = reshaped_features[-1]  # Start with the smallest feature map
-        print(f"    Initial x shape: {x.shape}")
+        debug_print(f"    Initial x shape: {x.shape}")
         
         for i in range(len(self.upconv_blocks)):
-            print(f"\n    Processing upconv_block {i+1}")
+            debug_print(f"\n    Processing upconv_block {i+1}")
             x = self.upconv_blocks[i](x)
-            print(f"    After upconv_block {i+1}: {x.shape}")
+            debug_print(f"    After upconv_block {i+1}: {x.shape}")
             
             if i < len(self.feat_blocks):
-                print(f"    Processing feat_block {i+1}")
+                debug_print(f"    Processing feat_block {i+1}")
                 feat_input = reshaped_features[-(i+2)]
-                print(f"    feat_block {i+1} input shape: {feat_input.shape}")
+                debug_print(f"    feat_block {i+1} input shape: {feat_input.shape}")
                 feat = self.feat_blocks[i](feat_input)
-                print(f"    feat_block {i+1} output shape: {feat.shape}")
+                debug_print(f"    feat_block {i+1} output shape: {feat.shape}")
                 
-                print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
+                debug_print(f"    Concatenating: x {x.shape} and feat {feat.shape}")
                 x = torch.cat([x, feat], dim=1)
-                print(f"    After concatenation: {x.shape}")
+                debug_print(f"    After concatenation: {x.shape}")
         
-        print("\n    Applying final convolution")
+        debug_print("\n    Applying final convolution")
         x = self.final_conv(x)
-        print(f"    FrameDecoder final output shape: {x.shape}")
+        debug_print(f"    FrameDecoder final output shape: {x.shape}")
 
         return x
 '''

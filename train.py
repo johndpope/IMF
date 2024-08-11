@@ -323,8 +323,9 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     scheduler_d.step(avg_d_loss)
                     # Logging
                     if accelerator.is_main_process:
-                        wandb.log({
-                            "ema":current_decay,
+                        # Existing logs
+                        log_dict = {
+                            "ema": current_decay,
                             "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),
                             "batch_d_loss": d_loss.item(),
@@ -332,9 +333,33 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                             "perceptual_loss": l_v.item(),
                             "gan_loss": g_loss_gan.item(),
                             "batch": batch_idx + epoch * len(train_dataloader),
-                            "lr_g": optimizer_g.param_groups[0]['lr'],
-                            "lr_d": optimizer_d.param_groups[0]['lr']
-                        })
+                        }
+
+                        # Add layer-wise learning rates
+                        for i, param_group in enumerate(optimizer_g.param_groups):
+                            log_dict[f"lr_g_group_{i}"] = param_group['lr']
+                        log_dict["lr_d"] = optimizer_d.param_groups[0]['lr']
+
+                        # Add gradient norms for each component of the generator
+                        components = [
+                            'dense_feature_encoder',
+                            'latent_token_encoder',
+                            'latent_token_decoder',
+                            'implicit_motion_alignment',
+                            'frame_decoder',
+                            'mapping_network'
+                        ]
+                        for component in components:
+                            params = getattr(model, component).parameters()
+                            grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()) for p in params if p.grad is not None]))
+                            log_dict[f"grad_norm_{component}"] = grad_norm.item()
+
+                        # Add gradient norm for the discriminator
+                        disc_grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()) for p in discriminator.parameters() if p.grad is not None]))
+                        log_dict["grad_norm_discriminator"] = disc_grad_norm.item()
+
+                        # Log to wandb
+                        wandb.log(log_dict)
 
                     # Log gradient flow for generator and discriminator
                     criterion = [perceptual_loss_fn,pixel_loss_fn]
