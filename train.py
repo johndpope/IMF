@@ -62,7 +62,12 @@ def get_layer_wise_learning_rates(model):
     return params
 
 
-
+def warmup_learning_rate(optimizer, current_step, warmup_steps, base_lr):
+    if current_step < warmup_steps:
+        lr = base_lr * current_step / warmup_steps
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+    return optimizer
 
 
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
@@ -126,7 +131,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         total_g_loss = 0
         total_d_loss = 0
         
-        
+        warmup_steps = 100
+        base_lr = 1e-4
         current_decay = get_ema_decay(epoch, config.training.num_epochs)
         if ema:
             ema.decay = current_decay 
@@ -134,6 +140,10 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
             for _ in range(int(video_repeat)):
+
+                
+                optimizer_g = warmup_learning_rate(optimizer_g, global_step, warmup_steps, base_lr)
+
                 source_frames = batch['frames']
                 batch_size, num_frames, channels, height, width = source_frames.shape
 
