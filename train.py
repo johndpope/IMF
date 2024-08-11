@@ -73,10 +73,13 @@ def warmup_learning_rate(optimizer, current_step, warmup_steps, base_lr):
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
     # layerwise params
-    layer_wise_params = get_layer_wise_learning_rates(model)
+    # layer_wise_params = get_layer_wise_learning_rates(model)
 
     # Generator optimizer
-    optimizer_g = AdamW( layer_wise_params )
+    optimizer_g = AdamW( model.parameters(),
+        lr=config.training.learning_rate_g,
+        betas=(config.optimizer.beta1, config.optimizer.beta2),
+        weight_decay=config.training.weight_decay )
 
     # Discriminator optimizer
     optimizer_d = AdamW(
