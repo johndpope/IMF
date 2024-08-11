@@ -6,7 +6,7 @@ model:
   use_resnet_feature: False
   use_mlgffn: False
   use_enhanced_generator: False
-  use_skip: True
+  use_skip: False
 # Training parameters
 training:
   initial_video_repeat: 5
