@@ -93,7 +93,7 @@ class ConvLayer(nn.Module):
         return self.relu(self.bn(self.conv(x)))
 
 class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, downsample=False):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
