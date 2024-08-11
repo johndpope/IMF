@@ -6,7 +6,7 @@ model:
   use_resnet_feature: False
   use_mlgffn: False
   use_enhanced_generator: False
-  use_skip: False
+  use_skip: True
 # Training parameters
 training:
   initial_video_repeat: 5
@@ -65,7 +65,7 @@ logging:
   sample_size: 1 # for images on wandb
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
-  print_model_details: True
+  print_model_details: False
   log_every: 100
 # Accelerator settings
 accelerator:
