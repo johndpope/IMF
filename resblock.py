@@ -12,26 +12,155 @@ def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
 
+# class UpConvResBlock(nn.Module):
+#     def __init__(self, in_channels, out_channels):
+#         super().__init__()
+#         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+#         self.bn1 = nn.BatchNorm2d(out_channels)
+#         self.relu = nn.ReLU(inplace=True)
+#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+#         self.feat_res_block1 = FeatResBlock(out_channels)
+#         self.feat_res_block2 = FeatResBlock(out_channels)
+
+#     def forward(self, x):
+#         x = self.upsample(x)
+#         x = self.conv1(x)
+#         x = self.bn1(x)
+#         x = self.relu(x)
+#         x = self.conv2(x)
+#         x = self.feat_res_block1(x)
+#         x = self.feat_res_block2(x)
+#         return x
+
+
+# class DownConvResBlock(nn.Module):
+#     def __init__(self, in_channels, out_channels, dropout_rate=0.1):
+#         super().__init__()
+#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+#         self.bn1 = nn.BatchNorm2d(out_channels)
+#         self.relu = nn.ReLU(inplace=True)
+#         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
+#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+#         # self.bn2 = nn.BatchNorm2d(out_channels) # 🤷 works with not without
+#         # self.dropout = nn.Dropout2d(dropout_rate) # 🤷
+#         self.feat_res_block1 = FeatResBlock(out_channels)
+#         self.feat_res_block2 = FeatResBlock(out_channels)
+
+#     def forward(self, x):
+#         out = self.conv1(x)
+#         out = self.bn1(out)
+#         out = self.relu(out)
+#         out = self.avgpool(out)
+#         out = self.conv2(out)
+#         # out = self.bn2(out) # 🤷
+#         # out = self.relu(out) # 🤷
+#         # out = self.dropout(out) # 🤷
+#         out = self.feat_res_block1(out)
+#         out = self.feat_res_block2(out)
+#         return out
+
+
+# class FeatResBlock(nn.Module):
+#     def __init__(self, channels):
+#         super().__init__()
+#         self.bn1 = nn.BatchNorm2d(channels)
+#         self.relu1 = nn.ReLU(inplace=True)
+#         self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+#         self.bn2 = nn.BatchNorm2d(channels)
+#         self.relu2 = nn.ReLU(inplace=True)
+#         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+#         self.relu3 = nn.ReLU(inplace=True)
+
+#     def forward(self, x):
+#         residual = x
+#         out = self.bn1(x)
+#         out = self.relu1(out)
+#         out = self.conv1(out)
+#         out = self.bn2(out)
+#         out = self.relu2(out)
+#         out = self.conv2(out)
+#         out += residual
+#         out = self.relu3(out)
+#         return out
+
+
+# class ConvLayer(nn.Module):
+#     def __init__(self, in_channels, out_channels, downsample=False):
+#         super().__init__()
+#         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+#         self.bn = nn.BatchNorm2d(out_channels)
+#         self.relu = nn.ReLU(inplace=True)
+
+#     def forward(self, x):
+#         return self.relu(self.bn(self.conv(x)))
+
+# class ResBlock(nn.Module):
+#     def __init__(self, in_channels, out_channels, downsample=False):
+#         super().__init__()
+#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+#         self.bn1 = nn.BatchNorm2d(out_channels)
+#         self.relu1 = nn.ReLU(inplace=True)
+#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+#         self.bn2 = nn.BatchNorm2d(out_channels)
+#         self.relu2 = nn.ReLU(inplace=True)
+        
+#         self.skip_conv = nn.Sequential(
+#             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, bias=False),
+#             nn.BatchNorm2d(out_channels)
+#         )
+        
+#         self.downsample = downsample
+#         self.in_channels = in_channels
+#         self.out_channels = out_channels
+
+#     def forward(self, x):
+#         residual = self.skip_conv(x)
+        
+#         out = self.conv1(x)
+#         out = self.bn1(out)
+#         out = self.relu1(out)
+        
+#         out = self.conv2(out)
+#         out = self.bn2(out)
+        
+#         out += residual
+#         out = self.relu2(out)
+        
+#         return out
+    
+
 class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1):
         super().__init__()
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
+        
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
+        
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
         x = self.upsample(x)
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.feat_res_block1(x)
-        x = self.feat_res_block2(x)
-        return x
+        residual = self.residual_conv(x)
+        
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = out + residual
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.feat_res_block1(out)
+        out = self.feat_res_block2(out)
+        return out
 
 
 class DownConvResBlock(nn.Module):
@@ -42,8 +171,8 @@ class DownConvResBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        # self.bn2 = nn.BatchNorm2d(out_channels)
-        # self.dropout = nn.Dropout2d(dropout_rate)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
 
@@ -53,83 +182,76 @@ class DownConvResBlock(nn.Module):
         out = self.relu(out)
         out = self.avgpool(out)
         out = self.conv2(out)
-        # out = self.bn2(out)
-        # out = self.relu(out)
-        # out = self.dropout(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+        out = self.dropout(out)
         out = self.feat_res_block1(out)
         out = self.feat_res_block2(out)
         return out
 
 
 class FeatResBlock(nn.Module):
-    def __init__(self, channels):
+    def __init__(self, channels, dropout_rate=0.1):
         super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(channels)
         self.relu1 = nn.ReLU(inplace=True)
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-        self.relu2 = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.relu3 = nn.ReLU(inplace=True)
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
+        self.relu2 = nn.ReLU(inplace=True)
 
     def forward(self, x):
         residual = x
-        out = self.bn1(x)
-        out = self.relu1(out)
-        out = self.conv1(out)
-        out = self.bn2(out)
-        out = self.relu2(out)
-        out = self.conv2(out)
-        out += residual
-        out = self.relu3(out)
-        return out
-
-
-class ConvLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        return self.relu(self.bn(self.conv(x)))
-
-class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu2 = nn.ReLU(inplace=True)
-        
-        self.skip_conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, bias=False),
-            nn.BatchNorm2d(out_channels)
-        )
-        
-        self.downsample = downsample
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
-    def forward(self, x):
-        residual = self.skip_conv(x)
-        
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu1(out)
-        
         out = self.conv2(out)
         out = self.bn2(out)
-        
+        out = self.dropout(out)
         out += residual
         out = self.relu2(out)
-        
         return out
     
 
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, downsample=False, dropout_rate=0.1):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels  # Add this line
+        self.downsample = downsample
+        
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, 
+                               stride=2 if downsample else 1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate)
+        
+        if downsample or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, 
+                          stride=2 if downsample else 1, padding=1),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.shortcut = nn.Identity()
+
+    def forward(self, x):
+        residual = self.shortcut(x)
+        
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.dropout(out)
+        out += residual
+        out = self.relu(out)
+        
+        return out
+    
 class ModulatedConv2d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, demodulate=True):
         super().__init__()
