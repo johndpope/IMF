@@ -59,7 +59,7 @@ def get_layer_wise_learning_rates(model):
     params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 1e-4})
     params.append({'params': model.frame_decoder.parameters(), 'lr': 1e-4})
     params.append({'params': model.mapping_network.parameters(), 'lr': 1e-4})
-    params.append({'params': model.noise_injection.parameters(), 'lr': 1e-4})
+    # params.append({'params': model.noise_injection.parameters(), 'lr': 1e-4})
     return params
 
 
