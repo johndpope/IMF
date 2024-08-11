@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from resblock import UpConvResBlock,FeatResBlock
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -76,43 +77,6 @@ class EnhancedFrameDecoder(nn.Module):
 
         return x
 
-
-class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        
-    def forward(self, x):
-        debug_print(f"UpConvResBlock input shape: {x.shape}")
-        x = self.upsample(x)
-        x = self.relu(self.bn1(self.conv1(x)))
-        x = self.relu(self.bn2(self.conv2(x)))
-        debug_print(f"UpConvResBlock output shape: {x.shape}")
-        return x
-
-class FeatResBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(channels)
-        )
-        
-    def forward(self, x):
-        debug_print(f"FeatResBlock input shape: {x.shape}")
-        residual = self.conv(x)
-        debug_print(f"FeatResBlock residual shape: {residual.shape}")
-        out = F.relu(x + residual)
-        debug_print(f"FeatResBlock output shape: {out.shape}")
-        return out
 
 class SelfAttention(nn.Module):
     def __init__(self, in_dim):
