@@ -57,13 +57,20 @@ class TransformerBlock(nn.Module):
 
 
 class ImplicitMotionAlignmentWithSkip(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio):
+    def __init__(self, feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio, use_mlgffn=False):
         super().__init__()
         self.cross_attention = CrossAttention(feature_dim, motion_dim)
-        self.blocks = nn.ModuleList([
-            TransformerBlock(motion_dim, num_heads, window_size, mlp_ratio)
-            for _ in range(depth)
-        ])
+        if use_mlgffn:
+            self.cross_attention = MLGFFNCrossAttention(feature_dim, motion_dim, num_heads)
+            self.blocks = nn.ModuleList([
+                HSCATB(feature_dim, num_heads, window_size, mlp_ratio) for _ in range(depth)
+            ])
+        else:
+            self.cross_attention = CrossAttentionModule(dim=feature_dim, heads=num_heads, dim_head=feature_dim // num_heads)
+            self.blocks = nn.ModuleList([
+                TransformerBlock(feature_dim, num_heads, feature_dim // num_heads, feature_dim * mlp_ratio)
+                for _ in range(depth)
+            ])
         self.skip_connections = nn.ModuleList([
             nn.Linear(motion_dim, motion_dim) for _ in range(depth)
         ])
