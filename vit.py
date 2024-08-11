@@ -55,6 +55,25 @@ class TransformerBlock(nn.Module):
         output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
         return output
 
+
+class ImplicitMotionAlignmentWithSkip(nn.Module):
+    def __init__(self, feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio):
+        super().__init__()
+        self.cross_attention = CrossAttention(feature_dim, motion_dim)
+        self.blocks = nn.ModuleList([
+            TransformerBlock(motion_dim, num_heads, window_size, mlp_ratio)
+            for _ in range(depth)
+        ])
+        self.skip_connections = nn.ModuleList([
+            nn.Linear(motion_dim, motion_dim) for _ in range(depth)
+        ])
+
+    def forward(self, m_c, m_r, f_r):
+        x = self.cross_attention(m_c, m_r, f_r)
+        for block, skip in zip(self.blocks, self.skip_connections):
+            x = block(x) + skip(x)
+        return x
+
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, depth=2, num_heads=8, window_size=4, mlp_ratio=4, use_mlgffn=False):
         super().__init__()

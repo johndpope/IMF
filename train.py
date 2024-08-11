@@ -51,13 +51,26 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
     """
     return max(final_magnitude, initial_magnitude - (initial_magnitude - final_magnitude) * (epoch / max_epochs))
 
+def get_layer_wise_learning_rates(model):
+    params = []
+    params.append({'params': model.dense_feature_encoder.parameters(), 'lr': 1e-4})
+    params.append({'params': model.latent_token_encoder.parameters(), 'lr': 5e-4})
+    params.append({'params': model.latent_token_decoder.parameters(), 'lr': 5e-4})
+    params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 2e-4})
+    params.append({'params': model.frame_decoder.parameters(), 'lr': 1e-4})
+    params.append({'params': model.mapping_network.parameters(), 'lr': 1e-5})
+    return params
+
 
 
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
+    # layerwise params
+    layer_wise_params = get_layer_wise_learning_rates(model)
+
     # Generator optimizer
     optimizer_g = AdamW(
-        model.parameters(),
+        layer_wise_params,
         lr=config.training.learning_rate_g,
         betas=(config.optimizer.beta1, config.optimizer.beta2),
         weight_decay=config.training.weight_decay
@@ -368,8 +381,10 @@ def main():
         num_layers=config.model.num_layers,
         use_resnet_feature=config.model.use_resnet_feature,
         use_mlgffn=config.model.use_mlgffn,
-        use_enhanced_generator=config.model.use_enhanced_generator
+        use_enhanced_generator=config.model.use_enhanced_generator,
+        use_skip=config.model.use_skip
     )
+    
     add_gradient_hooks(model)
 
     # discriminator = PatchDiscriminator(ndf=config.discriminator.ndf) Original

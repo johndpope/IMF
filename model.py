@@ -397,7 +397,7 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_enhanced_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
+    def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_skip=False,use_enhanced_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
         self.encoder_dims = [64, 128, 256, 512]
@@ -412,10 +412,11 @@ class IMFModel(nn.Module):
         FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder
         self.dense_feature_encoder = FeatureExtractor(output_channels=self.motion_dims)
  
+        IMF = ImplicitMotionAlignmentWithSkip if use_skip else ImplicitMotionAlignment
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             dim = self.motion_dims[i]
-            model = ImplicitMotionAlignment(
+            model = IMF(
                 feature_dim=dim,
                 motion_dim=dim,
                 depth=4,
