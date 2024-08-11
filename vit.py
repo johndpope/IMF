@@ -59,7 +59,7 @@ class TransformerBlock(nn.Module):
 class ImplicitMotionAlignmentWithSkip(nn.Module):
     def __init__(self, feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio, use_mlgffn=False):
         super().__init__()
-        self.cross_attention = CrossAttention(feature_dim, motion_dim)
+  
         if use_mlgffn:
             self.cross_attention = MLGFFNCrossAttention(feature_dim, motion_dim, num_heads)
             self.blocks = nn.ModuleList([
