@@ -336,12 +336,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         }
 
                         # Add layer-wise learning rates
-                        for i, param_group in enumerate(optimizer_g.param_groups):
-                            log_dict[f"lr_g_group_{i}"] = param_group['lr']
-                        log_dict["lr_d"] = optimizer_d.param_groups[0]['lr']
-
-                        # Add gradient norms for each component of the generator
-                        components = [
+                        component_names = [
                             'dense_feature_encoder',
                             'latent_token_encoder',
                             'latent_token_decoder',
@@ -349,7 +344,12 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                             'frame_decoder',
                             'mapping_network'
                         ]
-                        for component in components:
+                        for i, param_group in enumerate(optimizer_g.param_groups):
+                            log_dict[f"lr_g_{component_names[i]}"] = param_group['lr']
+                        log_dict["lr_d"] = optimizer_d.param_groups[0]['lr']
+
+                        # Add gradient norms for each component of the generator
+                        for component in component_names:
                             params = getattr(model, component).parameters()
                             grad_norms = [torch.norm(p.grad.detach()) for p in params if p.grad is not None]
                             if grad_norms:
