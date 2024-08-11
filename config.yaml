@@ -35,7 +35,6 @@ training:
   r1_gamma: 10
   r1_interval: 16
   label_smoothing: 0.1
-
   min_learning_rate_d: 1.0e-6
   max_learning_rate_d: 1.0e-3
   d_lr_adjust_frequency: 100  # Adjust D learning rate every 100 steps
@@ -43,11 +42,11 @@ training:
   target_d_loss_ratio: 0.6  # Target ratio of D loss to G loss
   every_xref_frames: 16
   use_many_xrefs: False
-  
   scales: [1, 0.5, 0.25, 0.125]
   enable_xformers_memory_efficient_attention: True
   learning_rate_d: 1.0e-4
   weight_decay: 0.01
+  lte_learning_rate: 1.0e-5
 # Dataset parameters
 dataset:
   # celeb-hq torrent https://github.com/johndpope/MegaPortrait-hack/tree/main/junk

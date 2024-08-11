@@ -51,35 +51,17 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
     """
     return max(final_magnitude, initial_magnitude - (initial_magnitude - final_magnitude) * (epoch / max_epochs))
 
-def get_layer_wise_learning_rates(model):
-    params = []
-    params.append({'params': model.dense_feature_encoder.parameters(), 'lr': 1e-5})
-    params.append({'params': model.latent_token_encoder.parameters(), 'lr': 1e-5})
-    params.append({'params': model.latent_token_decoder.parameters(), 'lr': 1e-5})
-    params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 1e-5})
-    params.append({'params': model.frame_decoder.parameters(), 'lr': 1e-5})
-    params.append({'params': model.mapping_network.parameters(), 'lr': 1e-5})
-    return params
-
-
-def warmup_learning_rate(optimizer, current_step, warmup_steps, base_lr):
-    if current_step < warmup_steps:
-        lr = base_lr * current_step / warmup_steps
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-    return optimizer
 
 
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
-    # layerwise params - 
-    # layer_wise_params = get_layer_wise_learning_rates(model)
-
     # Generator optimizer
-    optimizer_g = AdamW( model.parameters(),
+    optimizer_g = AdamW(
+        model.parameters(),
         lr=config.training.learning_rate_g,
         betas=(config.optimizer.beta1, config.optimizer.beta2),
-        weight_decay=config.training.weight_decay )
+        weight_decay=config.training.weight_decay
+    )
 
     # Discriminator optimizer
     optimizer_d = AdamW(
@@ -110,6 +92,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
+    # perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
+    # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
     perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
@@ -134,8 +118,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         total_g_loss = 0
         total_d_loss = 0
         
-        # warmup_steps = 1000
-        # base_lr = 1e-5
+        
         current_decay = get_ema_decay(epoch, config.training.num_epochs)
         if ema:
             ema.decay = current_decay 
@@ -143,10 +126,6 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
             for _ in range(int(video_repeat)):
-
-                
-                # optimizer_g = warmup_learning_rate(optimizer_g, global_step, warmup_steps, base_lr)
-
                 source_frames = batch['frames']
                 batch_size, num_frames, channels, height, width = source_frames.shape
 
@@ -331,9 +310,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     scheduler_d.step(avg_d_loss)
                     # Logging
                     if accelerator.is_main_process:
-                        # Existing logs
-                        log_dict = {
-                            "ema": current_decay,
+                        wandb.log({
+                            "ema":current_decay,
                             "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),
                             "batch_d_loss": d_loss.item(),
@@ -341,41 +319,9 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                             "perceptual_loss": l_v.item(),
                             "gan_loss": g_loss_gan.item(),
                             "batch": batch_idx + epoch * len(train_dataloader),
-                        }
-
-                        # Add layer-wise learning rates
-                        component_names = [
-                            'dense_feature_encoder',
-                            'latent_token_encoder',
-                            'latent_token_decoder',
-                            'implicit_motion_alignment',
-                            'frame_decoder',
-                            'mapping_network'
-                        ]
-                        for i, param_group in enumerate(optimizer_g.param_groups):
-                            log_dict[f"lr_g_{component_names[i]}"] = param_group['lr']
-                        log_dict["lr_d"] = optimizer_d.param_groups[0]['lr']
-
-                        # Add gradient norms for each component of the generator
-                        for component in component_names:
-                            params = getattr(model, component).parameters()
-                            grad_norms = [torch.norm(p.grad.detach()) for p in params if p.grad is not None]
-                            if grad_norms:
-                                grad_norm = torch.norm(torch.stack(grad_norms))
-                                log_dict[f"grad_norm_{component}"] = grad_norm.item()
-                            else:
-                                log_dict[f"grad_norm_{component}"] = 0.0
-
-                        # Add gradient norm for the discriminator
-                        disc_grad_norms = [torch.norm(p.grad.detach()) for p in discriminator.parameters() if p.grad is not None]
-                        if disc_grad_norms:
-                            disc_grad_norm = torch.norm(torch.stack(disc_grad_norms))
-                            log_dict["grad_norm_discriminator"] = disc_grad_norm.item()
-                        else:
-                            log_dict["grad_norm_discriminator"] = 0.0
-
-                        # Log to wandb
-                        wandb.log(log_dict)
+                            "lr_g": optimizer_g.param_groups[0]['lr'],
+                            "lr_d": optimizer_d.param_groups[0]['lr']
+                        })
 
                     # Log gradient flow for generator and discriminator
                     criterion = [perceptual_loss_fn,pixel_loss_fn]
@@ -422,10 +368,8 @@ def main():
         num_layers=config.model.num_layers,
         use_resnet_feature=config.model.use_resnet_feature,
         use_mlgffn=config.model.use_mlgffn,
-        use_enhanced_generator=config.model.use_enhanced_generator,
-        use_skip=config.model.use_skip
+        use_enhanced_generator=config.model.use_enhanced_generator
     )
-    
     add_gradient_hooks(model)
 
     # discriminator = PatchDiscriminator(ndf=config.discriminator.ndf) Original
