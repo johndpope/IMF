@@ -131,7 +131,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         total_g_loss = 0
         total_d_loss = 0
         
-        warmup_steps = 100
+        warmup_steps = 1000
         base_lr = 1e-5
         current_decay = get_ema_decay(epoch, config.training.num_epochs)
         if ema:
