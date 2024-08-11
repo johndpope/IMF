@@ -7,13 +7,12 @@ import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_scaled import ImplicitMotionAlignment #- SLOW but reduces memory 2x/3x
 # from vit_mlgffn import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
-from vit import ImplicitMotionAlignment
+from vit import ImplicitMotionAlignment,ImplicitMotionAlignmentWithSkip
 from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 from resblock import UpConvResBlock,DownConvResBlock,FeatResBlock,StyledConv,ResBlock
 import math
 import random
-# from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
 from framedecoder import EnhancedFrameDecoder
 DEBUG = False
