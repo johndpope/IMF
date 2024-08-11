@@ -677,5 +677,7 @@ class MultiScalePatchDiscriminator(nn.Module):
                 input_downsampled = F.avg_pool2d(input_downsampled, kernel_size=3, stride=2, padding=1, count_include_pad=False)
         return result
 
+    def get_scale_params(self):
+        return [getattr(self, f'scale_{i}').parameters() for i in range(self.num_D)]
 
         
