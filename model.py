@@ -167,7 +167,7 @@ class LatentTokenEncoder(nn.Module):
         self.res_blocks = nn.ModuleList()
         in_channels = initial_channels
         for out_channels in output_channels:
-            self.res_blocks.append(ResBlock(in_channels, out_channels, downsample=True))
+            self.res_blocks.append(ResBlock(in_channels, out_channels))
             in_channels = out_channels
 
         self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding=1)
