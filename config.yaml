@@ -13,7 +13,7 @@ training:
   final_video_repeat: 2
   use_ema: False
   use_r1_reg: True
-  batch_size: 1 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
+  batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
   save_steps: 250
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
