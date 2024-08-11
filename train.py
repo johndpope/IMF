@@ -351,12 +351,20 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         ]
                         for component in components:
                             params = getattr(model, component).parameters()
-                            grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()) for p in params if p.grad is not None]))
-                            log_dict[f"grad_norm_{component}"] = grad_norm.item()
+                            grad_norms = [torch.norm(p.grad.detach()) for p in params if p.grad is not None]
+                            if grad_norms:
+                                grad_norm = torch.norm(torch.stack(grad_norms))
+                                log_dict[f"grad_norm_{component}"] = grad_norm.item()
+                            else:
+                                log_dict[f"grad_norm_{component}"] = 0.0
 
                         # Add gradient norm for the discriminator
-                        disc_grad_norm = torch.norm(torch.stack([torch.norm(p.grad.detach()) for p in discriminator.parameters() if p.grad is not None]))
-                        log_dict["grad_norm_discriminator"] = disc_grad_norm.item()
+                        disc_grad_norms = [torch.norm(p.grad.detach()) for p in discriminator.parameters() if p.grad is not None]
+                        if disc_grad_norms:
+                            disc_grad_norm = torch.norm(torch.stack(disc_grad_norms))
+                            log_dict["grad_norm_discriminator"] = disc_grad_norm.item()
+                        else:
+                            log_dict["grad_norm_discriminator"] = 0.0
 
                         # Log to wandb
                         wandb.log(log_dict)
