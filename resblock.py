@@ -95,24 +95,50 @@ class ConvLayer(nn.Module):
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu2 = nn.ReLU(inplace=True)
         
-        # Main path
-        self.conv1 = ConvLayer(in_channels, out_channels, downsample=True)
-        self.conv2 = ConvLayer(out_channels, out_channels)
-        
-        # Skip connection path
-        self.skip_conv = ConvLayer(in_channels, out_channels, downsample=True)
+        if downsample or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.shortcut = nn.Identity()
+
+        self.downsample = downsample
+        self.in_channels = in_channels
+        self.out_channels = out_channels
 
     def forward(self, x):
-        # Main path
-        main = self.conv1(x)
-        main = self.conv2(main)
+        debug_print(f"ResBlock input shape: {x.shape}")
+        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+
+        residual = self.shortcut(x)
+        debug_print(f"After shortcut: {residual.shape}")
         
-        # Skip connection path
-        skip = self.skip_conv(x)
+        out = self.conv1(x)
+        debug_print(f"After conv1: {out.shape}")
+        out = self.bn1(out)
+        out = self.relu1(out)
+        debug_print(f"After bn1 and relu1: {out.shape}")
         
-        # Combine paths
-        return main + skip
+        out = self.conv2(out)
+        debug_print(f"After conv2: {out.shape}")
+        out = self.bn2(out)
+        debug_print(f"After bn2: {out.shape}")
+        
+        out += residual
+        debug_print(f"After adding residual: {out.shape}")
+        
+        out = self.relu2(out)
+        debug_print(f"ResBlock output shape: {out.shape}")
+        
+        return out
     
 
 class ModulatedConv2d(nn.Module):
