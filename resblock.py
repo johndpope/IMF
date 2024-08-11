@@ -102,41 +102,27 @@ class ResBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.relu2 = nn.ReLU(inplace=True)
         
-        if downsample or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.shortcut = nn.Identity()
-
+        self.skip_conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, bias=False),
+            nn.BatchNorm2d(out_channels)
+        )
+        
         self.downsample = downsample
         self.in_channels = in_channels
         self.out_channels = out_channels
 
     def forward(self, x):
-        debug_print(f"ResBlock input shape: {x.shape}")
-        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
-
-        residual = self.shortcut(x)
-        debug_print(f"After shortcut: {residual.shape}")
+        residual = self.skip_conv(x)
         
         out = self.conv1(x)
-        debug_print(f"After conv1: {out.shape}")
         out = self.bn1(out)
         out = self.relu1(out)
-        debug_print(f"After bn1 and relu1: {out.shape}")
         
         out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
         out = self.bn2(out)
-        debug_print(f"After bn2: {out.shape}")
         
         out += residual
-        debug_print(f"After adding residual: {out.shape}")
-        
         out = self.relu2(out)
-        debug_print(f"ResBlock output shape: {out.shape}")
         
         return out
     
