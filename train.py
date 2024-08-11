@@ -63,14 +63,16 @@ def get_layer_wise_learning_rates(model):
 
 
 
+
+
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
     # layerwise params
-    layer_wise_params = get_layer_wise_learning_rates(model)
+    # layer_wise_params = get_layer_wise_learning_rates(model)
 
     # Generator optimizer
     optimizer_g = AdamW(
-        layer_wise_params,
+        model.parameters(),
         lr=config.training.learning_rate_g,
         betas=(config.optimizer.beta1, config.optimizer.beta2),
         weight_decay=config.training.weight_decay
