@@ -53,13 +53,12 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
 
 def get_layer_wise_learning_rates(model):
     params = []
-    params.append({'params': model.dense_feature_encoder.parameters(), 'lr': 1e-4})
-    params.append({'params': model.latent_token_encoder.parameters(), 'lr': 1e-4})
-    params.append({'params': model.latent_token_decoder.parameters(), 'lr': 1e-4})
-    params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 1e-4})
-    params.append({'params': model.frame_decoder.parameters(), 'lr': 1e-4})
-    params.append({'params': model.mapping_network.parameters(), 'lr': 1e-4})
-    # params.append({'params': model.noise_injection.parameters(), 'lr': 1e-4})
+    params.append({'params': model.dense_feature_encoder.parameters(), 'lr': 1e-5})
+    params.append({'params': model.latent_token_encoder.parameters(), 'lr': 1e-5})
+    params.append({'params': model.latent_token_decoder.parameters(), 'lr': 1e-5})
+    params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 1e-5})
+    params.append({'params': model.frame_decoder.parameters(), 'lr': 1e-5})
+    params.append({'params': model.mapping_network.parameters(), 'lr': 1e-5})
     return params
 
 
