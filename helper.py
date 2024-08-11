@@ -124,8 +124,9 @@ def log_grad_flow(named_parameters, global_step):
     # Normalize gradients
     max_grad = max(grads)
     if max_grad == 0:
-        print("☠☠☠ Warning: All gradients are zero. ☠☠☠")
+        print("👿👿👿 Warning: All gradients are zero. 👿👿👿")
         normalized_grads = grads  # Use unnormalized grads if max is zero
+        raise ValueError(f"👿👿👿 Warning: All gradients are zero. 👿👿👿")
     else:
         normalized_grads = [g / max_grad for g in grads]
 
