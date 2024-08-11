@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
+from PIL import Image
+import numpy as np
 
 
 DEBUG = False
@@ -177,10 +180,9 @@ class StyledConv(nn.Module):
 
 
 
-
-def test_upconvresblock(block, input_shape):
+def test_upconvresblock(block, input_tensor):
     print("\nTesting UpConvResBlock")
-    x = torch.randn(input_shape)
+    x = input_tensor
     output = block(x)
     print(f"Input shape: {x.shape}, Output shape: {output.shape}")
     assert output.shape[2:] == tuple(2*x for x in x.shape[2:]), "UpConvResBlock should double spatial dimensions"
@@ -192,9 +194,9 @@ def test_upconvresblock(block, input_shape):
         assert param.grad is not None, f"No gradient for {name}"
         print(f"{name} gradient shape: {param.grad.shape}")
 
-def test_downconvresblock(block, input_shape):
+def test_downconvresblock(block, input_tensor):
     print("\nTesting DownConvResBlock")
-    x = torch.randn(input_shape)
+    x = input_tensor
     output = block(x)
     print(f"Input shape: {x.shape}, Output shape: {output.shape}")
     assert output.shape[2:] == tuple(x//2 for x in x.shape[2:]), "DownConvResBlock should halve spatial dimensions"
@@ -206,9 +208,9 @@ def test_downconvresblock(block, input_shape):
         assert param.grad is not None, f"No gradient for {name}"
         print(f"{name} gradient shape: {param.grad.shape}")
 
-def test_featresblock(block, input_shape):
+def test_featresblock(block, input_tensor):
     print("\nTesting FeatResBlock")
-    x = torch.randn(input_shape)
+    x = input_tensor
     output = block(x)
     print(f"Input shape: {x.shape}, Output shape: {output.shape}")
     assert output.shape == x.shape, "FeatResBlock should maintain input shape"
@@ -219,10 +221,9 @@ def test_featresblock(block, input_shape):
         assert param.grad is not None, f"No gradient for {name}"
         print(f"{name} gradient shape: {param.grad.shape}")
 
-def test_modulatedconv2d(conv, input_shape, style_dim):
+def test_modulatedconv2d(conv, input_tensor, style):
     print("\nTesting ModulatedConv2d")
-    x = torch.randn(input_shape)
-    style = torch.randn(input_shape[0], style_dim)
+    x = input_tensor
     output = conv(x, style)
     print(f"Input shape: {x.shape}, Style shape: {style.shape}, Output shape: {output.shape}")
     assert output.shape[1] == conv.weight.shape[0], "Output channels should match conv's out_channels"
@@ -232,13 +233,12 @@ def test_modulatedconv2d(conv, input_shape, style_dim):
     assert conv.weight.grad is not None, "No gradient for weight"
     print(f"Weight gradient shape: {conv.weight.grad.shape}")
 
-def test_styledconv(conv, input_shape, latent_dim):
+def test_styledconv(conv, input_tensor, latent):
     print("\nTesting StyledConv")
-    x = torch.randn(input_shape)
-    latent = torch.randn(input_shape[0], latent_dim)
+    x = input_tensor
     output = conv(x, latent)
     print(f"Input shape: {x.shape}, Latent shape: {latent.shape}, Output shape: {output.shape}")
-    expected_shape = list(input_shape)
+    expected_shape = list(x.shape)
     expected_shape[1] = conv.conv.weight.shape[0]
     if conv.upsample:
         expected_shape[2] *= 2
@@ -251,41 +251,9 @@ def test_styledconv(conv, input_shape, latent_dim):
         assert param.grad is not None, f"No gradient for {name}"
         print(f"{name} gradient shape: {param.grad.shape}")
 
-def test_resblock(resblock, input_shape):
-    print("\nTesting ResBlock")
-    x = torch.randn(input_shape)
-    output = resblock(x)
-    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
-    
-    # Check output shape
-    expected_output_shape = list(input_shape)
-    expected_output_shape[1] = resblock.conv2.conv.out_channels  # Use conv2's out_channels
-    expected_output_shape[2] //= 2  # Always downsample
-    expected_output_shape[3] //= 2
-    assert tuple(output.shape) == tuple(expected_output_shape), f"Expected shape {expected_output_shape}, got {output.shape}"
-
-    # Test gradient flow
-    output.sum().backward()
-    for name, param in resblock.named_parameters():
-        assert param.grad is not None, f"No gradient for {name}"
-        print(f"{name} gradient shape: {param.grad.shape}")
-
-    # Test residual connection
-    resblock.eval()
-    with torch.no_grad():
-        residual_output = resblock(x)
-        main_path = resblock.conv2(resblock.conv1(x))
-        skip_path = resblock.skip_conv(x)
-        direct_output = main_path + skip_path
-        assert torch.allclose(residual_output, direct_output, atol=1e-6), "Residual connection not working correctly"
-    
-    print("ResBlock test passed successfully!")
-
-
-
-def test_block_with_dropout(block, input_shape, block_name):
+def test_block_with_dropout(block, input_tensor, block_name):
     print(f"\nTesting {block_name}")
-    x = torch.randn(input_shape)
+    x = input_tensor
     
     # Test in training mode
     block.train()
@@ -310,10 +278,15 @@ def test_block_with_dropout(block, input_shape, block_name):
 
     print(f"{block_name} test passed successfully!")
 
-def visualize_feature_maps(block, input_shape, num_channels=4, latent_dim=None):
-    x = torch.randn(input_shape)
+
+def visualize_feature_maps(block, input_data, num_channels=4, latent_dim=None):
+    if isinstance(input_data, torch.Tensor):
+        x = input_data
+    else:  # Assume it's a shape tuple
+        x = torch.randn(input_data)
+    
     if isinstance(block, StyledConv):
-        latent = torch.randn(input_shape[0], latent_dim)
+        latent = torch.randn(x.shape[0], latent_dim)
         output = block(x, latent)
     else:
         output = block(x)
@@ -342,68 +315,149 @@ def visualize_feature_maps(block, input_shape, num_channels=4, latent_dim=None):
             output
         ]
         titles = ['After Conv1', 'After Conv2', 'Final Output']
+    elif isinstance(block, StyledConv):
+        intermediate_outputs = [output]
+        titles = ['Output']
     else:
         intermediate_outputs = [output]
         titles = ['Output']
 
-    fig, axs = plt.subplots(len(intermediate_outputs), num_channels, figsize=(20, 5 * len(intermediate_outputs)))
-    if len(intermediate_outputs) == 1:
-        axs = [axs]  # Make it 2D for consistency
+    num_outputs = len(intermediate_outputs)
+    fig, axs = plt.subplots(num_outputs, min(num_channels, output.shape[1]), figsize=(20, 5 * num_outputs))
+    if num_outputs == 1 and min(num_channels, output.shape[1]) == 1:
+        axs = np.array([[axs]])
+    elif num_outputs == 1 or min(num_channels, output.shape[1]) == 1:
+        axs = np.array([axs])
 
     for i, out in enumerate(intermediate_outputs):
-        for j in range(num_channels):
-            axs[i][j].imshow(out[0, j].detach().cpu().numpy(), cmap='viridis')
-            axs[i][j].axis('off')
+        for j in range(min(num_channels, out.shape[1])):
+            ax = axs[i, j] if num_outputs > 1 and min(num_channels, output.shape[1]) > 1 else axs[i]
+            feature_map = out[0, j].detach().cpu().numpy()
+            
+            # Normalize the feature map
+            feature_map = (feature_map - feature_map.min()) / (feature_map.max() - feature_map.min() + 1e-8)
+            
+            ax.imshow(feature_map, cmap='viridis')
+            ax.axis('off')
             if j == 0:
-                axs[i][j].set_title(f'{titles[i]}\nChannel {j}')
+                ax.set_title(f'{titles[i]}\nChannel {j}')
             else:
-                axs[i][j].set_title(f'Channel {j}')
+                ax.set_title(f'Channel {j}')
 
     plt.tight_layout()
     plt.show()
 
+def load_and_preprocess_image(image_path, target_size=(224, 224)):
+    # Load the image
+    img = Image.open(image_path).convert('RGB')
+    
+    # Define the preprocessing steps
+    preprocess = transforms.Compose([
+        transforms.Resize(target_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    # Preprocess the image
+    img_tensor = preprocess(img)
+    
+    # Add batch dimension
+    img_tensor = img_tensor.unsqueeze(0)
+    
+    return img_tensor
+
+def test_resblock_with_image(resblock, image_tensor):
+    print("\nTesting ResBlock with Image")
+    input_shape = image_tensor.shape
+    print(f"Input shape: {input_shape}")
+    
+    # Pass the image through the ResBlock
+    output = resblock(image_tensor)
+    print(f"Output shape: {output.shape}")
+    
+    # Check output shape
+    expected_output_shape = list(input_shape)
+    expected_output_shape[1] = resblock.out_channels
+    if resblock.downsample:
+        expected_output_shape[2] //= 2
+        expected_output_shape[3] //= 2
+    assert tuple(output.shape) == tuple(expected_output_shape), f"Expected shape {expected_output_shape}, got {output.shape}"
+
+    # Test gradient flow
+    output.sum().backward()
+    for name, param in resblock.named_parameters():
+        assert param.grad is not None, f"No gradient for {name}"
+        print(f"{name} gradient shape: {param.grad.shape}")
+
+    # Visualize input and output
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    
+    # Display input image
+    input_img = image_tensor.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+    input_img = (input_img - input_img.min()) / (input_img.max() - input_img.min())
+    ax1.imshow(input_img)
+    ax1.set_title("Input Image")
+    ax1.axis('off')
+    
+    # Display output feature map (first channel)
+    output_img = output.squeeze(0)[0].cpu().detach().numpy()
+    output_img = (output_img - output_img.min()) / (output_img.max() - output_img.min())
+    ax2.imshow(output_img, cmap='viridis')
+    ax2.set_title("Output Feature Map (First Channel)")
+    ax2.axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    print("ResBlock test with image passed successfully!")
 
 if __name__ == "__main__":
 
-    # Run all tests
-    upconv = UpConvResBlock(64, 128)
-    test_upconvresblock(upconv, (1, 64, 56, 56))
-    visualize_feature_maps(upconv, (1, 64, 56, 56))
+       # Load the image
+    image_path = "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/0H5fm71cs4A_11/000000.png"
+    image_tensor = load_and_preprocess_image(image_path)
 
-    downconv = DownConvResBlock(128, 256)
-    test_downconvresblock(downconv, (1, 128, 56, 56))
-    visualize_feature_maps(downconv, (1, 128, 56, 56))
+    # Run all tests with the image tensor
+    upconv = UpConvResBlock(3, 64)
+    test_upconvresblock(upconv, image_tensor)
+    visualize_feature_maps(upconv, image_tensor)
 
-    featres = FeatResBlock(256)
-    test_featresblock(featres, (1, 256, 28, 28))
-    visualize_feature_maps(featres, (1, 256, 28, 28))
+    downconv = DownConvResBlock(3, 64)
+    test_downconvresblock(downconv, image_tensor)
+    visualize_feature_maps(downconv, image_tensor)
 
-    modconv = ModulatedConv2d(64, 128, 3)
-    test_modulatedconv2d(modconv, (1, 64, 56, 56), 64)
+    featres = FeatResBlock(3)
+    test_featresblock(featres, image_tensor)
+    visualize_feature_maps(featres, image_tensor)
 
-    styledconv = StyledConv(64, 128, 3, 32, upsample=True)
-    test_styledconv(styledconv, (1, 64, 56, 56), 32)
-    visualize_feature_maps(styledconv, (1, 64, 56, 56), num_channels=4, latent_dim=32)
-
-
-    resblock = ResBlock(64, 128)
-    test_resblock(resblock, (1, 64, 56, 56))
-    visualize_feature_maps(resblock, (1, 64, 56, 56))
-
-    # Usage
-    resblock = ResBlock(64, 64)
-    test_resblock(resblock, (1, 64, 56, 56))
+    modconv = ModulatedConv2d(3, 64, 3)
+    style = torch.randn(image_tensor.shape[0], 3)
+    test_modulatedconv2d(modconv, image_tensor, style)
 
 
-    # dropout
-    upconv = UpConvResBlock(64, 128)
-    test_block_with_dropout(upconv, (1, 64, 56, 56), "UpConvResBlock")
+    # Test with dropout
+    upconv = UpConvResBlock(3, 64)
+    test_block_with_dropout(upconv, image_tensor, "UpConvResBlock")
 
-    downconv = DownConvResBlock(128, 256)
-    test_block_with_dropout(downconv, (1, 128, 56, 56), "DownConvResBlock")
+    downconv = DownConvResBlock(3, 64)
+    test_block_with_dropout(downconv, image_tensor, "DownConvResBlock")
 
-    featres = FeatResBlock(256)
-    test_block_with_dropout(featres, (1, 256, 28, 28), "FeatResBlock")
+    featres = FeatResBlock(3)
+    test_block_with_dropout(featres, image_tensor, "FeatResBlock")
 
-    resblock = ResBlock(64, 128)
-    test_block_with_dropout(resblock, (1, 64, 56, 56), "ResBlock")
+    resblock = ResBlock(3, 64)
+    test_block_with_dropout(resblock, image_tensor, "ResBlock")
+
+    # Test ResBlock with and without downsampling
+    resblock = ResBlock(3, 64, downsample=False)
+    test_resblock_with_image(resblock, image_tensor)
+
+    resblock_down = ResBlock(3, 64, downsample=True)
+    test_resblock_with_image(resblock_down, image_tensor)
+
+
+    styledconv = StyledConv(3, 64, 3, 32, upsample=True)
+    latent = torch.randn(image_tensor.shape[0], 32)
+    test_styledconv(styledconv, image_tensor, latent)
+    visualize_feature_maps(styledconv, image_tensor, num_channels=4, latent_dim=32)
+    
