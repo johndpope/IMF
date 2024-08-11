@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from resblock import UpConvResBlock,FeatResBlock
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
