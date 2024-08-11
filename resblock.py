@@ -163,6 +163,7 @@ class UpConvResBlock(nn.Module):
         return out
 
 
+
 class DownConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, dropout_rate=0.1):
         super().__init__()
@@ -171,8 +172,8 @@ class DownConvResBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.dropout = nn.Dropout2d(dropout_rate)
+        # self.bn2 = nn.BatchNorm2d(out_channels) # 🤷 works with not without
+        # self.dropout = nn.Dropout2d(dropout_rate) # 🤷
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
 
@@ -182,9 +183,9 @@ class DownConvResBlock(nn.Module):
         out = self.relu(out)
         out = self.avgpool(out)
         out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-        out = self.dropout(out)
+        # out = self.bn2(out) # 🤷
+        out = self.relu(out) # 🤷
+        # out = self.dropout(out) # 🤷
         out = self.feat_res_block1(out)
         out = self.feat_res_block2(out)
         return out
