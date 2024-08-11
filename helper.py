@@ -107,7 +107,6 @@ def log_loss_landscape(model, loss_fns, dataloader, step):
 
 # Global variable to store the current table structure
 current_table_columns = None
-
 def log_grad_flow(named_parameters, global_step):
     global current_table_columns
 
@@ -124,15 +123,21 @@ def log_grad_flow(named_parameters, global_step):
     
     # Normalize gradients
     max_grad = max(grads)
-    normalized_grads = [g / max_grad for g in grads]
+    if max_grad == 0:
+        print("Warning: All gradients are zero.")
+        normalized_grads = grads  # Use unnormalized grads if max is zero
+    else:
+        normalized_grads = [g / max_grad for g in grads]
 
     # Create the matplotlib figure
     plt.figure(figsize=(12, 6))
     plt.bar(range(len(grads)), normalized_grads, alpha=0.5)
     plt.xticks(range(len(grads)), layers, rotation="vertical")
     plt.xlabel("Layers")
-    plt.ylabel("Normalized Gradient Magnitude")
-    plt.title(f"Normalized Gradient Flow (Step {global_step})")
+    plt.ylabel("Gradient Magnitude")
+    plt.title(f"Gradient Flow (Step {global_step})")
+    if max_grad == 0:
+        plt.title(f"Gradient Flow (Step {global_step}) - All Gradients Zero")
     plt.tight_layout()
 
     # Save the figure to a bytes buffer
@@ -145,28 +150,6 @@ def log_grad_flow(named_parameters, global_step):
     
     plt.close()
 
-    # Check if the table structure has changed
-    # new_columns = ["step"] + layers
-    # if current_table_columns != new_columns:
-    #     # If the structure has changed, delete the existing table and create a new one
-    #     if wandb.run is not None:
-    #         wandb.run.config.update({"gradient_flow_columns": new_columns}, allow_val_change=True)
-            
-    #         # Delete the existing table artifact
-    #         api = wandb.Api()
-    #         try:
-    #             artifact = api.artifact(f"{wandb.run.entity}/{wandb.run.project}/gradient_flow_table:latest")
-    #             artifact.delete(delete_aliases=True)
-    #             print("Deleted existing gradient_flow_table artifact.")
-    #         except wandb.errors.CommError:
-    #             print("No existing gradient_flow_table artifact found.")
-        
-    #     current_table_columns = new_columns
-
-    # # Create or update the wandb.Table
-    # data = [[global_step] + normalized_grads]
-    # table = wandb.Table(data=data, columns=current_table_columns)
-    
     # Calculate statistics
     stats = {
         "max_gradient": max_grad,
@@ -186,11 +169,6 @@ def log_grad_flow(named_parameters, global_step):
         "gradient_issues": wandb.Html(issues),
         "step": global_step
     }
-
-    # Log the table as an artifact
-    # artifact = wandb.Artifact('gradient_flow_table', type='table')
-    # artifact.add(table, 'gradient_flow_data')
-    # wandb.log_artifact(artifact)
 
     # Log other metrics
     wandb.log(log_dict)
