@@ -59,6 +59,7 @@ def get_layer_wise_learning_rates(model):
     params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 1e-4})
     params.append({'params': model.frame_decoder.parameters(), 'lr': 1e-4})
     params.append({'params': model.mapping_network.parameters(), 'lr': 1e-4})
+    params.append({'params': model.noise_injection.parameters(), 'lr': 1e-4})
     return params
 
 
@@ -73,7 +74,6 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
     # Generator optimizer
     optimizer_g = AdamW(
         layer_wise_params,
-        lr=config.training.learning_rate_g,
         betas=(config.optimizer.beta1, config.optimizer.beta2),
         weight_decay=config.training.weight_decay
     )
