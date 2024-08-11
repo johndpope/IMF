@@ -68,14 +68,10 @@ def get_layer_wise_learning_rates(model):
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
     # layerwise params
-    layer_wise_params = get_layer_wise_learning_rates(model)
+    # layer_wise_params = get_layer_wise_learning_rates(model)
 
     # Generator optimizer
-    optimizer_g = AdamW(
-        layer_wise_params,
-        betas=(config.optimizer.beta1, config.optimizer.beta2),
-        weight_decay=config.training.weight_decay
-    )
+    optimizer_g = Adam( layer_wise_params )
 
     # Discriminator optimizer
     optimizer_d = AdamW(
@@ -106,8 +102,6 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    # perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
-    # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
     perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
