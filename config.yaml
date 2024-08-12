@@ -1,6 +1,6 @@
 # Loss function
 loss:
-  type: "feature_matching"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
+  type: "vanilla"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
 
 # Model parameters
 model:

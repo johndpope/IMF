@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDis
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
+from helper import log_loss_landscape,log_grad_flow,count_model_params, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -169,72 +169,9 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         
                         x_current = source_frames[:, current_idx]
 
-                        # A. Forward Pass
-                        # 1. Dense Feature Encoding
-                        f_r = model.dense_feature_encoder(x_reference)
 
-                        # 2. Latent Token Encoding (with noise addition)
-                        t_r = model.latent_token_encoder(x_reference)
-                        t_c = model.latent_token_encoder(x_current)
-
-
-
-                        # Add noise to latent tokens
-                        noise_r = torch.randn_like(t_r) * noise_magnitude
-                        noise_c = torch.randn_like(t_c) * noise_magnitude
-                        t_r = t_r + noise_r
-                        t_c = t_c + noise_c
-
-                        # Style mixing (optional, based on probability)
-                        # Style mixing (optional, based on probability)
-                        # print(f"Original t_c shape: {t_c.shape}")
-                        # print(f"Original t_r shape: {t_r.shape}")
-
-                        if torch.rand(()).item() < style_mixing_prob:
-                            batch_size = t_c.size(0)
-                            rand_indices = torch.randperm(batch_size)
-                            rand_t_c = t_c[rand_indices]
-                            rand_t_r = t_r[rand_indices]
-                            
-                            # print(f"rand_t_c shape: {rand_t_c.shape}")
-                            # print(f"rand_t_r shape: {rand_t_r.shape}")
-                            
-                            # Create a mask for mixing
-                            mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
-                            mix_mask = mix_mask.float()
-                            
-                            # print(f"mix_mask shape: {mix_mask.shape}")
-                            
-                            # Mix the tokens
-                            mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
-                            mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
-                        else:
-                            # print(f"no mixing...")
-                            mix_t_c = t_c
-                            mix_t_r = t_r
-
-                        # print(f"Final mix_t_c shape: {mix_t_c.shape}")
-                        # print(f"Final mix_t_r shape: {mix_t_r.shape}")
-
-                        # Now use mix_t_c and mix_t_r for the rest of the processing
-                        m_c = model.latent_token_decoder(mix_t_c)
-                        m_r = model.latent_token_decoder(mix_t_r)
-
-                        # 4. Implicit Motion Alignment
-                        # Implicit Motion Alignment
-                        aligned_features = []
-                        for i in range(len(model.implicit_motion_alignment)):
-                            f_r_i = f_r[i]
-                            align_layer = model.implicit_motion_alignment[i]
-                            m_c_i = m_c[i] 
-                            m_r_i = m_r[i]
-                            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-                            aligned_features.append(aligned_feature)
-
-
-                        # 5. Frame Decoding
-                        x_reconstructed = model.frame_decoder(aligned_features)
-                        x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
+                        x_reconstructed = model(x_current,x_reference,style_mixing_prob,noise_magnitude)
+                        x_reconstructed = normalize(x_reconstructed)
 
                         # B. Loss Calculation
                         # 1. Pixel-wise Loss
