@@ -428,7 +428,7 @@ def main():
     ])
 
 
-    full_dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
+    full_dataset = VideoDataset("/media/2TB/celebvhq/35666/images", 
                                 transform=transform, 
                                 frame_skip=0, 
                                 num_frames=240)
