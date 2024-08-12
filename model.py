@@ -498,10 +498,10 @@ class IMFModel(nn.Module):
 
     
         # Frame decoding
-        reconstructed_frame = self.frame_decoder(aligned_features)
+        x_reconstructed = self.frame_decoder(aligned_features)
         x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
 
-        return reconstructed_frame, {
+        return x_reconstructed, {
             'dense_features': f_r,
             'latent_tokens': (t_c, t_r),
             'motion_features': (m_c, m_r),
