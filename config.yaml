@@ -1,6 +1,6 @@
 # Loss function
 loss:
-  type: "vanilla"  # Changed to Wasserstein loss for WGAN-GP
+  type: "hinge"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
 
 # Model parameters
 model:
@@ -13,14 +13,16 @@ model:
   use_skip: False
 # Training parameters
 training:
+  use_multiscale_discriminator: True
+  use_ema: False
   ema_decay: 0.999
   style_mixing_prob: 0.9
   initial_noise_magnitude: 0.01
   final_noise_magnitude: 0.0001 
-  use_multiscale_discriminator: False
+
   initial_video_repeat: 5
   final_video_repeat: 2
-  use_ema: False
+
   use_r1_reg: True
   batch_size: 1 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
