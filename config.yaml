@@ -13,19 +13,23 @@ model:
   use_skip: False
 # Training parameters
 training:
+  g_updates_per_d_update: 3
   use_multiscale_discriminator: True
   ada_augmentation: False
+  ada_target_r_t: 0.6
+  ada_kimg: 500
+  ada_interval: 4
+
   use_ema: False
   ema_decay: 0.999
   style_mixing_prob: 0.9
   initial_noise_magnitude: 0.01
   final_noise_magnitude: 0.0001 
 
-
-  ada_target_r_t: 0.6
-  ada_kimg: 500
-  ada_interval: 4
-
+  initial_update_ratio: 1
+  update_ratio_adjustment: 0.1
+  
+ 
 
   initial_video_repeat: 5
   final_video_repeat: 2
@@ -33,7 +37,7 @@ training:
   use_r1_reg: True
   batch_size: 1 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
-  save_steps: 250
+
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
   learning_rate_d: 4e-4
 
@@ -79,6 +83,7 @@ logging:
   visualize_every: 100  # Visualize latent tokens every 100 batches
   print_model_details: False
   log_every: 100
+  save_steps: 250
 # Accelerator settings
 accelerator:
   mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"

@@ -599,7 +599,7 @@ class IMFPatchDiscriminator(nn.Module):
         )
 
 
-    def forward(self, x):
+    def forward(self, x,update_ada=False):
         debug_print(f"PatchDiscriminator input shape: {x.shape}")
 
         # Scale 1
@@ -669,7 +669,7 @@ class MultiScalePatchDiscriminator(nn.Module):
     def singleD_forward(self, model, input):
         return model(input)
 
-    def forward(self, input):
+    def forward(self, input,update_ada=False):
         result = []
         input_downsampled = input
         for i in range(self.num_D):

@@ -386,3 +386,14 @@ def add_gradient_hooks(model):
 
 
 
+# Helper function for R1 penalty
+def compute_r1_penalty(discriminator, real_data):
+    real_data.requires_grad = True
+    real_outputs = discriminator(real_data)
+    r1_penalty = 0
+    for real_output in real_outputs:
+        grad_real = torch.autograd.grad(
+            outputs=real_output.sum(), inputs=real_data, create_graph=True
+        )[0]
+        r1_penalty += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+    return r1_penalty
