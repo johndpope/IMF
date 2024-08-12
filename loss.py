@@ -5,7 +5,42 @@ import torch.nn.functional as F
 from model import debug_print
 import lpips
 
+# Wasserstein Loss:
+# Pros:
 
+# Provides a meaningful distance metric between distributions.
+# Often leads to more stable training and better convergence.
+# Can help prevent mode collapse.
+
+# Cons:
+
+# Requires careful weight clipping or gradient penalty implementation for Lipschitz constraint.
+# May converge slower than other losses in some cases.
+
+
+# Hinge Loss:
+# Pros:
+
+# Often results in sharper and more realistic images.
+# Good stability in training, especially for complex architectures.
+# Works well with spectral normalization.
+
+# Cons:
+
+# May be sensitive to outliers.
+# Can sometimes lead to more constrained generator outputs.
+
+
+# Vanilla GAN Loss:
+# Pros:
+
+# Simple and straightforward implementation.
+# Works well for many standard GAN applications.
+
+# Cons:
+
+# Can suffer from vanishing gradients and mode collapse.
+# Often less stable than Wasserstein or Hinge loss, especially for complex models.
 
 def wasserstein_loss(real_outputs, fake_outputs):
     """
