@@ -157,6 +157,8 @@ class FeatResBlock(nn.Module):
             out = self.activation(out)
         return out
 
+
+# this is only used on the densefeatureencoder
 class DownConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, dropout_rate=0.1, activation=nn.ReLU, 
                  norm_type='batch', use_residual_scaling=False):
@@ -192,6 +194,7 @@ class DownConvResBlock(nn.Module):
         out = self.feat_res_block2(out)
         return out
 
+# this is used on the framedecoder / enhancedframedecoder
 class UpConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, dropout_rate=0.1, activation=nn.ReLU, 
                  norm_type='batch', upsample_mode='nearest', use_residual_scaling=False):
@@ -241,7 +244,7 @@ def init_weights(m):
 # Apply weight initialization
 def initialize_model(model):
     model.apply(init_weights)
-    
+    F
 class ResBlock(nn.Module):
     def __init__(self, in_channels, out_channels, downsample=False, dropout_rate=0.1):
         super().__init__()
