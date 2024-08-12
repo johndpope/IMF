@@ -90,19 +90,46 @@ def gan_loss_fn(real_outputs, fake_outputs, loss_type):
 
 
 def compute_gradient_penalty(discriminator, real_samples, fake_samples):
+    print(f"Real samples shape: {real_samples.shape}")
+    print(f"Fake samples shape: {fake_samples.shape}")
+    
     alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(real_samples.device)
+    print(f"Alpha shape: {alpha.shape}")
+    
     interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    print(f"Interpolates shape: {interpolates.shape}")
+    
     d_interpolates = discriminator(interpolates)
+    print(f"Discriminator output type: {type(d_interpolates)}")
+    print(f"Number of scales: {len(d_interpolates)}")
     
-    # Handle the case where discriminator output is not a scalar
-    if d_interpolates.dim() > 2:
-        d_interpolates = d_interpolates.mean(dim=[2, 3])  # Average over spatial dimensions
+    gradient_penalty = 0
+    for scale_output in d_interpolates:
+        print(f"Scale output shape: {scale_output.shape}")
+        
+        if scale_output.dim() > 2:
+            scale_output = scale_output.mean(dim=[2, 3])  # Average over spatial dimensions
+        print(f"Processed scale output shape: {scale_output.shape}")
+        
+        fake = torch.ones(scale_output.shape).to(real_samples.device)
+        gradients = torch.autograd.grad(
+            outputs=scale_output, inputs=interpolates,
+            grad_outputs=fake, create_graph=True, retain_graph=True, only_inputs=True
+        )[0]
+        print(f"Gradients shape: {gradients.shape}")
+        
+        gradients = gradients.view(gradients.size(0), -1)
+        print(f"Reshaped gradients shape: {gradients.shape}")
+        
+        scale_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+        print(f"Scale gradient penalty: {scale_penalty.item()}")
+        
+        gradient_penalty += scale_penalty
     
-    fake = torch.ones(d_interpolates.shape).to(real_samples.device)
-    gradients = torch.autograd.grad(
-        outputs=d_interpolates, inputs=interpolates,
-        grad_outputs=fake, create_graph=True, retain_graph=True, only_inputs=True
-    )[0]
-    gradients = gradients.view(gradients.size(0), -1)
-    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    # Average the gradient penalty across all scales
+    gradient_penalty /= len(d_interpolates)
+    print(f"Final gradient penalty: {gradient_penalty.item()}")
+    
     return gradient_penalty
+
+# Usage in training loop
