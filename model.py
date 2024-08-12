@@ -501,12 +501,8 @@ class IMFModel(nn.Module):
         x_reconstructed = self.frame_decoder(aligned_features)
         x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
 
-        return x_reconstructed, {
-            'dense_features': f_r,
-            'latent_tokens': (t_c, t_r),
-            'motion_features': (m_c, m_r),
-            'aligned_features': aligned_features
-        }
+        return x_reconstructed
+ 
 
     def set_noise_level(self, noise_level):
         self.noise_level = noise_level
