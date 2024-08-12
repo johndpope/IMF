@@ -109,7 +109,6 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
 
     style_mixing_prob = config.training.style_mixing_prob
-    noise_magnitude = config.training.noise_magnitude
     r1_gamma = config.training.r1_gamma  # R1 regularization strength
 
 
