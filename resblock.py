@@ -111,7 +111,7 @@ def debug_print(*args, **kwargs):
     
 
 class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, dropout_rate=0.1):
         super().__init__()
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
@@ -123,7 +123,7 @@ class UpConvResBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.dropout = nn.Dropout2d(dropout_rate)        
         self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
-        
+
     def forward(self, x):
         residual = self.residual_conv(x)
         
@@ -147,26 +147,26 @@ class DownConvResBlock(nn.Module):
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        # self.bn2 = nn.BatchNorm2d(out_channels) # 🤷 works with not without
-        # self.dropout = nn.Dropout2d(dropout_rate) # 🤷
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        self.feat_res_block2 = FeatResBlock(out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        
+        # Residual connection
+        self.residual = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
 
     def forward(self, x):
+        residual = self.residual(x)
+        
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
-        out = self.avgpool(out)
+        
         out = self.conv2(out)
-        # out = self.bn2(out) # 🤷
-        out = self.relu(out) # 🤷
-        # out = self.dropout(out) # 🤷
-        out = self.feat_res_block1(out)
-        out = self.feat_res_block2(out)
+        out = self.bn2(out)
+        
+        out += residual
+        out = self.relu(out)
+        
         return out
-
 
 class FeatResBlock(nn.Module):
     def __init__(self, channels, dropout_rate=0.1):
