@@ -14,28 +14,25 @@ class EnhancedFrameDecoder(nn.Module):
         
         self.use_attention = use_attention
         
-        # Adjusted channel counts to handle concatenated features
         self.upconv_blocks = nn.ModuleList([
             UpConvResBlock(512, 512),
-            UpConvResBlock(1024, 512),  # 512 + 512 = 1024 input channels
-            UpConvResBlock(768, 256),   # 512 + 256 = 768 input channels
-            UpConvResBlock(384, 128),   # 256 + 128 = 384 input channels
-            UpConvResBlock(256, 64)     # 128 + 128 = 256 input channels
+            UpConvResBlock(1024, 512),
+            UpConvResBlock(768, 256),
+            UpConvResBlock(384, 128),
+            UpConvResBlock(128, 64)
         ])
         
         self.feat_blocks = nn.ModuleList([
             nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
             nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(128) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])  # Changed from 64 to 128
+            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
         ])
         
         if use_attention:
             self.attention_layers = nn.ModuleList([
                 SelfAttention(512),
                 SelfAttention(256),
-                SelfAttention(128),
-                SelfAttention(128)  # Changed from 64 to 128
+                SelfAttention(128)
             ])
         
         self.final_conv = nn.Sequential(
@@ -59,26 +56,28 @@ class EnhancedFrameDecoder(nn.Module):
             x = self.upconv_blocks[i](x)
             debug_print(f"After upconv_block {i+1}: {x.shape}")
             
-            if i < len(features) - 1:  # Process all encoder features except the last one
-                debug_print(f"Processing feat_block {i+1}")
-                feat_input = features[-(i+2)]
-                debug_print(f"feat_block {i+1} input shape: {feat_input.shape}")
-                feat = self.feat_blocks[i](feat_input)
-                debug_print(f"feat_block {i+1} output shape: {feat.shape}")
-                
-                if self.use_attention:
-                    feat = self.attention_layers[i](feat)
-                    debug_print(f"After attention {i+1}, feat shape: {feat.shape}")
-                
-                debug_print(f"Concatenating: x {x.shape} and feat {feat.shape}")
-                x = torch.cat([x, feat], dim=1)
-                debug_print(f"After concatenation: {x.shape}")
+            # if i < len(self.feat_blocks):
+            debug_print(f"Processing feat_block {i+1}")
+            feat_input = features[-(i+2)]
+            debug_print(f"feat_block {i+1} input shape: {feat_input.shape}")
+            feat = self.feat_blocks[i](feat_input)
+            debug_print(f"feat_block {i+1} output shape: {feat.shape}")
+            
+            if self.use_attention:
+                feat = self.attention_layers[i](feat)
+                debug_print(f"After attention {i+1}, feat shape: {feat.shape}")
+            
+            debug_print(f"Concatenating: x {x.shape} and feat {feat.shape}")
+            x = torch.cat([x, feat], dim=1)
+            debug_print(f"After concatenation: {x.shape}")
         
         debug_print("\nApplying final convolution")
         x = self.final_conv(x)
         debug_print(f"EnhancedFrameDecoder final output shape: {x.shape}")
 
         return x
+
+
 class SelfAttention(nn.Module):
     def __init__(self, in_dim):
         super().__init__()
