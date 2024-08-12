@@ -277,7 +277,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                             )[0]
                             r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
                         
-                        fake_outputs = discriminator(x_reconstructed.detach()
+                        fake_outputs = discriminator(x_reconstructed.detach())
                         d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
 
                         # gradient penalty
