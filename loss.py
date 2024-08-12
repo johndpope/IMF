@@ -93,7 +93,12 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples):
     alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(real_samples.device)
     interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
     d_interpolates = discriminator(interpolates)
-    fake = torch.ones(real_samples.shape[0], 1).to(real_samples.device)
+    
+    # Handle the case where discriminator output is not a scalar
+    if d_interpolates.dim() > 2:
+        d_interpolates = d_interpolates.mean(dim=[2, 3])  # Average over spatial dimensions
+    
+    fake = torch.ones(d_interpolates.shape).to(real_samples.device)
     gradients = torch.autograd.grad(
         outputs=d_interpolates, inputs=interpolates,
         grad_outputs=fake, create_graph=True, retain_graph=True, only_inputs=True
