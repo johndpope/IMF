@@ -20,7 +20,9 @@ import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
 from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+# from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import StepLR
+
 import random
 from stylegan import EMA
 from torch.optim import AdamW, SGD
@@ -64,10 +66,12 @@ def get_layer_wise_learning_rates(model):
 
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
-    discriminator = ADADiscriminator(discriminator)
     # layerwise params - 
     layer_wise_params = get_layer_wise_learning_rates(model)
 
+    # stylegan2 ada augmentation
+    discriminator = ADADiscriminator(discriminator) if config.training.ada_augmentation else discriminator
+    
     # Generator optimizer
     optimizer_g = AdamW( layer_wise_params,
         lr=config.training.learning_rate_g,
@@ -83,8 +87,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
     )
 
     # dynamic learning rate
-    scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.25, patience=10, verbose=True)
-    scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.25, patience=10, verbose=True)
+    scheduler_g = StepLR(optimizer_g, step_size=30, gamma=0.5)
+    scheduler_d = StepLR(optimizer_d, step_size=30, gamma=0.5)
 
 
     # Make EMA conditional based on config
@@ -118,6 +122,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         video_repeat = get_video_repeat(epoch, config.training.num_epochs, 
                                         config.training.initial_video_repeat, 
                                         config.training.final_video_repeat)
+        use_ada = config.training.ada_augmentation
         
         model.train()
         discriminator.train()
@@ -254,9 +259,14 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         # Train Discriminator
                         optimizer_d.zero_grad()
                         
+                        # ADA
+                        if use_ada:
+                            real_outputs = discriminator(x_current, update_ada=True)
+                        else
+                            real_outputs = discriminator(x_current)
+                            
                         # R1 regularization
                         x_current.requires_grad = True
-                        real_outputs = discriminator(x_current)
                         r1_reg = 0
                         for real_output in real_outputs:
                             grad_real = torch.autograd.grad(

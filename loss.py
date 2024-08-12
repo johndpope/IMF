@@ -66,10 +66,18 @@ def vanilla_gan_loss(real_outputs, fake_outputs):
     fake_loss = sum(F.binary_cross_entropy_with_logits(out, torch.zeros_like(out)) for out in fake_outputs)
     return real_loss + fake_loss
 
+def feature_matching_loss(real_features, fake_features):
+    loss = 0
+    for r_feat, f_feat in zip(real_features, fake_features):
+        loss += F.mse_loss(r_feat.mean(0), f_feat.mean(0))
+    return loss
+    
 def gan_loss_fn(real_outputs, fake_outputs, loss_type):
     """
     Unified GAN loss function that can switch between different loss types.
     """
+    if loss_type == "feature_matching":
+        return feature_matching_loss(real_outputs, fake_outputs)
     if loss_type == "wasserstein":
         return wasserstein_loss(real_outputs, fake_outputs)
     elif loss_type == "hinge":
@@ -78,3 +86,6 @@ def gan_loss_fn(real_outputs, fake_outputs, loss_type):
         return vanilla_gan_loss(real_outputs, fake_outputs)
     else:
         raise ValueError(f"Unsupported loss type: {loss_type}")
+
+
+
