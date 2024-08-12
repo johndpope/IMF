@@ -490,7 +490,7 @@ class IMFModel(nn.Module):
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
-            align_layer = model.implicit_motion_alignment[i]
+            align_layer = self.implicit_motion_alignment[i]
             m_c_i = m_c[i] 
             m_r_i = m_r[i]
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
