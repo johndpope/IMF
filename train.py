@@ -262,7 +262,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         # ADA
                         if use_ada:
                             real_outputs = discriminator(x_current, update_ada=True)
-                        else
+                        else:
                             real_outputs = discriminator(x_current)
                             
                         # R1 regularization
