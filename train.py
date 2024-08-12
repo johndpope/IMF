@@ -9,7 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDiscriminator
+from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDiscriminator,ADADiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
@@ -64,6 +64,7 @@ def get_layer_wise_learning_rates(model):
 
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
+    discriminator = ADADiscriminator(discriminator)
     # layerwise params - 
     layer_wise_params = get_layer_wise_learning_rates(model)
 
@@ -316,10 +317,20 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     # Step the schedulers
                     scheduler_g.step(avg_g_loss)
                     scheduler_d.step(avg_d_loss)
+                    
+                    # Adjust ADA probability
+                    if (global_step + 1) % config.training.ada_interval == 0:
+                        discriminator.adjust_ada_p(
+                            target_r_t=config.training.ada_target_r_t,
+                            ada_kimg=config.training.ada_kimg,
+                            ada_interval=config.training.ada_interval,
+                            batch_size=config.training.batch_size
+                        )
                     # Logging
                     if accelerator.is_main_process:
                         # Existing logs
                         log_dict = {
+                            "ada_p": discriminator.get_ada_p(),
                             "ema": current_decay,
                             "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),

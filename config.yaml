@@ -20,6 +20,12 @@ training:
   initial_noise_magnitude: 0.01
   final_noise_magnitude: 0.0001 
 
+
+  ada_target_r_t: 0.6
+  ada_kimg: 500
+  ada_interval: 4
+
+  
   initial_video_repeat: 5
   final_video_repeat: 2
 

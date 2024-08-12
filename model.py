@@ -681,3 +681,76 @@ class MultiScalePatchDiscriminator(nn.Module):
         return [getattr(self, f'scale_{i}').parameters() for i in range(self.num_D)]
 
         
+
+class AugmentPipe(nn.Module):
+    def __init__(self, p=0.0):
+        super().__init__()
+        self.p = p
+
+    def forward(self, images):
+        if self.p == 0:
+            return images
+        
+        augmented = images.clone()
+        
+        # Color jittering
+        if random.random() < self.p:
+            augmented = torch.clip(augmented + (torch.rand_like(augmented) - 0.5) * 0.1, -1, 1)
+        
+        # Translation
+        if random.random() < self.p:
+            h_shift = int(random.uniform(-4, 4))
+            w_shift = int(random.uniform(-4, 4))
+            augmented = torch.roll(augmented, shifts=(h_shift, w_shift), dims=(2, 3))
+        
+        # Cutout
+        if random.random() < self.p:
+            batch_size, _, height, width = augmented.shape
+            mask = torch.ones_like(augmented)
+            for i in range(batch_size):
+                y = random.randint(0, height - 16)
+                x = random.randint(0, width - 16)
+                mask[i, :, y:y+16, x:x+16] = 0
+            augmented = augmented * mask
+        
+        return augmented
+
+class ADADiscriminator(nn.Module):
+    def __init__(self, base_discriminator):
+        super().__init__()
+        self.base_discriminator = base_discriminator
+        self.augment_pipe = AugmentPipe(p=0)
+        self.ada_stats = {'real_signs': [], 'fake_signs': []}
+
+    def forward(self, x, update_ada=False):
+        augmented_x = self.augment_pipe(x)
+        outputs = self.base_discriminator(augmented_x)
+        
+        if update_ada:
+            self.update_ada_stats(outputs)
+        
+        return outputs
+
+    def update_ada_stats(self, outputs):
+        for output in outputs:
+            signs = torch.sign(output).detach()
+            self.ada_stats['real_signs'].append(signs[signs > 0].mean().item())
+            self.ada_stats['fake_signs'].append(signs[signs <= 0].mean().item())
+
+    def adjust_ada_p(self, target_r_t=0.6, ada_kimg=500, ada_interval=4, batch_size=1):
+        if len(self.ada_stats['real_signs']) < ada_interval:
+            return
+
+        real_signs = torch.tensor(self.ada_stats['real_signs'][-ada_interval:])
+        fake_signs = torch.tensor(self.ada_stats['fake_signs'][-ada_interval:])
+
+        r_t = real_signs.mean().item()
+        adjust = torch.sign(r_t - target_r_t) * (batch_size * ada_interval) / (ada_kimg * 1000)
+        
+        self.augment_pipe.p = torch.clip(self.augment_pipe.p + adjust, 0, 1).item()
+
+        self.ada_stats['real_signs'] = []
+        self.ada_stats['fake_signs'] = []
+
+    def get_ada_p(self):
+        return self.augment_pipe.p
