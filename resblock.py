@@ -534,11 +534,200 @@ def test_resblock_with_image(resblock, image_tensor):
     
     print("ResBlock test with image passed successfully!")
 
+
+def visualize_resblock_rgb(block, input_tensor):
+    x = input_tensor
+    
+    # Get intermediate outputs
+    residual = block.shortcut(x)
+    conv1_out = block.conv1(x)
+    bn1_out = block.bn1(conv1_out)
+    relu1_out = block.relu(bn1_out)
+    conv2_out = block.conv2(relu1_out)
+    bn2_out = block.bn2(conv2_out)
+    dropout_out = block.dropout(bn2_out)
+    
+    skip_connection = dropout_out + residual
+    final_output = block.relu(skip_connection)
+    
+    outputs = [x, conv1_out, bn1_out, relu1_out, conv2_out, bn2_out, dropout_out, residual, skip_connection, final_output]
+    titles = ['Input', 'Conv1', 'BN1', 'ReLU1', 'Conv2', 'BN2', 'Dropout', 'Residual', 'Skip Connection', 'Final Output']
+    
+    fig, axs = plt.subplots(len(outputs), 4, figsize=(20, 4 * len(outputs)))
+    
+    for i, out in enumerate(outputs):
+        out_np = out[0].detach().cpu().numpy()
+        
+        # Display first three channels (or less if there are fewer channels)
+        for j in range(min(3, out_np.shape[0])):
+            channel = out_np[j]
+            channel = (channel - channel.min()) / (channel.max() - channel.min() + 1e-8)
+            
+            # Create RGB image with the channel value in the corresponding color channel
+            rgb_channel = np.zeros((channel.shape[0], channel.shape[1], 3))
+            rgb_channel[:, :, j] = channel
+            
+            axs[i, j].imshow(rgb_channel)
+            axs[i, j].axis('off')
+            axs[i, j].set_title(f'{titles[i]}\n{"RGB"[j]} Channel')
+        
+        # If there are fewer than 3 channels, hide the unused subplots
+        for j in range(out_np.shape[0], 3):
+            axs[i, j].axis('off')
+        
+        # Display combined representation
+        if out_np.shape[0] >= 3:
+            combined = np.stack([
+                out_np[0],
+                out_np[1] if out_np.shape[0] > 1 else np.zeros_like(out_np[0]),
+                out_np[2] if out_np.shape[0] > 2 else np.zeros_like(out_np[0])
+            ], axis=-1)
+        else:
+            combined = np.stack([out_np[0]] * 3, axis=-1)
+        
+        combined = (combined - combined.min()) / (combined.max() - combined.min() + 1e-8)
+        axs[i, 3].imshow(combined)
+        axs[i, 3].axis('off')
+        axs[i, 3].set_title(f'{titles[i]}\nCombined')
+
+    plt.tight_layout()
+    plt.show()
+
+def visualize_block_output(block, input_tensor, block_name, num_channels=4):
+    print(f"\nVisualizing {block_name}")
+    print(f"input_tensor: {input_tensor.shape}")
+    
+    x = input_tensor
+    
+    # Forward pass
+    output = block(x)
+    
+    # If the output is a tuple or list (e.g., for blocks that return multiple tensors)
+    if isinstance(output, (tuple, list)):
+        output = output[0]  # Visualize only the first tensor
+    
+    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
+
+    # Visualize input and output
+    fig, axs = plt.subplots(2, min(num_channels, output.shape[1]), figsize=(15, 8))
+    
+    # Display input channels
+    for j in range(min(num_channels, x.shape[1])):
+        ax = axs[0, j]
+        channel = x[0, j].detach().cpu().numpy()
+        channel = (channel - channel.min()) / (channel.max() - channel.min() + 1e-8)
+        ax.imshow(channel, cmap='viridis')
+        ax.set_title(f"Input Channel {j}")
+        ax.axis('off')
+    
+    # Display output channels
+    for j in range(min(num_channels, output.shape[1])):
+        ax = axs[1, j]
+        channel = output[0, j].detach().cpu().numpy()
+        channel = (channel - channel.min()) / (channel.max() - channel.min() + 1e-8)
+        ax.imshow(channel, cmap='viridis')
+        ax.set_title(f"Output Channel {j}")
+        ax.axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+
+    print(f"{block_name} visualization complete!")
+
+
+def visualize_block_output_rgb(block, input_tensor, block_name, num_channels=4):
+    print(f"\nVisualizing {block_name}")
+    x = input_tensor
+    
+    # Forward pass
+    with torch.no_grad():
+        output = block(x)
+    
+    # If the output is a tuple or list (e.g., for blocks that return multiple tensors)
+    if isinstance(output, (tuple, list)):
+        output = output[0]  # Visualize only the first tensor
+    
+    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
+
+    # Visualize input and output
+    fig, axs = plt.subplots(2, min(num_channels, max(x.shape[1], output.shape[1])), figsize=(20, 10))
+    
+    def visualize_channels(tensor, row):
+        for j in range(min(num_channels, tensor.shape[1])):
+            ax = axs[row, j]
+            channel = tensor[0, j].detach().cpu().numpy()
+            channel = (channel - channel.min()) / (channel.max() - channel.min() + 1e-8)
+            
+            # Create RGB image with the channel value in the corresponding color channel
+            rgb_channel = np.zeros((channel.shape[0], channel.shape[1], 3))
+            if j < 3:
+                rgb_channel[:, :, j] = channel
+            else:
+                # For channels beyond the first 3, use grayscale
+                rgb_channel[:, :, :] = channel[:, :, np.newaxis]
+            
+            ax.imshow(rgb_channel)
+            ax.set_title(f"{'Input' if row == 0 else 'Output'} Channel {j}")
+            ax.axis('off')
+    
+    # Display input channels
+    visualize_channels(x, 0)
+    
+    # Display output channels
+    visualize_channels(output, 1)
+    
+    plt.tight_layout()
+    plt.show()
+
+    print(f"{block_name} visualization complete!")
+
+def visualize_latent_token(token, save_path):
+    """
+    Visualize a 1D latent token as a colorful bar.
+    
+    Args:
+    token (torch.Tensor): A 1D tensor representing the latent token.
+    save_path (str): Path to save the visualization.
+    """
+    # Ensure the token is on CPU and convert to numpy
+    token_np = token.cpu().detach().numpy()
+    
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(10, 0.5))
+    
+    # Normalize the token values to [0, 1] for colormap
+    token_normalized = (token_np - token_np.min()) / (token_np.max() - token_np.min())
+    
+    # Create a colorful representation
+    cmap = plt.get_cmap('viridis')
+    colors = cmap(token_normalized)
+    
+    # Plot the token as a colorful bar
+    ax.imshow(colors.reshape(1, -1, 4), aspect='auto')
+    
+    # Remove axes
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Add a title
+    plt.title(f"Latent Token (dim={len(token_np)})")
+    
+    # Save the figure
+    plt.savefig(save_path, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+
 if __name__ == "__main__":
+
 
        # Load the image
     image_path = "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/0H5fm71cs4A_11/000000.png"
     image_tensor = load_and_preprocess_image(image_path)
+
+    # Create a ResBlock
+    resblock = ResBlock(3, 64, downsample=True)
+
+    # Visualize the ResBlock
+    visualize_resblock(resblock, image_tensor)
 
     # Run all tests with the image tensor
     upconv = UpConvResBlock(3, 64)
@@ -579,8 +768,27 @@ if __name__ == "__main__":
     test_resblock_with_image(resblock_down, image_tensor)
 
 
-    styledconv = StyledConv(3, 64, 3, 32, upsample=True)
-    latent = torch.randn(image_tensor.shape[0], 32)
-    test_styledconv(styledconv, image_tensor, latent)
-    visualize_feature_maps(styledconv, image_tensor, num_channels=4, latent_dim=32)
+
+# BROKEN
+    # styledconv = StyledConv(3, 64, 3, 32, upsample=True)
+    # latent = torch.randn(image_tensor.shape[0], 32)
+    # test_styledconv(styledconv, image_tensor, latent)
+    # visualize_feature_maps(styledconv, image_tensor, num_channels=4, latent_dim=32)
     
+
+#     upconv = UpConvResBlock(64, 128)
+# test_input = torch.randn(1, 64, 32, 32)
+# visualize_block_output(upconv, test_input, "UpConvResBlock")
+
+# downconv = DownConvResBlock(128, 64)
+# test_input = torch.randn(1, 128, 32, 32)
+# visualize_block_output(downconv, test_input, "DownConvResBlock")
+
+# featres = FeatResBlock(64)
+# test_input = torch.randn(1, 64, 32, 32)
+# visualize_block_output(featres, test_input, "FeatResBlock")
+
+# styledconv = StyledConv(64, 128, 3, 32)
+# test_input = torch.randn(1, 64, 32, 32)
+# latent = torch.randn(1, 32)
+# visualize_block_output(lambda x: styledconv(x, latent), test_input, "StyledConv")

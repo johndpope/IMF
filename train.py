@@ -9,7 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from model import IMFModel, debug_print,MultiScalePatchDiscriminator
+from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDiscriminator
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
@@ -19,7 +19,7 @@ from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
-from loss import LPIPSPerceptualLoss,VGGPerceptualLoss,wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
+from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
 from vggloss import VGGLoss
@@ -273,7 +273,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
 
                         # Clip gradients
-                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=1.0)
+                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
                         
                         accelerator.backward(d_loss)
                         optimizer_d.step()
@@ -294,7 +294,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         # C. Optimization
                         accelerator.backward(g_loss)
                         # Clip gradients
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.training.clip_grad_norm)
                         optimizer_g.step()
 
 
@@ -417,9 +417,10 @@ def main():
     
     add_gradient_hooks(model)
 
-    # discriminator = PatchDiscriminator(ndf=config.discriminator.ndf) Original
-    discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
-
+    d0 = IMFPatchDiscriminator(ndf=config.discriminator.ndf) 
+    d1 = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
+    discriminator = d1 if config.training.use_multiscale_discriminator else do
+    
     add_gradient_hooks(discriminator)
 
     transform = transforms.Compose([

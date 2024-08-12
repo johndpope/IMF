@@ -9,6 +9,8 @@ model:
   use_skip: False
 # Training parameters
 training:
+  
+  use_multiscale_discriminator: False
   initial_video_repeat: 5
   final_video_repeat: 2
   use_ema: False
@@ -31,7 +33,7 @@ training:
   lambda_gp: 10  # Gradient penalty coefficient
   lambda_mse: 1.0
   n_critic: 2  # Number of discriminator updates per generator update
-  clip_grad_norm: 1.0  # Maximum norm for gradient clipping
+  clip_grad_norm: 0.5  # Maximum norm for gradient clipping
   r1_gamma: 10
   r1_interval: 16
   label_smoothing: 0.1
@@ -84,7 +86,7 @@ optimizer:
 
 # Loss function
 loss:
-  type: "wasserstein"  # Changed to Wasserstein loss for WGAN-GP
+  type: "vanilla"  # Changed to Wasserstein loss for WGAN-GP
   weights:
       perceptual: [10, 10, 10, 10, 10]
       equivariance_shift: 10
