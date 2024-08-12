@@ -12,26 +12,6 @@ def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
 
-# class UpConvResBlock(nn.Module):
-#     def __init__(self, in_channels, out_channels):
-#         super().__init__()
-#         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-#         self.bn1 = nn.BatchNorm2d(out_channels)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-#         self.feat_res_block1 = FeatResBlock(out_channels)
-#         self.feat_res_block2 = FeatResBlock(out_channels)
-
-#     def forward(self, x):
-#         x = self.upsample(x)
-#         x = self.conv1(x)
-#         x = self.bn1(x)
-#         x = self.relu(x)
-#         x = self.conv2(x)
-#         x = self.feat_res_block1(x)
-#         x = self.feat_res_block2(x)
-#         return x
 
 
 # class DownConvResBlock(nn.Module):
@@ -131,36 +111,25 @@ def debug_print(*args, **kwargs):
     
 
 class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, dropout_rate=0.1):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
         self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.dropout = nn.Dropout2d(dropout_rate)
-        
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
-        
-        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
         x = self.upsample(x)
-        residual = self.residual_conv(x)
-        
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = out + residual
-        out = self.relu(out)
-        out = self.dropout(out)
-        out = self.feat_res_block1(out)
-        out = self.feat_res_block2(out)
-        return out
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.feat_res_block1(x)
+        x = self.feat_res_block2(x)
+        return x
 
 
 
