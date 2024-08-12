@@ -220,20 +220,6 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         m_c = model.latent_token_decoder(mix_t_c)
                         m_r = model.latent_token_decoder(mix_t_r)
 
-
-                        # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
-                        # if batch_idx % config.logging.visualize_every == 0:
-                        #     os.makedirs(f"latent_visualizations/epoch_{epoch}", exist_ok=True)
-                        #     visualize_latent_token(
-                        #         t_r,  # Visualize the first token in the batch
-                        #         f"latent_visualizations/epoch_{epoch}/t_r_token_reference_batch{batch_idx}.png"
-                        #     )
-                        #     visualize_latent_token(
-                        #         m_c[0],  # Visualize the first token in the batch
-                        #         f"latent_visualizations/epoch_{epoch}/m_c_token_current_batch{batch_idx}.png"
-                        #     )
-
-
                         # 4. Implicit Motion Alignment
                         # Implicit Motion Alignment
                         aligned_features = []
@@ -348,7 +334,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     if accelerator.is_main_process:
                         # Existing logs
                         log_dict = {
-                            "ada_p": discriminator.get_ada_p(),
+                            "ada_p": discriminator.get_ada_p() if use_ada else 0,
                             "ema": current_decay,
                             "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),
