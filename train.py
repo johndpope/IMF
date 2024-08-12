@@ -22,6 +22,7 @@ import torchvision.models as models
 from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 import random
 from stylegan import EMA
@@ -87,9 +88,10 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
     )
 
     # dynamic learning rate
-    scheduler_g = StepLR(optimizer_g, step_size=30, gamma=0.5)
-    scheduler_d = StepLR(optimizer_d, step_size=30, gamma=0.5)
-
+    # scheduler_g = StepLR(optimizer_g, step_size=30, gamma=0.5)
+    # scheduler_d = StepLR(optimizer_d, step_size=30, gamma=0.5)
+    scheduler_g = CosineAnnealingLR(optimizer_g, T_max=100, eta_min=1e-6)
+    scheduler_d = CosineAnnealingLR(optimizer_d, T_max=100, eta_min=1e-6)
 
     # Make EMA conditional based on config
     if config.training.use_ema:
@@ -259,14 +261,14 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         # Train Discriminator
                         optimizer_d.zero_grad()
                         
-                        # ADA
+                      
+                        x_current.requires_grad = True
                         if use_ada:
                             real_outputs = discriminator(x_current, update_ada=True)
                         else:
                             real_outputs = discriminator(x_current)
                             
                         # R1 regularization
-                        x_current.requires_grad = True
                         r1_reg = 0
                         for real_output in real_outputs:
                             grad_real = torch.autograd.grad(

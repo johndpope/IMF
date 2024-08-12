@@ -14,7 +14,7 @@ model:
 # Training parameters
 training:
   use_multiscale_discriminator: True
-  ada_augmentation: True
+  ada_augmentation: False
   use_ema: False
   ema_decay: 0.999
   style_mixing_prob: 0.9
