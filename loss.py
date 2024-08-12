@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 import torch.nn.functional as F
-from model import debug_#print
+from model import debug_print
 import lpips
 
 # Wasserstein Loss:
