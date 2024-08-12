@@ -1,3 +1,7 @@
+# Loss function
+loss:
+  type: "vanilla"  # Changed to Wasserstein loss for WGAN-GP
+
 # Model parameters
 model:
   latent_dim: 32
@@ -5,11 +9,14 @@ model:
   num_layers: 4
   use_resnet_feature: False
   use_mlgffn: False
-  use_enhanced_generator: False
+  use_enhanced_generator: True
   use_skip: False
 # Training parameters
 training:
-  
+  ema_decay: 0.999
+  style_mixing_prob: 0.9
+  initial_noise_magnitude: 0.01
+  final_noise_magnitude: 0.0001 
   use_multiscale_discriminator: False
   initial_video_repeat: 5
   final_video_repeat: 2
@@ -22,10 +29,7 @@ training:
   initial_learning_rate_d: 1.0e-4  # Set a lower initial learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
-  ema_decay: 0.999
-  style_mixing_prob: 0.9
-  initial_noise_magnitude: 0.01
-  final_noise_magnitude: 0.001
+
   gradient_accumulation_steps: 1
   lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10
@@ -84,12 +88,5 @@ optimizer:
   beta1: 0.5
   beta2: 0.999
 
-# Loss function
-loss:
-  type: "vanilla"  # Changed to Wasserstein loss for WGAN-GP
-  weights:
-      perceptual: [10, 10, 10, 10, 10]
-      equivariance_shift: 10
-      equivariance_affine: 10
 
 

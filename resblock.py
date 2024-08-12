@@ -696,12 +696,16 @@ if __name__ == "__main__":
     resblock = ResBlock(3, 64, downsample=True)
 
     # Visualize the ResBlock
-    visualize_resblock(resblock, image_tensor)
+    visualize_resblock_rgb(resblock, image_tensor)
+
+
+    upconv = UpConvResBlock(64, 128)
+    visualize_block_output(upconv, image_tensor, "UpConvResBlock")
 
     # Run all tests with the image tensor
-    upconv = UpConvResBlock(3, 64)
-    test_upconvresblock(upconv, image_tensor)
-    visualize_feature_maps(upconv, image_tensor)
+    # upconv = UpConvResBlock(3, 64)
+    # test_upconvresblock(upconv, image_tensor)
+    # visualize_feature_maps(upconv, image_tensor)
 
     downconv = DownConvResBlock(3, 64)
     test_downconvresblock(downconv, image_tensor)

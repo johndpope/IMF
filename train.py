@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDis
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import log_loss_landscape,log_grad_flow,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
+from helper import log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
