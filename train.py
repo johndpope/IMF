@@ -22,7 +22,6 @@ import torchvision.models as models
 from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import random
-from vggloss import VGGLoss
 from stylegan import EMA
 from torch.optim import AdamW, SGD
 from transformers import Adafactor
