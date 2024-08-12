@@ -171,8 +171,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
 
                         x_reconstructed = model(x_current,x_reference,style_mixing_prob,noise_magnitude)
-                        x_reconstructed = normalize(x_reconstructed)
-
+                        
                         # B. Loss Calculation
                         # 1. Pixel-wise Loss
                         l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
