@@ -56,20 +56,20 @@ class EnhancedFrameDecoder(nn.Module):
             x = self.upconv_blocks[i](x)
             debug_print(f"After upconv_block {i+1}: {x.shape}")
             
-            # if i < len(self.feat_blocks):
-            debug_print(f"Processing feat_block {i+1}")
-            feat_input = features[-(i+2)]
-            debug_print(f"feat_block {i+1} input shape: {feat_input.shape}")
-            feat = self.feat_blocks[i](feat_input)
-            debug_print(f"feat_block {i+1} output shape: {feat.shape}")
-            
-            if self.use_attention:
-                feat = self.attention_layers[i](feat)
-                debug_print(f"After attention {i+1}, feat shape: {feat.shape}")
-            
-            debug_print(f"Concatenating: x {x.shape} and feat {feat.shape}")
-            x = torch.cat([x, feat], dim=1)
-            debug_print(f"After concatenation: {x.shape}")
+            if i < len(self.feat_blocks):
+                debug_print(f"Processing feat_block {i+1}")
+                feat_input = features[-(i+2)]
+                debug_print(f"feat_block {i+1} input shape: {feat_input.shape}")
+                feat = self.feat_blocks[i](feat_input)
+                debug_print(f"feat_block {i+1} output shape: {feat.shape}")
+                
+                if self.use_attention:
+                    feat = self.attention_layers[i](feat)
+                    debug_print(f"After attention {i+1}, feat shape: {feat.shape}")
+                
+                debug_print(f"Concatenating: x {x.shape} and feat {feat.shape}")
+                x = torch.cat([x, feat], dim=1)
+                debug_print(f"After concatenation: {x.shape}")
         
         debug_print("\nApplying final convolution")
         x = self.final_conv(x)
