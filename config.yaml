@@ -1,7 +1,7 @@
 # Loss function
 loss:
   type: "vanilla"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
-  lpips_spatial: False
+  lpips_spatial: True
 # Model parameters
 model:
   latent_dim: 32
