@@ -19,7 +19,7 @@ from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
-from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
+from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn,compute_gradient_penalty
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import StepLR
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -52,6 +52,7 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
     float: Calculated noise magnitude for the current epoch
     """
     return max(final_magnitude, initial_magnitude - (initial_magnitude - final_magnitude) * (epoch / max_epochs))
+
 
 def get_layer_wise_learning_rates(model):
     params = []
@@ -276,9 +277,13 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                             )[0]
                             r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
                         
-                        fake_outputs = discriminator(x_reconstructed.detach())
+                        fake_outputs = discriminator(x_reconstructed.detach()
                         d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
 
+                        # gradient penalty
+                        gradient_penalty = compute_gradient_penalty(discriminator, x_current, x_reconstructed.detach())
+                        d_loss = d_loss + config.training.lambda_gp * gradient_penalty
+                       
                         # Add R1 regularization to the discriminator loss
                         d_loss = d_loss + r1_gamma * r1_reg
 
@@ -332,12 +337,13 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     
                     # Adjust ADA probability
                     if (global_step + 1) % config.training.ada_interval == 0:
-                        discriminator.adjust_ada_p(
-                            target_r_t=config.training.ada_target_r_t,
-                            ada_kimg=config.training.ada_kimg,
-                            ada_interval=config.training.ada_interval,
-                            batch_size=config.training.batch_size
-                        )
+                        if use_ada:
+                            discriminator.adjust_ada_p(
+                                target_r_t=config.training.ada_target_r_t,
+                                ada_kimg=config.training.ada_kimg,
+                                ada_interval=config.training.ada_interval,
+                                batch_size=config.training.batch_size
+                            )
                     # Logging
                     if accelerator.is_main_process:
                         # Existing logs

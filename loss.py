@@ -71,7 +71,7 @@ def feature_matching_loss(real_features, fake_features):
     for r_feat, f_feat in zip(real_features, fake_features):
         loss += F.mse_loss(r_feat.mean(0), f_feat.mean(0))
     return loss
-    
+
 def gan_loss_fn(real_outputs, fake_outputs, loss_type):
     """
     Unified GAN loss function that can switch between different loss types.
@@ -89,3 +89,15 @@ def gan_loss_fn(real_outputs, fake_outputs, loss_type):
 
 
 
+def compute_gradient_penalty(discriminator, real_samples, fake_samples):
+    alpha = torch.rand(real_samples.size(0), 1, 1, 1).to(real_samples.device)
+    interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
+    d_interpolates = discriminator(interpolates)
+    fake = torch.ones(real_samples.shape[0], 1).to(real_samples.device)
+    gradients = torch.autograd.grad(
+        outputs=d_interpolates, inputs=interpolates,
+        grad_outputs=fake, create_graph=True, retain_graph=True, only_inputs=True
+    )[0]
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
