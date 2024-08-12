@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 from resblock import UpConvResBlock,FeatResBlock
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -14,29 +14,34 @@ class EnhancedFrameDecoder(nn.Module):
         
         self.use_attention = use_attention
         
+        # Updated channel counts to match concatenated features
         self.upconv_blocks = nn.ModuleList([
-            UpConvResBlock(512, 512),
-            UpConvResBlock(1024, 512),
-            UpConvResBlock(768, 256),
-            UpConvResBlock(384, 128),
-            UpConvResBlock(128, 64)
+            UpConvResBlock(512, 256),
+            UpConvResBlock(512, 256),
+            UpConvResBlock(512, 128),
+            UpConvResBlock(256, 64),
+            UpConvResBlock(128, 32)
         ])
         
+        # Added an additional FeatResBlock for the last encoder features
         self.feat_blocks = nn.ModuleList([
             nn.Sequential(*[FeatResBlock(512) for _ in range(3)]),
             nn.Sequential(*[FeatResBlock(256) for _ in range(3)]),
-            nn.Sequential(*[FeatResBlock(128) for _ in range(3)])
+            nn.Sequential(*[FeatResBlock(128) for _ in range(3)]),
+            nn.Sequential(*[FeatResBlock(64) for _ in range(3)])
         ])
         
         if use_attention:
+            # Added an additional attention layer
             self.attention_layers = nn.ModuleList([
                 SelfAttention(512),
                 SelfAttention(256),
-                SelfAttention(128)
+                SelfAttention(128),
+                SelfAttention(64)
             ])
         
         self.final_conv = nn.Sequential(
-            nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(32, 3, kernel_size=3, stride=1, padding=1),
             nn.Sigmoid()
         )
         
@@ -56,7 +61,7 @@ class EnhancedFrameDecoder(nn.Module):
             x = self.upconv_blocks[i](x)
             debug_print(f"After upconv_block {i+1}: {x.shape}")
             
-            if i < len(self.feat_blocks):
+            if i < len(features) - 1:  # Process all encoder features
                 debug_print(f"Processing feat_block {i+1}")
                 feat_input = features[-(i+2)]
                 debug_print(f"feat_block {i+1} input shape: {feat_input.shape}")
@@ -76,8 +81,6 @@ class EnhancedFrameDecoder(nn.Module):
         debug_print(f"EnhancedFrameDecoder final output shape: {x.shape}")
 
         return x
-
-
 class SelfAttention(nn.Module):
     def __init__(self, in_dim):
         super().__init__()
