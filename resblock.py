@@ -120,16 +120,24 @@ class UpConvResBlock(nn.Module):
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
-
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.dropout = nn.Dropout2d(dropout_rate)        
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        
     def forward(self, x):
-        x = self.upsample(x)
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.feat_res_block1(x)
-        x = self.feat_res_block2(x)
-        return x
+        residual = self.residual_conv(x)
+        
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = out + residual
+        out = self.relu(out)
+        out = self.dropout(out)
+        out = self.feat_res_block1(out)
+        out = self.feat_res_block2(out)
+        return out
 
 
 
@@ -696,16 +704,12 @@ if __name__ == "__main__":
     resblock = ResBlock(3, 64, downsample=True)
 
     # Visualize the ResBlock
-    visualize_resblock_rgb(resblock, image_tensor)
-
-
-    upconv = UpConvResBlock(64, 128)
-    visualize_block_output(upconv, image_tensor, "UpConvResBlock")
+    visualize_resblock(resblock, image_tensor)
 
     # Run all tests with the image tensor
-    # upconv = UpConvResBlock(3, 64)
-    # test_upconvresblock(upconv, image_tensor)
-    # visualize_feature_maps(upconv, image_tensor)
+    upconv = UpConvResBlock(3, 64)
+    test_upconvresblock(upconv, image_tensor)
+    visualize_feature_maps(upconv, image_tensor)
 
     downconv = DownConvResBlock(3, 64)
     test_downconvresblock(downconv, image_tensor)
