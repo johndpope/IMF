@@ -13,7 +13,10 @@ model:
   use_skip: False
 # Training parameters
 training:
-  g_updates_per_d_update: 3
+  use_r1_reg: True
+  r1_gamma: 10
+  r1_interval: 16
+
   use_multiscale_discriminator: True
   ada_augmentation: False
   ada_target_r_t: 0.6
@@ -34,7 +37,7 @@ training:
   initial_video_repeat: 5
   final_video_repeat: 2
 
-  use_r1_reg: True
+
   batch_size: 1 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
 
@@ -50,10 +53,7 @@ training:
 
 
   clip_grad_norm: 0.75  # Maximum norm for gradient clipping
-  r1_gamma: 10
-  r1_interval: 16
-
-
+ 
 
   every_xref_frames: 16
   use_many_xrefs: False
