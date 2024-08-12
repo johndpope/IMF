@@ -104,7 +104,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
     # Loss functions
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
+    perceptual_loss_fn = lpips.LPIPS(net='alex',spatial=config.loss.lpips_spatial).to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
 
     # Training parameters
