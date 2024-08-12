@@ -1,6 +1,6 @@
 # Loss function
 loss:
-  type: "hinge"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
+  type: "vanilla"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
 
 # Model parameters
 model:
@@ -25,7 +25,7 @@ training:
   ada_kimg: 500
   ada_interval: 4
 
-  
+
   initial_video_repeat: 5
   final_video_repeat: 2
 
