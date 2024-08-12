@@ -46,9 +46,9 @@ training:
 
   gradient_accumulation_steps: 1
 
-  lambda_pixel: 10  # in paper lambda-pixel = 10 
   lambda_perceptual: 10 # lambda perceptual = 10
-  lambda_adv: 1 # adverserial = 1
+  lambda_pixel: 5  # in paper lambda-pixel = 10 
+  lambda_adv: 0.5 # 1 # Can sometimes lead to artifacts if weighted too heavily
   lambda_gp: 10  # Gradient penalty coefficient
 
 
