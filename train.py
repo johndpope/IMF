@@ -151,10 +151,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         x_current = source_frames[:, current_idx]
                         x_reconstructed = model(x_current, x_reference, style_mixing_prob, noise_magnitude)
                         
-                        # Pixel-wise Loss
+                        # Compute losses that don't require gradients
                         l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
-
-                        # Perceptual Loss
                         l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
 
                         # Train Discriminator
@@ -162,21 +160,25 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         
                         x_current.requires_grad = True
                         real_outputs = discriminator(x_current, update_ada=use_ada)
-                            
-                        # R1 regularization
-                        r1_reg = 0
-                        for real_output in real_outputs:
-                            grad_real = torch.autograd.grad(
-                                outputs=real_output.sum(), inputs=x_current, create_graph=True
-                            )[0]
-                            r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
-                        
                         fake_outputs = discriminator(x_reconstructed.detach())
+                        
+                        # Compute discriminator loss
                         d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
+                        
+                        # R1 regularization
+                        if r1_gamma > 0:
+                            r1_reg = 0
+                            for real_output in real_outputs:
+                                grad_real = torch.autograd.grad(
+                                    outputs=real_output.sum(), inputs=x_current, create_graph=True
+                                )[0]
+                                r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+                            d_loss = d_loss + r1_gamma * r1_reg
 
                         # Gradient penalty
-                        gradient_penalty = compute_gradient_penalty(discriminator, x_current, x_reconstructed.detach())
-                        d_loss = d_loss + config.training.lambda_gp * gradient_penalty + r1_gamma * r1_reg
+                        if config.training.lambda_gp > 0:
+                            gradient_penalty = compute_gradient_penalty(discriminator, x_current, x_reconstructed.detach())
+                            d_loss = d_loss + config.training.lambda_gp * gradient_penalty
 
                         accelerator.backward(d_loss)
                         torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
@@ -184,6 +186,9 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                         # Train Generator
                         optimizer_g.zero_grad()
+                        
+                        # Recompute fake outputs for generator training
+                        fake_outputs = discriminator(x_reconstructed)
                         g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
 
                         g_loss = (config.training.lambda_pixel * l_p +
@@ -216,22 +221,22 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                                 batch_size=config.training.batch_size
                             )
                         
-                        if accelerator.is_main_process:
-                            log_dict = {
-                                "ada_p": discriminator.get_ada_p() if use_ada else 0,
-                                "ema": current_decay,
-                                "noise_magnitude": noise_magnitude,
-                                "batch_g_loss": g_loss.item(),
-                                "batch_d_loss": d_loss.item(),
-                                "pixel_loss": l_p.item(),
-                                "perceptual_loss": l_v.item(),
-                                "gan_loss": g_loss_gan.item(),
-                                "global_step": global_step,
-                            }
-                            wandb.log(log_dict)
+                    if accelerator.is_main_process:
+                        log_dict = {
+                            "ada_p": discriminator.get_ada_p() if use_ada else 0,
+                            "ema": current_decay,
+                            "noise_magnitude": noise_magnitude,
+                            "batch_g_loss": g_loss.item(),
+                            "batch_d_loss": d_loss.item(),
+                            "pixel_loss": l_p.item(),
+                            "perceptual_loss": l_v.item(),
+                            "gan_loss": g_loss_gan.item(),
+                            "global_step": global_step,
+                        }
+                        wandb.log(log_dict)
 
-                        progress_bar.update(1)
-                        progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+                    progress_bar.update(1)
+                    progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
             if accelerator.is_main_process and batch_idx % config.logging.log_every == 0:
                 log_grad_flow(model.named_parameters(), global_step)
