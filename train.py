@@ -102,7 +102,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
+    perceptual_loss_fn = lpips.LPIPS(net='alex',spatial=True).to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
 
