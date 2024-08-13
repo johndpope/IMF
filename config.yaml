@@ -31,7 +31,7 @@ training:
 
   use_ema: False
   ema_decay: 0.999
-  style_mixing_prob: 0.9
+  style_mixing_prob: 0.5
   initial_noise_magnitude: 0.01
   final_noise_magnitude: 0.0001 
 
