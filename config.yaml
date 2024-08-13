@@ -17,7 +17,7 @@ model:
 # Training parameters
 training:
 
-  weight_decay: 1e-5 # lower maybe more stable??
+  weight_decay: 1e-4 # lower maybe more stable??
 
   use_r1_reg: False
   r1_gamma: 10
