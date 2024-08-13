@@ -31,10 +31,10 @@ training:
 
   initial_update_ratio: 1
   update_ratio_adjustment: 0.1
-  
+
  
 
-  initial_video_repeat: 5
+  initial_video_repeat: 6
   final_video_repeat: 2
 
 
