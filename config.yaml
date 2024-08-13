@@ -19,7 +19,7 @@ training:
 
   weight_decay: 1e-4 # lower maybe more stable??
 
-  use_r1_reg: False
+  use_r1_reg: True
   r1_gamma: 10
   r1_interval: 16
 
