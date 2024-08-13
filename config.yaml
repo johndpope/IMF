@@ -23,7 +23,7 @@ training:
   ada_kimg: 500
   ada_interval: 4
 
-  use_ema: False
+  use_ema: True
   ema_decay: 0.999
   style_mixing_prob: 0.9
   initial_noise_magnitude: 0.01
