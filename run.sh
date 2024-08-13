@@ -13,5 +13,6 @@ else
     # echo "Test passed (micro-commit)...."
     git add .
     git commit -m "🧗"
+    cat config.yaml
     python train.py
 fi
