@@ -9,21 +9,24 @@ model:
   num_layers: 4
   use_resnet_feature: False
   use_mlgffn: False
-  use_enhanced_generator: True
+  use_enhanced_generator: False
   use_skip: False
 # Training parameters
 training:
-  use_r1_reg: True
+
+  weight_decay: 1e-5 # lower maybe more stable??
+
+  use_r1_reg: False
   r1_gamma: 10
   r1_interval: 16
 
-  use_multiscale_discriminator: True
+  use_multiscale_discriminator: False
   ada_augmentation: False
   ada_target_r_t: 0.6
   ada_kimg: 500
   ada_interval: 4
 
-  use_ema: True
+  use_ema: False
   ema_decay: 0.999
   style_mixing_prob: 0.9
   initial_noise_magnitude: 0.01
@@ -59,7 +62,7 @@ training:
   use_many_xrefs: False
 
 
-  weight_decay: 1e-5
+
 
 # Dataset parameters
 dataset:
