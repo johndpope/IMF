@@ -1,1 +1,11 @@
 git+https://github.com/johndpope/colored-traceback.py.git
+
+torch
+torchvision
+tqdm
+wandb
+PyYAML
+accelerate
+omegaconf
+lpips
+transformers
