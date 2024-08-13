@@ -412,16 +412,20 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_skip=False,use_enhanced_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
+    def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_skip=False,image_size=256,use_enhanced_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
-        self.encoder_dims = [64, 128, 256, 512]
+
+
+        # Adjust your encoder dimensions based on the new image size
+        self.encoder_dims = [64, 128, 256, 512] if image_size == 256 else [32, 64, 128, 256]
+        self.output_channels = [128, 256, 512, 512,512, 512] if image_size == 256 else [64, 128, 256, 256,256, 256]
         self.latent_token_encoder = LatentTokenEncoder(
-            initial_channels=64,
-            output_channels=[128, 256, 512, 512,512, 512],
+            initial_channels=self.encoder_dims[0],
+            output_channels=self.output_channels,
             dm=32
         ) 
-        self.motion_dims = [128, 256, 512, 512] 
+        self.motion_dims = [128, 256, 512, 512] if image_size == 256 else [64, 128, 256, 256] 
         self.latent_token_decoder = LatentTokenDecoder()
        
         FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder

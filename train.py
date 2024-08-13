@@ -330,7 +330,8 @@ def main():
         use_resnet_feature=config.model.use_resnet_feature,
         use_mlgffn=config.model.use_mlgffn,
         use_enhanced_generator=config.model.use_enhanced_generator,
-        use_skip=config.model.use_skip
+        use_skip=config.model.use_skip,
+        image_size=config.data.image_size
     )
     
     add_gradient_hooks(model)
@@ -342,7 +343,7 @@ def main():
     add_gradient_hooks(discriminator)
 
     transform = transforms.Compose([
-        transforms.Resize((256, 256)),
+        transforms.Resize((config.data.image_size, config.data.image_size)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
