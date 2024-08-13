@@ -220,7 +220,9 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                                 ada_interval=config.training.ada_interval,
                                 batch_size=config.training.batch_size
                             )
-                        
+                        progress_bar.update(1)
+                        progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+
                     if accelerator.is_main_process:
                         log_dict = {
                             "ada_p": discriminator.get_ada_p() if use_ada else 0,
@@ -235,9 +237,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         }
                         wandb.log(log_dict)
 
-                    progress_bar.update(1)
-                    progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
-
+               
             if accelerator.is_main_process and batch_idx % config.logging.log_every == 0:
                 log_grad_flow(model.named_parameters(), global_step)
                 log_grad_flow(discriminator.named_parameters(), global_step)
