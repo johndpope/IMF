@@ -6,7 +6,7 @@ from accelerate import Accelerator
 from tqdm.auto import tqdm
 import wandb
 from model import IMFModel, MultiScalePatchDiscriminator,IMFPatchDiscriminator,ADADiscriminator
-from VideoDataset import VideoDataset
+from VideoDataset import VideoDataset,gpu_padded_collate
 from helper import log_grad_flow,count_model_params, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
