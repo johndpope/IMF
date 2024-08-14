@@ -1,0 +1,425 @@
+import pickle
+
+import matplotlib.pyplot as plt
+from torch_relu_kan import ReLUKANLayer, ReLUKAN
+import torch
+import numpy as np
+from tqdm import tqdm
+
+
+# %% 测试类
+class Train:
+    def __init__(self, f, width, g, k):
+        self.cuda = torch.cuda.is_available()
+        self.relu_kan = ReLUKAN(width, g, k)
+        self.f = f
+
+        self.input_size = width[0]
+        self.train_xs = np.random.random([1000, self.input_size, 1])
+        self.train_ys = f(self.train_xs)
+        self.test_xs = np.random.random([100, self.input_size, 1])
+        self.test_ys = f(self.test_xs)
+
+        self.train_xs = torch.Tensor(self.train_xs)
+        self.train_ys = torch.Tensor(self.train_ys)
+        self.test_xs = torch.Tensor(self.test_xs)
+        self.test_ys = torch.Tensor(self.test_ys)
+
+        self.train_loss = []
+        self.test_loss = []
+
+        if self.cuda:
+            self.train_xs = self.train_xs.cuda()
+            self.train_ys = self.train_ys.cuda()
+            self.test_xs = self.test_xs.cuda()
+            self.test_ys = self.test_ys.cuda()
+            self.relu_kan.cuda()
+
+        self.opt = torch.optim.Adam(self.relu_kan.parameters())
+        self.loss_fun = torch.nn.MSELoss()
+
+    def train_process(self, epoch_max: int = 1000):
+        for e in tqdm(range(epoch_max)):
+            self.train()
+            self.test()
+
+    def train(self):
+        self.relu_kan.train()
+        self.opt.zero_grad()
+        pred = self.relu_kan(self.train_xs)
+        loss = self.loss_fun(pred, self.train_ys)
+        loss.backward()
+        self.opt.step()
+        self.train_loss.append(loss.item())
+
+    def test(self):
+        self.relu_kan.eval()
+        pred = self.relu_kan(self.test_xs)
+        loss = self.loss_fun(pred, self.test_ys)
+        self.test_loss.append(loss.item())
+
+    def plt_fitting(self, name, mode=1):
+        plt.title(f'${name}$ effect')
+        if self.input_size == 1 and mode==1:
+            plt.xlabel('$x$')
+            plt.ylabel('$f(x)$')
+            xs = np.array([np.arange(0, 1000) / 1000]).T
+            ys = self.f(xs)
+            plt.plot(xs, ys, '--', color='black', label='true')
+            xs = torch.Tensor(xs)
+            if self.cuda:
+                xs = xs.cuda()
+            pred = self.relu_kan(xs)
+            plt.plot(xs.cpu(), pred[:, :, 0].detach().cpu(), '-', color='black', label='pred')
+            plt.legend()
+            plt.show()
+        else:
+            plt.xlabel('pred')
+            plt.ylabel('true')
+            pred = self.relu_kan(self.test_xs)
+            plt.plot(pred.detach().cpu().flatten(), self.test_ys.cpu().flatten(), '.', color='black')
+        plt.savefig(f'./data/effect_{name}.pdf', dpi=600)
+        plt.clf()
+
+    def plt_loss(self, name: str):
+        plt.title(f'${name}$ training process')
+        plt.xlabel('iterations')
+        plt.ylabel('MSE loss')
+        plt.semilogy(self.train_loss, '-', color='black', label='train')
+        plt.semilogy(self.test_loss, '--', color='black', label='test')
+        plt.legend()
+        plt.savefig(f'./data/process_{name}.pdf', dpi=600)
+        plt.clf()
+
+    def save_process(self, name):
+        with open(f'./data/loss_{name}.pkg', 'wb') as f:
+            pickle.dump({'train_loss': self.train_loss, 'test_losss': self.test_loss}, f)
+
+
+# %% f1 = sin(pi * x)
+def f1(x):
+    return np.sin(np.pi * x)
+
+
+def f2(x):
+    return np.exp(x)
+
+
+def f3(x):
+    return x * x + x + 1
+
+
+def f4(x):
+    y = np.sin(np.pi * x[:, [0]] + np.pi * x[:, [1]])
+    return y
+
+
+def f5(x):
+    y = np.exp(np.sin(np.pi * x[:, [0]]) + x[:, [1]] * x[:, [1]])
+    return y
+
+
+def f6(x):
+    y = np.exp(
+        np.sin(np.pi * x[:, [0]] * x[:, [0]] + np.pi * x[:, [1]] * x[:, [1]]) +
+        np.sin(np.pi * x[:, [2]] * x[:, [2]] + np.pi * x[:, [3]] * x[:, [3]])
+    )
+    return y
+
+def f7(x):
+    return np.sin(5 * np.pi * x) + x
+
+
+train_plan = {
+    # 'f_1': (f1, [1, 1], 5, 3),
+    # 'f_2': (f7, [1, 1], 5, 3),
+    # 'f_3': (f3, [1, 1], 5, 3),
+    # 'f_4': (f4, [2, 5, 1], 5, 3),
+    # 'f_5': (f5, [2, 5, 1], 5, 3),
+    'f_6': (f6, [4, 2, 1], 5, 3),
+}
+
+for f_name in train_plan:
+    train = Train(*train_plan[f_name])
+    train.train_process(5000)
+    train.plt_loss(f_name)
+    train.plt_fitting(f_name)
+    train.save_process(f_name)
+
+# 这是一个示例 Python 脚本。
+
+# 按 Shift+F10 执行或将其替换为您的代码。
+# 按 双击 Shift 在所有地方搜索类、文件、工具窗口、操作和设置。
+
+
+def print_hi(name):
+    # 在下面的代码行中使用断点来调试脚本。
+    print(f'Hi, {name}')  # 按 Ctrl+F8 切换断点。
+
+
+# 按间距中的绿色按钮以运行脚本。
+if __name__ == '__main__':
+    print_hi('PyCharm')
+
+# 访问 https://www.jetbrains.com/help/pycharm/ 获取 PyCharm 帮助
+
+import matplotlib.pyplot as plt
+from torch_relu_kan import ReLUKANLayer, ReLUKAN
+import torch
+import numpy as np
+
+
+if __name__ == '__main__':
+    # skan = ReLUKANLayer(1, 100, 20, 1)
+    relu_kan = ReLUKAN([1, 1], 5, 3)
+    x = torch.Tensor([np.arange(0, 1024) / 1024]).T
+    y = torch.sin(5*torch.pi*x)
+    if torch.cuda.is_available():
+        relu_kan = relu_kan.cuda()
+        x = x.cuda()
+        y = y.cuda()
+
+    opt = torch.optim.Adam(relu_kan.parameters())
+    mse = torch.nn.MSELoss()
+
+    plt.ion()
+    losses = []
+    for e in range(5000):
+        opt.zero_grad()
+        pred = relu_kan(x)
+        loss = mse(pred[:, :, 0], y)
+        loss.backward()
+        opt.step()
+    # print(time.time() - t)
+        pred = pred.detach()
+        plt.clf()
+        plt.plot(x.cpu(), y.cpu())
+        plt.plot(x.cpu(), pred[:, :, 0].cpu())
+        plt.pause(0.01)
+        print(loss)
+
+
+
+
+import time
+import matplotlib.pyplot as plt
+from torch_relu_kan import ReLUKANLayer, ReLUKAN
+import torch
+import numpy as np
+
+
+def train_loss_time(xs, ys, kan_module, epoch_max, cuda=True):
+    if cuda:
+        kan_module.cuda()
+        xs = xs.cuda()
+        ys = ys.cuda()
+
+    opt = torch.optim.Adam(kan_module.parameters())
+    mse = torch.nn.MSELoss()
+    # 由于torch框架的懒加载问题，先进行一次前向传播后再统计训练时间
+    pred = kan_module(xs)
+
+    t = time.time()
+    for e in range(epoch_max):
+        opt.zero_grad()
+        pred = kan_module(xs)
+        loss = mse(pred[:, :, 0], ys)
+        loss.backward()
+        opt.step()
+
+    return time.time() - t
+
+
+#%% f1(x) = sin(pi*x)
+relu_kan = ReLUKAN([1, 1], 5, 3)
+xs = torch.Tensor([np.arange(0, 1000) / 1000]).T
+ys = torch.sin(torch.pi * xs)
+print('f1_CPU', train_loss_time(xs, ys, relu_kan, 500, cuda=False))
+print('f1_GPU', train_loss_time(xs, ys, relu_kan, 500, cuda=True))
+
+#%% f2(x) = sin(pi*x)
+relu_kan = ReLUKAN([2, 1], 5, 3)
+xs = np.random.random([1000, 2, 1])
+ys = np.sin(np.pi * xs[:, 0, 0] + np.pi * xs[1, 0, 0])
+ys.resize([1000, 1])
+xs = torch.Tensor(xs)
+ys = torch.Tensor(ys)
+print('f1_CPU', train_loss_time(xs, ys, relu_kan, 500, cuda=False))
+print('f1_GPU', train_loss_time(xs, ys, relu_kan, 500, cuda=True))
+
+#%% f3(x) = arctan(x1 + x1*x2 + x2*x2)
+relu_kan = ReLUKAN([2, 1, 1], 5, 3)
+xs = np.random.random([1000, 2, 1])
+ys = np.arctan(xs[:, 0, 0] + xs[:, 0, 0] * xs[:, 1, 0] + xs[:, 1, 0] * xs[:, 1, 0])
+ys.resize([1000, 1])
+xs = torch.Tensor(xs)
+ys = torch.Tensor(ys)
+print('f1_CPU', train_loss_time(xs, ys, relu_kan, 500, cuda=False))
+print('f1_GPU', train_loss_time(xs, ys, relu_kan, 500, cuda=True))
+
+#%% f3(x) = exp(sin(x1*x1 + x2*x2) + sin(x3*x3 + x4*x4))
+relu_kan = ReLUKAN([4, 4, 2, 1], 10, 3)
+xs = np.random.random([1000, 4, 1])
+ys = np.exp(np.sin(xs[:, 0, 0] * xs[:, 0, 0] + xs[:, 1, 0] * xs[:, 1, 0]) +
+            np.sin(xs[:, 2, 0] * xs[:, 2, 0] + xs[:, 3, 0] * xs[:, 3, 0]))
+
+ys.resize([1000, 1])
+xs = torch.Tensor(xs)
+ys = torch.Tensor(ys)
+print('f1_CPU', train_loss_time(xs, ys, relu_kan, 500, cuda=False))
+print('f1_GPU', train_loss_time(xs, ys, relu_kan, 500, cuda=True))
+import matplotlib.pyplot as plt
+from torch_relu_kan import ReLUKANLayer, ReLUKAN
+import torch
+import numpy as np
+from tqdm import tqdm
+
+
+def gs(x, sigma = 5):
+    x = (x - np.min(x)) / (np.max(x) - np.min(x))
+    x = (x - 0.5) * 2
+    return np.multiply(np.power(np.sqrt(2 * np.pi) * sigma, -1), np.exp(-np.power(x, 2) / 2 * sigma ** 2))
+
+
+#%% data
+xs = np.arange(0, 5000) / 5000
+ys = []
+for i in range(5):
+    x = xs[i*1000: (i+1)*1000]
+    y = gs(x)
+    ys.append(y)
+ys = np.concatenate(ys)
+plt.plot(xs, ys)
+plt.show()
+
+#%% 拟合
+ys = ys / 0.08
+xs = xs.reshape([5000, 1, 1])
+ys = ys.reshape([5000, 1, 1])
+xs = torch.Tensor(xs)
+ys = torch.Tensor(ys)
+relu_kan = ReLUKAN([1, 1], 25, 1)
+opt = torch.optim.Adam(relu_kan.parameters())
+mse = torch.nn.MSELoss()
+plt.ion()
+for i in range(5):
+    t_xs = xs[i*1000: (i+1)*1000]
+    t_ys = ys[i*1000: (i+1)*1000]
+    for e in range(250):
+        relu_kan.train()
+        opt.zero_grad()
+        t_pred = relu_kan(t_xs)
+        loss = mse(t_pred, t_ys)
+        loss.backward()
+        opt.step()
+        print(f'{i}:{e}')
+        relu_kan.eval()
+        pred = relu_kan(xs)
+        plt.clf()
+        plt.plot(xs[:, 0, 0], ys[:, 0, 0], '--', color='black')
+        plt.plot(xs[:, 0, 0], pred.detach()[:, 0, 0], '-', color='black')
+        if e == 249:
+            plt.savefig(f'./data/cf_{i+1}.pdf', dpi=600)
+        plt.pause(0.01)
+
+
+#%% 绘制波形
+for i in range(5):
+    t_xs = xs[i*1000: (i+1)*1000]
+    t_ys = ys[i*1000: (i+1)*1000]
+    plt.clf()
+    plt.plot(xs[:, 0, 0], ys[:, 0, 0], '--', color='black')
+    plt.plot(t_xs[:, 0, 0], t_ys[:, 0, 0], '-', color='black')
+    plt.savefig(f'./data/ps_{i + 1}.pdf', dpi=600)
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+
+class ReLUKANLayer(nn.Module):
+    def __init__(self, input_size: int, g: int, k: int, output_size: int, train_ab: bool = True):
+        super().__init__()
+        self.g, self.k, self.r = g, k, 4*g*g / ((k+1)*(k+1))
+        self.input_size, self.output_size = input_size, output_size
+        phase_low = np.arange(-k, g) / g
+        phase_height = phase_low + (k+1) / g
+        self.phase_low = nn.Parameter(torch.Tensor(np.array([phase_low for i in range(input_size)])),
+                                      requires_grad=train_ab)
+        self.phase_height = nn.Parameter(torch.Tensor(np.array([phase_height for i in range(input_size)])),
+                                         requires_grad=train_ab)
+        self.equal_size_conv = nn.Conv2d(1, output_size, (g+k, input_size))
+    def forward(self, x):
+        x1 = torch.relu(x - self.phase_low)
+        x2 = torch.relu(self.phase_height - x)
+        x = x1 * x2 * self.r
+        x = x * x
+        x = x.reshape((len(x), 1, self.g + self.k, self.input_size))
+        x = self.equal_size_conv(x)
+        x = x.reshape((len(x), self.output_size, 1))
+        return x
+
+
+class ReLUKAN(nn.Module):
+    def __init__(self, width, grid, k):
+        super().__init__()
+        self.width = width
+        self.grid = grid
+        self.k = k
+        self.rk_layers = []
+        for i in range(len(width) - 1):
+            self.rk_layers.append(ReLUKANLayer(width[i], grid, k, width[i+1]))
+            # if len(width) - i > 2:
+            #     self.rk_layers.append()
+        self.rk_layers = nn.ModuleList(self.rk_layers)
+
+    def forward(self, x):
+        for rk_layer in self.rk_layers:
+            x = rk_layer(x)
+        # x = x.reshape((len(x), self.width[-1]))
+        return x
+
+
+def show_base(phase_num, step):
+    rk = ReLUKANLayer(1, phase_num, step, 1)
+    x = torch.Tensor([np.arange(-600, 1024+600) / 1024]).T
+    x1 = torch.relu(x - rk.phase_low)
+    x2 = torch.relu(rk.phase_height - x)
+    y = x1 * x1 * x2 * x2 * rk.r * rk.r
+    for i in range(phase_num+step):
+        plt.plot(x, y[:, i:i+1].detach(), color='black')
+    plt.show()
+    print('1')
+
+
+if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+    is_cuda = torch.cuda.is_available()
+    show_base(5, 3)
+    rk = ReLUKANLayer(1, 100, 5, 2)
+    x = torch.Tensor([np.arange(0, 1024) / 1024]).T
+    if is_cuda:
+        rk.cuda()
+        x = x.cuda()
+    y = rk(x).detach().cpu()
+    plt.show()
+
+
+import pickle
+import matplotlib.pyplot as plt
+
+for i in range(1, 7):
+    with open(f'./data/f_{i}.pkg', 'rb') as f:
+        kan = pickle.load(f)
+    with open(f'./data/loss_f_{i}.pkg', 'rb') as f:
+        r_kan = pickle.load(f)
+
+    name = f'f_{i}'
+    plt.title(f'${name}$ training process')
+    plt.xlabel('iterations')
+    plt.ylabel('MSE loss')
+    plt.semilogy(kan['test_loss'], '--', color='black', label='KAN test loss')
+    plt.semilogy(r_kan['test_losss'], '-', color='black', label='ReLU-KAN test loss')
+    plt.legend()
+    plt.savefig(f'./data/comp_process_{name}.pdf', dpi=600)
+    plt.clf()
