@@ -1,33 +1,20 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import DataLoader,random_split
 from torchvision import transforms
 from accelerate import Accelerator
 from tqdm.auto import tqdm
 import wandb
-import yaml
-import os
-import torch.nn.functional as F
-from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDiscriminator,ADADiscriminator
+from model import IMFModel, MultiScalePatchDiscriminator,IMFPatchDiscriminator,ADADiscriminator
 from VideoDataset import VideoDataset
-from EMODataset import EMODataset,gpu_padded_collate
-from torchvision.utils import save_image
-from helper import log_loss_landscape,log_grad_flow,count_model_params, add_gradient_hooks, sample_recon
+from helper import log_grad_flow,count_model_params, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
-from torch.nn.utils import spectral_norm
-import torchvision.models as models
-from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn,compute_gradient_penalty
-# from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.optim.lr_scheduler import StepLR
+from loss import gan_loss_fn,compute_gradient_penalty
 from torch.optim.lr_scheduler import CosineAnnealingLR
-
-import random
 from stylegan import EMA
-from torch.optim import AdamW, SGD
-from transformers import Adafactor
+
 
 def load_config(config_path):
     return OmegaConf.load(config_path)

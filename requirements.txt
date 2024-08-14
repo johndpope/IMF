@@ -10,3 +10,4 @@ omegaconf
 lpips
 transformers
 einops
+moviepy
