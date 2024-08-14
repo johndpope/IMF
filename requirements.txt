@@ -9,3 +9,4 @@ accelerate
 omegaconf
 lpips
 transformers
+einops
