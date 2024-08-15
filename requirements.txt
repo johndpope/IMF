@@ -11,3 +11,4 @@ lpips
 transformers
 einops
 moviepy
+accelerate
