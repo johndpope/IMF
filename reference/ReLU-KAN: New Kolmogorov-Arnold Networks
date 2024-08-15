@@ -1,0 +1,1021 @@
+ReLU-KAN: New Kolmogorov-Arnold Networks
+that Only Need Matrix Addition, Dot
+Multiplication, and ReLU
+Qi Qiu1, Tao Zhu1*, Helin Gong2, Liming Chen3, Huansheng Ning4
+1*School of Computer Science, University of South China, Hengyang,
+420000, Hunan, China.
+2Paris Elite Institute of Technology, Shanghai Jiao Tong University,
+Shanghai, 200000, China.
+3School of Computer Science and Technology, University of Science and
+Technology Beijing, Beijing, 100083 China.
+4School of Computer and Communication Engineering, Dalian
+University of Technology, Dalian, 116000, Liaoning, China.
+*Corresponding author(s). E-mail(s): tzhu@usc.edu.cn;
+Contributing authors: qiuqi@stu.usc.edu.cn; gonghelin@sjtu.edu.cn;
+LimingChen0922@dlut.edu.cn; ninghuansheng@ustb.edu.cn;
+Abstract
+We propose a novel KAN architecture that replaces the original basis function
+(B-spline) with a new one more suitable for parallel computation. The proposed
+basis function is composed solely of matrix addition, dot product, and ReLU
+activation, enabling efficient GPU parallelization. Unlike the static B-splines,
+novel basis function incorporates two trainable hyperparameters that allow it to
+dynamically adapt its shape and position to the specific fitting task. This adaptive capability gives ReLU-KAN a significant advantage in modeling complex
+functions. Experimental results on a four-layer network show a 20-fold speedup in
+backpropagation and a the accuracy is improved by two to three orders of magnitude compared to the original KAN. Notably, ReLU-KAN preserves the original
+model’s ability to avoid catastrophic forgetting. The source code is available at
+https://github.com/quiqi/relu kan
+Keywords: Kolmogorov-Arnold Networks, Parallel Computing, Rectified Linear Unit
+1
+arXiv:2406.02075v2 [cs.LG] 12 Aug 20241 Introduction
+Kolmogorov-Arnold Networks (KANs) [1] have recently garnered significant interest
+due to their exceptional performance and novel architecture [2–4]. Researchers have
+rapidly adopted KANs for tackling diverse problems [5–7] or combine KAN with
+existing network structures[8, 9].
+The KANs was designed to overcome the limitation of MLPs, where each layer
+can only perform linear transformations and requires stacking multiple layers with
+activation functions to fit complex non-linear relationships. In contrast, KANs can
+fit complex non-linear relationships with a single layer, resulting in a substantial
+improvement in parameter utilization efficiency.
+However, the recursive nature of B-splines and their irregular control point distribution can lead to computational inefficiencies. Our proposed simplified basis function,
+expressed as a combination of ReLU activations, offers a more straightforward and
+computationally efficient representation. By reformulating the basis function computation as matrix operations and leveraging convolution, we fully exploit the parallel
+processing capabilities of GPUs. Moreover, we found in practice that because B-spline
+functions are unable to change their position and shape during training, it is difficult
+to fit those functions that change in the domain with high frequency. While increasing
+the number of spline functions can enhance fitting capabilities, it also introduces challenges such as a more complex training process, an increased number of parameters,
+and longer training times.
+In this paper, we present an innovative spline function as a replacement for the
+B-spline. This new function is constructed entirely from matrix multiplications, additions, and ReLU activations, as described in Eq 1. By treating ei and si as trainable
+parameters, we endow the basis function with greater plasticity.
+Ri(x) = [ReLU(ei − x) × ReLU(x − si)]2 × 16/(bi − ai)4 (1)
+We evaluated ReLU-KAN’s performance on a set of functions used in the original
+KAN paper. Compared to KAN, ReLU-KAN demonstrates significant improvements
+in training speed, convergence stability, and fitting accuracy, particularly for larger
+network architectures. Notably, ReLU-KAN inherits most of KAN’s key properties,
+including hyperparameters like the number of grids and its ability to prevent catastrophic forgetting. In the existing experiments, ReLU-KAN is 5 to 20 times faster than
+KAN in training, and the accuracy of ReLU-KAN is 1-3 orders of magnitude higher
+than KAN.
+In summary, this paper presents a novel KAN architecture, ReLU-KAN, which
+significantly improves the training efficiency and accuracy of KANs. Our key contributions include:
+1. Simplified basis function based on ReLU activations;
+2. Trainable hyperparameters within the basis function for improved adaptation to
+complex functions.
+3. Efficient matrix-based operations for GPU acceleration;
+4. A convolutional implementation that seamlessly integrates with existing deep
+learning frameworks.
+2future work will explore the application of ReLU-KAN to more complex tasks and
+investigate the potential of combining it with other neural network architectures.
+The remaining sections of this paper delve deeper into the details of our contributions. In Section 2, we introduce KANs and their relationship to Multi-Layer
+Perceptrons (MLPs). Section 3 details the ReLU-KAN architecture, and provided
+its PyTorch implementation. Finally, Section 4 presents comprehensive experiments
+that evaluate ReLU-KAN’s performance against traditional KANs. We demonstrate
+ReLU-KAN’s significant advantages in training speed, convergence stability, and fitting accuracy, particularly for larger networks. Additionally, we confirm ReLU-KAN’s
+ability to prevent catastrophic forgetting.
+2 Related Works
+This section provides an overview of Kolmogorov-Arnold Networks (KANs). In the first
+part of section, KAN is regarded as an extension of MLPs. At the end of Subsection
+2.1, a new idea of constructing KAN-like structures is proposed. Next, the application
+of B-splines in KAN is discussed to provide the basis for discussion in the methods
+section. At the end of the section, we present the state of the art in KANs.
+2.1 Introduce Kolmogorov-Arnold Networks as an Extension
+of MLPs
+The Kolmogorov-Arnold representation theorem confirms that a high-dimensional
+function can be represented as a composition of a finite number of one-dimensional
+functions as Eq 2 [10].
+f (x) =
+2n+1X
+i=1
+Φi(
+nX
+j=1
+φi,j (xj )) (2)
+where φi,j is called the inner function and Φi is called the outer function. Building
+upon the theorem’s mathematical framework, the Kolmogorov-Arnold representation
+theorem can be presented a two-layer structure Fig 1. Let’s consider a KAN where the
+input vector, denoted by x, has a length of n, and the output y, The Eq 3 describes
+the Fig 1
+y =
+
+
+
+
+
+Φ(·)1
+Φ(·)2
+...
+Φ(·)2n+1
+
+
+
+
+ (
+
+
+
+
+
+φ(·)1,1 φ(·)1,2 · · · φ(·)1,2n+1
+φ(·)2,1 φ(·)2,2 · · · φ(·)1,2n+1
+... ... . . . ...
+φ(·)n,1 φ(·)n,2 · · · φ(·)1,2n+1
+
+
+
+
+ x) (3)
+In order to ensure the representation power of φij and Φi, they are represented as linear
+combinations of multiple B-spline functions and a bias function as Eq 4:
+φ(x) = wbx/(1 + e−x) + ws
+X ciBi(x) (4)
+where Bi(x) is a B-spline function.
+Assuming we define φij (xj ) = wij xj , Φi(x) = ReLU(x), the Eq 3 can be regarded
+as a MLP. This MLP takes a n-dimensional input, reduces it to a one-dimensional
+3𝐀𝐀(𝐀)
+𝐀𝐀𝐀(𝐀)
+𝐀1 𝐀2
+𝐀Fig. 1 Kolmogorov-Arnold representation theorem can be presented a two-layer structure
+output, and employs a single hidden layer containing 2n + 1. In this sense, KANs can
+be thought of as an extension of MLPs. The activation function plays a crucial role
+in MLPs because the φij (xj ) = wij xj lacks nonlinear fitting ability. But if φij (x) is a
+nonlinear function, the activation function can be omitted.
+We can extend the hidden layer architecture of KAN networks similar to multi-layer
+perceptrons (MLPs). Consequently, a hidden layer processing n inputs and generating
+m outputs can be expressed using Eq 5 after relaxing the constraint that the number
+of nodes must be 2n + 1 and disregarding the activation function Φ(·)
+and the KAN can be represented as Eq 5:
+KANhidden(x) =
+
+
+
+
+
+φ(·)11 φ(·)12 · · · φ(·)1n
+φ(·)21 φ(·)22 · · · φ(·)2n
+... ... . . . ...
+φ(·)m1 φ(·)m2 · · · φ(·)mn
+
+
+
+
+ x (5)
+we can construct more KAN-like structures based on Eq 5, just by finding suitable
+nonlinear φ(x).
+2.2 B-splines Application in KAN
+B-spline is a complex function based on recursion definition. Due to the specialization
+and complexity of its definition, and considering that it is not tightly coupled with the
+central idea of KAN, we will not discuss it in depth here, but focus on its application
+in KAN.
+A set of B-spline functions denoted as B = {B1(a1, k, s, x), B2(a2, k, s, x), . . . ,
+Bn(an, k, s, x)} are used as basis functions to represent any unary function on a finite
+domain. These B-spline functions share the same shape but have different positions.
+Each term Bi(ai, k, x) is a bell-shaped function, and ai, k, and s are the hyperparameters of Bi [11, 12]. The ai is used to control the position of the symmetry axis,
+4k determines the range of the non-zero region, and s is the unit interval. The i spline
+Bi is shown as Fig 2(Let’s say k = 3).(𝐀 + 1)𝐀
+𝐀𝐀(𝐀)
+𝐀𝐀𝐀𝐀𝐀 − 𝐀𝐀𝐀 − 2𝐀 𝐀𝐀 + 𝐀 𝐀𝐀 + 2𝐀
+𝐀𝐀(𝐀) ≠ 0 𝐀𥠀 (𝐀𝐀 − (𝐀 + 1)𝐀/2) < 𝐀 < (𝐀𝐀 + (𝐀 + 1)𝐀/2)
+𝐀𝐀(𝐀) = 0 𝐀𤠀𝐀𝐀
+Fig. 2 The ith B-spline.
+The hyperparameters of basis function set B depend on the number of grids,
+denoted by G. Specifically, when the domain of the function to be approximated is
+x ∈ [0, 1], we have n = G + k basis functions, step size: s = 1/G and ai = 2i+1−k
+2G .
+Figure 3 illustrates the appearance of B for the case of G = 5 and k = 3.
+The function to be fitted f (x) is expressed as Eq 4 in KAN. Using an optimization algorithm such as gradient descent to determine the values of wb, ws, and
+c = [c1, c2, . . . , cn], we obtain φ(x) fitted using B-splines function.
+Increasing the number of grids, G, leads to a greater number of trainable parameters, consequently enhancing the model’s fitting ability. However, a larger k value
+strengthens the coupling between the B-spline functions, which can also improve fitting ability. As both G and k are effective hyper parameters for controlling the model’s
+fitting capability, we and retain them within the ReLU-KAN architecture.
+Although the solving process of spline function is difficult to characterize as matrix
+operation because of its complexity, and it is difficult to use the parallel ability of GPU
+[13], from the above analysis, spline function is not necessary compared with KAN.
+2.3 Frontiers of KANs
+Since its inception, the Kolmogorov-Arnold Network (KAN) has garnered significant
+attention from both academia and industry due to its unique architecture and powerful
+expressive capabilities. Researchers have delved into KANs from both theoretical and
+applied perspectives, yielding fruitful results.𝐀1(𝐀)
+𝐀
+− 1
+5
+− 2
+5
+− 3
+5
+0 1
+5
+2
+5
+3
+5
+4
+5
+1 6
+5
+7
+5
+8
+5
+𝐀2(𝐀) 𝐀3(𝐀) 𝐀4(𝐀) 𝐀5(𝐀) 𝐀6(𝐀) 𝐀7(𝐀) 𝐀8(𝐀)
+𝐀 = 5 , 𝐀 = 3
+𝐀 ∈ [0, 1]
+Fig. 3 Appearance of B for the case of G = 5 and k = 3.
+5In terms of theoretical research, Altarabichi et al. conducted an in-depth study on
+alternative multivariate functions for KAN neurons, discovering that by restricting the
+input range, training stability can be significantly improved [14]. Yu et al. conducted a
+detailed comparison between KANs and traditional Multi-Layer Perceptrons (MLPs),
+revealing the strengths and weaknesses of the two models in various tasks [15]. Bodner
+et al. introduced Convolutional KANs by combining KANs with convolutional neural
+networks, effectively reducing the number of model parameters and providing new
+insights for optimizing neural network architectures [16]. In terms of applications,
+Cheon demonstrated the effectiveness of KANs in computer vision tasks [17]. Li et
+al. combined KANs with U-Nets for medical image segmentation, achieving promising
+results [18]. Abueidda et al. employed improved KANs to address mechanics-related
+problems, showcasing the potential of KANs in physical modeling [2].
+Despite its broad application prospects, KANs still face several challenges. For
+instance, Shen et al. found that KANs are highly sensitive to noise, limiting their
+robustness in real-world applications [19]. Tran et al. delved into the limitations of
+KANs in classification tasks, providing directions for future research [20]. This paper
+will focus on hardware acceleration, tailoring optimizations to the characteristics of
+KANs to enhance their computational efficiency.
+As an emerging neural network architecture, KANs hold immense potential. With
+ongoing research, KANs are expected to play a significant role in a wider range of
+domains.
+3 Methods
+3.1 ReLU-KAN
+We use the simpler function Ri(x) to replace the B-spline function in KAN as the new
+basis function:
+Ri(x) = [ReLU(ei − x) × ReLU(x − si)]2 × 16/(ei − si)4 (6)
+where, ReLU(x) = max(0, x).
+It is easy to find that the maximum value of ReLU(ei −x)×ReLU(x−si) is (ei−si)2
+4
+when x = (ei + si)/2, so the maximum value of [ReLU(ei − x) × ReLU(x − si)]2 is
+(ei−si)4
+16 , and 16
+(ei−si)4 is used as the normalization constant.
+Like Bi(x), Ri(x) is also a unary bell-shaped function, which is nonzero at x ∈
+[si, ei]and zero at other intervals. The ReLU(x) function is used to limit the range of
+nonzero values, and the squaring operation is used to increase the smoothness of the
+function. As Fig 4.
+Multiple basis function Ri can form the basis function set R =
+{R1(x), R2(x), . . . , Rn(x)}, R inherited many properties of B, It is again composed
+of nbasis functions with the same shape but different positions, and the number of
+basis functions n and ai, bi are also determined by the number of grids Gand the span
+parameter k.
+6𝐀𝐀
+𝐀𝐀𝐀𤠀(𝐀𝐀 − 𝐀)
+𝐀𝐀𝐀𤠀(𝐀𝐀 − 𝐀) × 𝐀𝐀𝐀𤠀(𝐀 − 𝐀𝐀)
+𝐀𝐀𝐀𝐀
+(𝐀𝐀 − 𝐀𝐀)2/4
+[𝐀𝐀𝐀𤠀(𝐀𝐀 − 𝐀) × 𝐀𝐀𝐀𤠀(𝐀 − 𝐀𝐀)]2
+𝐀𝐀𝐀𝐀
+(𝐀𝐀 − 𝐀𝐀)4/16
+[𝐀𝐀𝐀𤠀(𝐀𝐀 − 𝐀) × 𝐀𝐀𝐀𤠀(𝐀 − 𝐀𝐀)]2 × 16/(𝐀𝐀 − 𝐀𝐀)4
+𝐀𝐀𝐀𝐀
+1.0
+𝐀𝐀
+𝐀𝐀𝐀𤠀(𝐀 − 𝐀𝐀) 𝐀𝐀𝐀𤠀(𝐀𝐀 − 𝐀) & 𝐀𝐀𝐀𤠀(𝐀 − 𝐀𝐀)
+1. Limit the basis function to non-0 regions by
+multiplying two ReLU terms.
+2. Smooth the basis functions by squaring
+3. Normalize the range of the basis functions by
+multiplying the coefficientsFig. 4 The construction of Ri𝐀1(𝐀)
+𝐀
+− 1
+5
+− 2
+5
+− 3
+5
+0 1
+5
+2
+5
+3
+5
+4
+5
+1 6
+5
+7
+5
+8
+5
+𝐀2(𝐀) 𝐀3(𝐀) 𝐀4(𝐀) 𝐀5(𝐀) 𝐀6(𝐀) 𝐀7(𝐀) 𝐀8(𝐀)
+𝐀 = 5 , 𝐀 = 3
+𝐀 ∈ [0, 1]
+Fig. 5 Appearance of R for the case of G = 5 and k = 3.
+A set of basis functions, denoted by R = {R1(x), R2(x), . . . , Rn(x)}, can be constructed from multiple basis functions, Ri. And R inherits many properties from the
+B, R consists of n basis functions with identical shapes but varying positions. The
+number of basis functions, n, along with the position parameters ai and bi are still
+determined by the number of grids, G, and the span parameter, k.
+If we assume that the domain of the function to be fitted is x ∈ [0, 1], the number
+of grids is G, and the span parameter is k, the number of spline functions is n = G + k.
+Where si and ei are a set of trainable parameters, They denote the interval of the
+nonzero part of the basis function Ri(x), Their initial values are set as follows: si =
+i−k−1
+G , ei = i
+G .
+For example, the Fig 5 shows a schematic representation of R for G = 5 and k = 3.
+The ReLU-KAN layer can also be expressed by Eq(5), and the corresponding φ(x)
+of ReLU-KAN removes the bias function and is further simplified to Eq 7.
+φ(x) =
+G+kX
+i=1
+wiRi(x) (7)
+7[1, 1] [2, 1]
+𝐀11(𝐀) 𝐀21(𝐀)
+𝐀11(𝐀)
+𝐀1,11 𝐀1,12
+𝐀1,13
+𝐀1,21 𝐀1,22
+𝐀1,23
+𝐀2,11 𝐀2,21
+𝐀2,31
+[2, 3, 1]Fig. 6 The multi-layer ReLU-KAN
+The multi-layer ReLU-KAN can be represented as the Fig 6 In the following expression, we use [n1, n2, . . . , nk]to represent a ReLU-KAN of k − 1 layers, and the i layer
+takes as input the output of i − 1 layers. Its input vector is of length ni and its output
+vector is of length ni+1.
+3.2 Operational Optimization
+Consider the computation of ReLU KAN for a single layer. Given the hyper parameters
+G and k, the number of inputs n named x = [x1, x2, . . . , xi, . . . , xn], and the number
+of outputs m named y = [y1, y2, . . . , yc, . . . , ym], we pre-compute the start matrix S,
+end matrix E and m weight matrix W = [W 1, W 2, . . . , W c, . . . , W m] as Eq 8.
+S =
+
+
+
+
+
+
+
+
+s1,1 s1,2 · · · s1,G+k
+s2,1 s2,2 · · · s2,G+k
+.
+.
+.
+.
+.
+.
+. . .
+.
+.
+.
+sn,1 sn,2 · · · sn,G+k
+
+
+
+
+
+
+
+
+E =
+
+
+
+
+
+
+
+
+e1,1 e1,2 · · · e1,G+k
+e2,1 e2,2 · · · e2,G+k
+.
+.
+.
+.
+.
+.
+. . .
+.
+.
+.
+en,1 en,2 · · · en,G+k
+
+
+
+
+
+
+
+
+W c =
+
+
+
+
+
+
+
+
+wc
+1,1 wc
+1,2 · · · wc
+1,G+k
+wc
+2,1 wc
+2,2 · · · wc
+2,G+k
+.
+.
+.
+.
+.
+.
+. . .
+.
+.
+.
+wc
+n,1 wc
+n,2 · · · wc
+n,G+k
+
+
+
+
+
+
+
+
+(8)
+where, si,j = j−k−1
+G , ei,j = j
+G and wc
+i,j is a random float number. As mentioned in
+the previous subsection, S and E are trainable.
+When using Eq 6 as the basis function, we define a normalization constant r =
+16G4
+(k+1)4 , the computation of output y = [y1, y2, . . . , yc, . . . , ym] can be decomposed into
+the following matrix operation:
+A = ReLU(E − xT ) (9)
+B = ReLU(xT − S) (10)
+D = r × A · B (11)
+F = D · D (12)
+y = W ⊗ F (13)
+where, A, B, D and F are all intermediate results. ’·’ is the dot product operation. ’⊗’
+is the convolution operation commonly used in deep learning. Since W c and F are
+equally large, Eq 13 will output a vector length m.
+8import numpy as np
+import torch
+import torch.nn as nn
+class ReLUKANLayer(nn.Module):
+def __init__(self, input_size: int, g: int, k: int, output_size: int, is_train: bool = False):
+super().__init__()
+self.g, self.k, self.r = g, k, 4*g*g / ((k+1)*(k+1))
+self.input_size, self.output_size = input_size, output_size
+phase_low = np.arange(-k, g) / g
+phase_height = phase_low + (k+1) / g
+self.phase_low = nn.Parameter(torch.Tensor(np.array([phase_low for i in range(input_size)])),
+requires_grad=is_train)
+self.phase_height = nn.Parameter(torch.Tensor(np.array([phase_height for i in range(input_size)]))
+requires_grad=is_train)
+self.equal_size_conv = nn.Conv2d(1, output_size, (g+k, input_size))
+def forward(self, x):
+x1 = torch.relu(x - self.phase_low)
+x2 = torch.relu(self.phase_height - x)
+x = x1 * x2 * self.r
+x = x * x
+x = x.reshape((len(x), 1, self.g + self.k, self.input_size))
+x = self.equal_size_conv(x)
+x = x.reshape((len(x), self.output_size, 1))
+return xFig. 7 The ReLU-KAN Layer Code
+Eq 9 to Eq 12 used to compute all basis functions as Eq 6 in this ReLU-KAN layer,
+The result of these steps, F , can be described as Eq 14
+F =
+
+
+
+
+
+R1(x1) R2(x1) · · · RG+k(x1)
+R1(x2) R2(x2) · · · RG+k(x2)
+... ... . . . ...
+R1(xn) R2(xn) · · · RG+k(xn)
+
+
+
+
+ (14)
+In the real code implementation, we can directly use the convolutional layer to
+implement the calculation of Eq 13. We give the Python code of the ReLU-KAN layer
+based on PyTorch as Fig 7. It is very simple code and does not need to take up too
+much space.
+4 Experiments
+The experimental evaluation is divided into three main parts. Firstly, the training
+speed of KAN and ReLU-KAN in GPU and CPU environments was compared. Second,
+we evaluate the fitting ability and convergence rate of the two models under the same
+parameter Settings, and we include ablation experiments that confirm the effect of
+trainable parameters in the basis functions in ReLU-KAN. Finally, ReLU-KAN is used
+to replicate the performance of KAN in the context of catastrophic forgetting.
+4.1 Training Speed Comparison
+We chose a function set of size 5 to compare KAN and ReLU-KAN training speeds.
+The parameters of KAN and ReLU-KAN are set as Table 1.
+9Table 1 Parameter Settings for Training Speed Comparison Experiments
+Func. KAN Setting ReLU-KAN Setting
+f1 : sin(πx) width=[1, 1], G=5, k=3 width=[1, 1], G=5, k=3
+f2 : sin(πx1 + πx2) width=[2, 1], G=5, k=3 width=[2, 1], G=5, k=3
+f3 : arctan(x1 + x1x2 + x2
+2) width=[2, 1, 1], G=5, k=3 width=[2, 1, 1], G=5, k=3
+f4 : esin(πx1)+x2
+2 width=[2, 5, 1], G=5, k=3 width=[2, 5, 1], G=5, k=3
+f5 : esin(x2
+1+x2
+2 )+sin(x2
+3+x2
+4) width=[4, 4, 2, 1], G=10, k=3 width=[4, 4, 2, 1], G=10, k=3
+Table 2 Training Speed Comparison (unit: second)
+Func. KAN KAN ReLU-KAN1 ReLU-KAN1 ReLU-KAN2 ReLU-KAN2
+(CPU) (GPU) (CPU) (GPU) (CPU) (GPU)
+f1 2.80 6.01 0.56 0.72 0.56 0.73
+f2 3.04 7.23 0.78 0.75 0.80 0.72
+f3 5.30 12.70 1.21 1.13 1.25 1.05
+f4 11.30 23.12 1.57 1.08 1.59 1.15
+f5 19.23 34.38 2.26 1.15 2.32 1.10
+The training process was conducted using the PyTorch framework. We employed
+the Adam optimizer for optimization and set the training set size to 1,000 samples. All
+models were trained for 500 iterations. The Table 2 summarizes the training times for
+KAN and ReLU-KAN on both GPU and CPU environments, measured in seconds.
+The Table 2 compares two configurations of ReLU-KAN. In the first configuration
+(ReLU-KAN1), parameters S and E are held constant during training. In contrast,
+the second configuration (ReLU-KAN2) allows for the learning of S and E, making
+them trainable parameters.
+Based on the results presented in the Table 2, the following conclusions can be
+drawn:
+• ReLU-KAN is faster than KAN: ReLU-KAN is significantly less timeconsuming than KAN in all comparisons.
+• ReLU-KAN training scales more efficiently with complexity: As the model
+architecture becomes more complex, the training time increases for both KAN and
+ReLU-KAN. However, the improvement of time consumption of ReLU-KAN is much
+smaller than that of KAN
+• ReLU-KAN’s GPU speed advantage grows with model complexity: ReLUKAN demonstrates a more significant speed advantage on GPU compared to CPU as
+the model complexity increases. For a single-layer model (f1 and f2), ReLU-KAN is
+4 times faster than KAN. For a 2-layer model (f3 and f4), the speed difference ranges
+from 5 to 10 times, and for a 3-layer model(f5), the speed difference approaches 20
+times.
+• Learning of S and E is free in time: Whether S and E are set to be trainable
+or not has almost no effect on the time consumption.
+10Table 3 Parameter Settings for Fitting Ability Comparison Experiments
+Func. KAN Setting ReLU-KAN Setting
+f1 : sin(πx) width=[1, 1], G=5, k=3 width=[1, 1], G=5, k=3
+f2 : sin(5πx) + x width=[2, 1], G=5, k=3 width=[2, 1], G=5, k=3
+f3 : ex width=[2, 1, 1], G=5, k=3 width=[2, 1, 1], G=5, k=3
+f4 : sin(πx1 + πx2) width=[2, 5, 1], G=5, k=3 width=[2, 5, 1], G=5, k=3
+f5 : esin(πx1)+x2
+2 width=[2, 5, 1], G=5, k=3 width=[2, 5, 1], G=5, k=3
+f6 : esin(πx2
+1+πx2
+2)+sin(πx2
+3+πx2
+4) width=[4, 4, 2, 1], G=10, k=3 width=[4, 4, 2, 1], G=10, k=3
+4.2 Comparison of Fitting Ability
+The fitting capabilities of KAN and ReLU-KAN are then compared on three unary
+functions and three multivariate functions, each of which uses the parameter Settings
+shown in the Table 3.
+There are also two configurations of ReLU-KAN in this experiment. In the first configuration (ReLU-KAN1), the parameters S and E are kept constant during training.
+By contrast, The second configuration (ReLU-KAN2) allows learning S and E.
+To assess the performance of KAN and ReLU-KAN, we employed the Mean
+Squared Error (MSE) loss function as the evaluation metric and utilized the Adam
+optimizer for optimization. The maximum number of iterations was set to 1000.
+To visualize the iterative process of both models, we plotted their loss curves. And
+we can visualize the fit in the following way: for univariate functions f1, f2, and f3,
+we directly plotted their original f (x) curves alongside the fitted curves, providing
+a clear visual representation of their fitting performance. For multivariate functions
+f4, f5, and f6, we generated scatter plots of predicted values versus true values. The
+closer the scatter points lie to the line pred = true, the better the fitting performance.
+11Table 4 Fitting Process and Effects
+Func. Loss curve KAN ReLU-KAN1 ReLU-KAN2
+f10 1000 2000 3000 4000 5000
+iterations
+10 5
+10 4
+10 3
+10 2
+10 1
+100
+101
+MSE loss
+f1 training process
+KAN test loss
+ReLU-KAN1 test loss
+ReLU-KAN2 test loss0.0 0.2 0.4 0.6 0.8 1.0
+x
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+f(x)
+f1 effect
+true
+pred0.0 0.2 0.4 0.6 0.8 1.0
+x
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+f(x)
+f1 effect
+true
+pred0.0 0.2 0.4 0.6 0.8 1.0
+x
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+f(x)
+f1 effect
+true
+pred
+f20 1000 2000 3000 4000 5000
+iterations
+10 2
+10 1
+100
+101
+MSE loss
+f2 training process
+KAN test loss
+ReLU-KAN1 test loss
+ReLU-KAN2 test loss0.0 0.2 0.4 0.6 0.8 1.0
+x
+0.5
+0.0
+0.5
+1.0
+1.5
+2.0
+f(x)
+f2 effect
+true
+pred0.0 0.2 0.4 0.6 0.8 1.0
+x
+0.5
+0.0
+0.5
+1.0
+1.5
+2.0
+f(x)
+f2 effect
+true
+pred0.0 0.2 0.4 0.6 0.8 1.0
+x
+0.5
+0.0
+0.5
+1.0
+1.5
+2.0
+f(x)
+f2 effect
+true
+pred
+f30 1000 2000 3000 4000 5000
+iterations
+10 4
+10 3
+10 2
+10 1
+100
+101
+MSE loss
+f3 training process
+KAN test loss
+ReLU-KAN1 test loss
+ReLU-KAN2 test loss0.0 0.2 0.4 0.6 0.8 1.0
+x
+1.00
+1.25
+1.50
+1.75
+2.00
+2.25
+2.50
+2.75
+f(x)
+f3 effect
+true
+pred0.0 0.2 0.4 0.6 0.8 1.0
+x
+1.00
+1.25
+1.50
+1.75
+2.00
+2.25
+2.50
+2.75
+f(x)
+f3 effect
+true
+pred0.0 0.2 0.4 0.6 0.8 1.0
+x
+1.00
+1.25
+1.50
+1.75
+2.00
+2.25
+2.50
+2.75
+f(x)
+f3 effect
+true
+pred
+12Table 5 Fitting Process and Effects
+Func. Loss curve KAN ReLU-KAN1 ReLU-KAN2
+f40 1000 2000 3000 4000 5000
+iterations
+10 4
+10 3
+10 2
+10 1
+100
+101
+102
+MSE loss
+f4 training process
+KAN test loss
+ReLU-KAN1 test loss
+ReLU-KAN2 test loss0.4 0.2 0.0 0.2 0.4 0.6 0.8 1.0 1.2
+pred
+1.00
+0.75
+0.50
+0.25
+0.00
+0.25
+0.50
+0.75
+1.00
+true
+f4 effect1.00 0.75 0.50 0.25 0.00 0.25 0.50 0.75 1.00
+pred
+1.00
+0.75
+0.50
+0.25
+0.00
+0.25
+0.50
+0.75
+1.00
+true
+f4 effect1.00 0.75 0.50 0.25 0.00 0.25 0.50 0.75 1.00
+pred
+1.00
+0.75
+0.50
+0.25
+0.00
+0.25
+0.50
+0.75
+1.00
+true
+f4 effect
+f50 1000 2000 3000 4000 5000
+iterations
+10 4
+10 3
+10 2
+10 1
+100
+101
+MSE loss
+f5 training process
+KAN test loss
+ReLU-KAN1 test loss
+ReLU-KAN2 test loss2 3 4 5 6 7
+pred
+1
+2
+3
+4
+5
+6
+7
+true
+f5 effect1 2 3 4 5 6 7
+pred
+1
+2
+3
+4
+5
+6
+7
+true
+f5 effect1 2 3 4 5 6 7
+pred
+1
+2
+3
+4
+5
+6
+7
+true
+f5 effect
+f60 1000 2000 3000 4000 5000
+iterations
+10 3
+10 2
+10 1
+100
+101
+102
+MSE loss
+f6 training process
+KAN test loss
+ReLU-KAN1 test loss
+ReLU-KAN2 test loss0 1 2 3 4 5 6 7 8
+pred
+0
+1
+2
+3
+4
+5
+6
+7
+true
+f6 effect0 1 2 3 4 5 6 7
+pred
+0
+1
+2
+3
+4
+5
+6
+7
+true
+f6 effect0 1 2 3 4 5 6 7
+pred
+0
+1
+2
+3
+4
+5
+6
+7
+true
+f6 effect
+13Table 6 Training Speed Comparison
+Func. KAN ReLU-KAN1 ReLU-KAN2
+f1 2.72 × 10−3 1.04 × 10−4 7.96 × 10−6
+f2 3.34 × 10−1 1.04 × 10−1 7.96 × 10−3
+f3 2.62 × 10−3 2.52 × 10−4 1.20 × 10−4
+f4 2.62 × 10−2 1.32 × 10−4 2.29 × 10−5
+f5 6.80 × 10−2 1.20 × 10−3 1.28 × 10−4
+f6 3.47 × 10−1 8.83 × 10−3 6.37 × 10−4
+Table 7 Catastrophic Forgetting Experiments
+Phase 1 Phase 2 Phase 3 Phase 4 Phase 5
+input0.0 0.2 0.4 0.6 0.8 1.0
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+output0.0 0.2 0.4 0.6 0.8 1.0
+0.2
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.2
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.2
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.0
+0.2
+0.4
+0.6
+0.8
+1.00.0 0.2 0.4 0.6 0.8 1.0
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+The results in the Table 4 and Table 5 indicate that ReLU-KAN exhibits a more
+stable training process and achieves higher fitting accuracy compared to the KAN,
+given identical network structure and scale. This advantage becomes particularly pronounced for multi-layer networks, especially when fitting functions like f2 with a
+higher frequency of change. In these cases, ReLU-KAN demonstrates superior fitting
+capabilities.
+In order to more clearly see the accuracy advantage of ReLU-KAN compared with
+KAN, the results of Table 4 and Table 5 on the test set are statistically analyzed in
+Table 7 using the scientific and technical method, from which it can be seen that ReLUKAN2 accuracy can be 1-3 orders of magnitude higher than that of KAN. Comparing
+ReLU-KAN1 and ReLU-KAN2, we can find that although ReLU-KAN1 is also better
+than KAN, it is not as obvious as ReLU-KAN2. This can confirm the necessity to
+endow the basis functions with plasticity.
+4.3 ReLU-KAN Avoids Catastrophic Forgetting
+Leveraging its similar basis function structure to KAN, ReLU-KAN is expected to
+inherit KAN’s resistance to catastrophic forgetting. To verify this, we conducted a
+simple experiment.
+Similar to the experiment designed for KAN, the target function has five peaks.
+During training, the model is presented with data for only one peak at a time. The
+following figure illustrates the fitting curve of ReLU-KAN after each training iteration.
+As shown in the Table 7, ReLU-KAN similarly has the ability to avoid catastrophic
+forgetting.
+145 Summary and Prospect
+This paper introduces ReLU-KAN, a novel architecture that significantly outperforms
+conventional KANs by replacing B-splines with simplified, trainable basis functions.
+ReLU-KAN achieves up to 20x faster training and one to three orders of magnitude
+accuracy while maintaining the ability to prevent catastrophic forgetting. Unlike Bsplines, the proposed basis functions only consist of matrix operations and ReLU
+activations, which achieve efficient GPU parallelization and powerful fitting capabilities. Experimental results show that ReLU-KAN effectively balances computational
+efficiency and model expression ability, and simple basis functions can meet the approximation of complex functions. Future research will explore alternative basis functions
+in the KAN framework to further optimize the performance.
+References
+[1] Liu, Z., Wang, Y., Vaidya, S., Ruehle, F., Halverson, J., Soljaˇci ́c, M., Hou, T.Y.,
+Tegmark, M.: KAN: Kolmogorov-Arnold Networks (2024)
+[2] Abueidda, D.W., Pantidis, P., Mobasher, M.E.: Deepokan: Deep operator network
+based on kolmogorov arnold networks for mechanics problems. arXiv preprint
+arXiv:2405.19143 (2024)
+[3] Genet, R., Inzirillo, H.: Tkan: Temporal kolmogorov-arnold networks. arXiv
+preprint arXiv:2405.07344 (2024)
+[4] Samadi, M.E., M ̈uller, Y., Schuppert, A.: Smooth kolmogorov arnold networks
+enabling structural knowledge representation. arXiv preprint arXiv:2405.11318
+(2024)
+[5] Bozorgasl, Z., Chen, H.: Wav-kan: Wavelet kolmogorov-arnold networks. arXiv
+preprint arXiv:2405.12832 (2024)
+[6] Vaca-Rubio, C.J., Blanco, L., Pereira, R., Caus, M.: Kolmogorov-arnold networks
+(kans) for time series analysis. arXiv preprint arXiv:2405.08790 (2024)
+[7] Xu, K., Chen, L., Wang, S.: Kolmogorov-arnold networks for time series: Bridging
+predictive power and interpretability. arXiv preprint arXiv:2406.02496 (2024)
+[8] Bresson, R., Nikolentzos, G., Panagopoulos, G., Chatzianastasis, M., Pang, J.,
+Vazirgiannis, M.: Kagnns: Kolmogorov-arnold networks meet graph learning.
+arXiv preprint arXiv:2406.18380 (2024)
+[9] Kiamari, M., Kiamari, M., Krishnamachari, B.: Gkan: Graph kolmogorov-arnold
+networks. arXiv preprint arXiv:2406.06470 (2024)
+[10] Schmidt-Hieber, J.: The kolmogorov–arnold representation theorem revisited.
+Neural networks 137, 119–126 (2021)
+15[11] Eilers, P.H., Marx, B.D.: Flexible smoothing with b-splines and penalties.
+Statistical science 11(2), 89–121 (1996)
+[12] Chaudhuri, A.: B-splines. arXiv preprint arXiv:2108.06617 (2021)
+[13] De Boor, C.: On calculating with b-splines. Journal of Approximation theory
+6(1), 50–62 (1972)
+[14] Altarabichi, M.G.: Rethinking the Function of Neurons in KANs (2024). https:
+//arxiv.org/abs/2407.20667
+[15] Yu, R., Yu, W., Wang, X.: KAN or MLP: A Fairer Comparison (2024). https:
+//arxiv.org/abs/2407.16674
+[16] Bodner, A.D., Tepsich, A.S., Spolski, J.N., Pourteau, S.: Convolutional
+Kolmogorov-Arnold Networks (2024). https://arxiv.org/abs/2406.13155
+[17] Cheon, M.: Demonstrating the Efficacy of Kolmogorov-Arnold Networks in Vision
+Tasks (2024). https://arxiv.org/abs/2406.14916
+[18] Li, C., Liu, X., Li, W., Wang, C., Liu, H., Yuan, Y.: U-KAN Makes Strong
+Backbone for Medical Image Segmentation and Generation (2024). https://arxiv.
+org/abs/2406.02918
+[19] Shen, H., Zeng, C., Wang, J., Wang, Q.: Reduced Effectiveness of KolmogorovArnold Networks on Functions with Noise (2024). https://arxiv.org/abs/2407.
+14882
+[20] Tran, V.D., Le, T.X.H., Tran, T.D., Pham, H.L., Le, V.T.D., Vu, T.H., Nguyen,
+V.T., Nakashima, Y.: Exploring the Limitations of Kolmogorov-Arnold Networks
+in Classification: Insights to Software Training and Hardware Implementation
+(2024). https://arxiv.org/abs/2407.17790
+16
