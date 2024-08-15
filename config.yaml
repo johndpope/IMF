@@ -86,7 +86,7 @@ logging:
   save_steps: 250
 # Accelerator settings
 accelerator:
-  mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
+  mixed_precision: "no"  # Options: "no", "fp16", "bf16"
   cpu: false
   num_processes: 1  # Set to more than 1 for multi-GPU training
 
