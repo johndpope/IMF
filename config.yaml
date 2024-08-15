@@ -66,7 +66,7 @@ dataset:
   # celeb-hq torrent https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666" # for overfitting M2Ohb0FAaJU_1.mp4 use https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
   json_file: './data/overfit.json'  # Selena Gomez
-  extracted_frames: "/mnt/gcs_bucket/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666" # "/media/2TB/celebvhq/35666/images"
+  extracted_frames: "/mnt/gcs_bucket/media/oem/2TB/Downloads/CelebV-HQ/celebvhq/35666" # "/media/2TB/celebvhq/35666/images"
   
   # json_file: './data/celebvhq_info.json' # 35k
 
