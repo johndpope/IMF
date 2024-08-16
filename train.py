@@ -177,7 +177,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
             # Train Discriminator
             optimizer_d.zero_grad()
             
-            x_current.requires_grad = True
+
             real_outputs = discriminator(x_current, update_ada=use_ada)
             fake_outputs = discriminator(x_reconstructed.detach())
             
