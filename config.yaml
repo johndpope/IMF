@@ -9,7 +9,7 @@ model:
   num_layers: 4
   use_resnet_feature: False
   use_mlgffn: False
-  use_enhanced_generator: True
+  use_enhanced_generator: False
   use_skip: False
 # Training parameters
 training:
