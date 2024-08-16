@@ -19,26 +19,33 @@ def gpu_padded_collate(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
     source_frames = [item['source_frame'] for item in batch]
     ref_frames = [item['ref_frame'] for item in batch]
     
-    # Determine the maximum dimensions across all frames in the batch
-    max_height = max(max(frame.shape[1] for frame in source_frames + ref_frames))
-    max_width = max(max(frame.shape[2] for frame in source_frames + ref_frames))
-    
-    # Pad frames
-    padded_source_frames = []
-    padded_ref_frames = []
-    
-    for source, ref in zip(source_frames, ref_frames):
-        # Pad source frame
-        padded_source = F.pad(source, (0, max_width - source.shape[2], 0, max_height - source.shape[1]))
-        padded_source_frames.append(padded_source)
+    # Check if frames are already tensors
+    if isinstance(source_frames[0], torch.Tensor):
+        # If they are tensors, stack them directly
+        source_tensor = torch.stack(source_frames)
+        ref_tensor = torch.stack(ref_frames)
+    else:
+        # If not, process them as before
+        # Determine the maximum dimensions across all frames in the batch
+        max_height = max(frame.shape[1] for frame in source_frames + ref_frames)
+        max_width = max(frame.shape[2] for frame in source_frames + ref_frames)
         
-        # Pad reference frame
-        padded_ref = F.pad(ref, (0, max_width - ref.shape[2], 0, max_height - ref.shape[1]))
-        padded_ref_frames.append(padded_ref)
-    
-    # Stack all padded frame tensors in the batch
-    source_tensor = torch.stack(padded_source_frames)
-    ref_tensor = torch.stack(padded_ref_frames)
+        # Pad frames
+        padded_source_frames = []
+        padded_ref_frames = []
+        
+        for source, ref in zip(source_frames, ref_frames):
+            # Pad source frame
+            padded_source = F.pad(source, (0, max_width - source.shape[2], 0, max_height - source.shape[1]))
+            padded_source_frames.append(padded_source)
+            
+            # Pad reference frame
+            padded_ref = F.pad(ref, (0, max_width - ref.shape[2], 0, max_height - ref.shape[1]))
+            padded_ref_frames.append(padded_ref)
+        
+        # Stack all padded frame tensors in the batch
+        source_tensor = torch.stack(padded_source_frames)
+        ref_tensor = torch.stack(padded_ref_frames)
     
     # Collect other metadata
     video_names = [item['video_name'] for item in batch]
