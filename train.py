@@ -203,6 +203,11 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
             torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
             optimizer_d.step()
 
+
+             # Free up memory
+            del real_outputs, fake_outputs
+            torch.cuda.empty_cache()
+            
             # Train Generator
             optimizer_g.zero_grad()
             
