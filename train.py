@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDis
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
+from helper import consistent_sub_sample,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -25,6 +25,9 @@ import random
 from stylegan import EMA
 from torch.optim import AdamW, SGD
 from transformers import Adafactor
+from torchvision.utils import save_image
+
+
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -160,7 +163,15 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         
                         x_current = source_frames[:, current_idx]
                         x_reconstructed = model(x_current, x_reference, style_mixing_prob, noise_magnitude)
-                    
+                               
+                        save_image(x_reconstructed, "x_reconstructed.png", normalize=True)
+
+                        # Sub-sample tensors
+                        if config.training.use_subsampling:
+                            sub_sample_size = (128, 128)  # As mentioned in the paper
+                            x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
+
+
                         # B. Loss Calculation
                         # 1. Pixel-wise Loss
                         l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
@@ -218,6 +229,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                         total_g_loss += g_loss.item()
                         total_d_loss += d_loss.item()
+
                         progress_bar.update(1)
                         progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
                     

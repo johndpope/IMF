@@ -14,6 +14,36 @@ import io
 from PIL import Image
 from mpl_toolkits.mplot3d import Axes3D
 
+
+def consistent_sub_sample(tensor1, tensor2, sub_sample_size):
+    """
+    Consistently sub-sample two tensors with the same random offset.
+    
+    Args:
+    tensor1 (torch.Tensor): First input tensor of shape (B, C, H, W)
+    tensor2 (torch.Tensor): Second input tensor of shape (B, C, H, W)
+    sub_sample_size (tuple): Desired sub-sample size (h, w)
+    
+    Returns:
+    tuple: Sub-sampled versions of tensor1 and tensor2
+    """
+    assert tensor1.shape == tensor2.shape, "Input tensors must have the same shape"
+    assert tensor1.ndim == 4, "Input tensors should have 4 dimensions (B, C, H, W)"
+    
+    batch_size, channels, height, width = tensor1.shape
+    sub_h, sub_w = sub_sample_size
+    
+    assert height >= sub_h and width >= sub_w, "Sub-sample size should not exceed the tensor dimensions"
+    
+    offset_x = torch.randint(0, height - sub_h + 1, (1,)).item()
+    offset_y = torch.randint(0, width - sub_w + 1, (1,)).item()
+    
+    tensor1_sub = tensor1[..., offset_x:offset_x+sub_h, offset_y:offset_y+sub_w]
+    tensor2_sub = tensor2[..., offset_x:offset_x+sub_h, offset_y:offset_y+sub_w]
+    
+    return tensor1_sub, tensor2_sub
+
+
 def plot_loss_landscape(model, loss_fns, dataloader, num_points=20, alpha=1.0):
     # Store original parameters
     original_params = [p.clone() for p in model.parameters()]
