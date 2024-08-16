@@ -167,11 +167,11 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
             # Sub-sample tensors https://github.com/johndpope/MegaPortrait-hack/issues/41
             sub_sample_size = (128, 128)  # As mentioned in the paper
-            x_current_sub, x_reconstructed_sub = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
+            x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
 
             # Compute losses on subsamples
-            l_p = pixel_loss_fn(x_reconstructed_sub, x_current_sub).mean()
-            l_v = perceptual_loss_fn(x_reconstructed_sub, x_current_sub).mean()
+            l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
+            l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
        
 
             # Train Discriminator
