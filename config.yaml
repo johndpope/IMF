@@ -1,7 +1,7 @@
 # Loss function
 loss:
   type: "vanilla"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
-  lpips_spatial: True
+  lpips_spatial: False
 # Model parameters
 model:
   latent_dim: 32
@@ -9,16 +9,18 @@ model:
   num_layers: 4
   use_resnet_feature: False
   use_mlgffn: False
-  use_enhanced_generator: True
+  use_enhanced_generator: False
   use_skip: False
 # Training parameters
 training:
+
+  use_subsampling: False # saves ram?   https://github.com/johndpope/MegaPortrait-hack/issues/41
   use_r1_reg: True
   r1_gamma: 10
   r1_interval: 16
 
-  use_multiscale_discriminator: True
-  ada_augmentation: False
+  use_multiscale_discriminator: False
+  ada_augmentation: False # not working
   ada_target_r_t: 0.6
   ada_kimg: 500
   ada_interval: 4
@@ -66,8 +68,8 @@ dataset:
   # celeb-hq torrent https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
   root_dir: "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666" # for overfitting M2Ohb0FAaJU_1.mp4 use https://github.com/johndpope/MegaPortrait-hack/tree/main/junk
   json_file: './data/overfit.json'  # Selena Gomez
-  extracted_frames: "./celebvhq/35666/images/" # "/media/2TB/celebvhq/35666/images"
-  
+  # extracted_frames: "./celebvhq/35666/images/" # ""
+  extracted_frames: "/media/2TB/celebvhq/35666/images"  
   # json_file: './data/celebvhq_info.json' # 35k
 
 # Checkpointing
