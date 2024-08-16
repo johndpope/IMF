@@ -223,9 +223,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.training.clip_grad_norm)
             optimizer_g.step()
 
-            # Free up memory
-            del fake_outputs, g_loss_gan, g_loss
-            torch.cuda.empty_cache()
+ 
             
             if ema:
                 ema.update()
@@ -269,6 +267,11 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                 log_grad_flow(model.named_parameters(), global_step)
                 log_grad_flow(discriminator.named_parameters(), global_step)
 
+
+            # Free up memory
+            del fake_outputs, g_loss_gan, g_loss
+            torch.cuda.empty_cache()
+            
         progress_bar.close()
 
         # End of epoch operations
