@@ -240,7 +240,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                         # 5. Frame Decoding
                         x_reconstructed = model.frame_decoder(aligned_features)
-                        # x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
+                        x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
            
                         save_image(x_reconstructed, "x_reconstructed.png", normalize=True)
 
