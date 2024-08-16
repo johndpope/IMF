@@ -15,7 +15,7 @@ import lpips
 from loss import gan_loss_fn,compute_gradient_penalty
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from stylegan import EMA
-
+import numpy as np
 
 def sub_sample_tensor(tensor, sub_sample_size):
     assert tensor.ndim == 4, "Input tensor should have 4 dimensions (batch_size, channels, height, width)"
