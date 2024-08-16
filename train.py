@@ -17,6 +17,19 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from stylegan import EMA
 
 
+def sub_sample_tensor(self, tensor, sub_sample_size):
+    assert tensor.ndim == 4, "Input tensor should have 4 dimensions (batch_size, channels, height, width)"
+    assert tensor.shape[-2] >= sub_sample_size[0] and tensor.shape[-1] >= sub_sample_size[1], "Sub-sample size should not exceed the tensor dimensions"
+
+    batch_size, channels, height, width = tensor.shape
+    # randomly sample so we cover all the image over training.
+    random_offset_x = np.random.randint(0, height - sub_sample_size[0])
+    random_offset_y = np.random.randint(0, width - sub_sample_size[1])
+
+    sub_sampled_tensor = tensor[..., random_offset_x:random_offset_x+sub_sample_size[0], random_offset_y:random_offset_y+sub_sample_size[1]]
+
+    return sub_sampled_tensor
+
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
@@ -134,10 +147,16 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     
 
             x_reconstructed = model(x_current, x_reference, style_mixing_prob, noise_magnitude)
-            
-            # Compute losses that don't require gradients
-            l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
-            l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
+
+
+            # Sub-sample tensors https://github.com/johndpope/MegaPortrait-hack/issues/41
+            sub_sample_size = (128, 128)  # As mentioned in the paper
+            x_current_sub = sub_sample_tensor(x_current, sub_sample_size)
+            x_reconstructed_sub = sub_sample_tensor(x_reconstructed, sub_sample_size)
+            # Compute losses on subsamples
+            l_p = pixel_loss_fn(x_reconstructed_sub, x_current_sub).mean()
+            l_v = perceptual_loss_fn(x_reconstructed_sub, x_current_sub).mean()
+       
 
             # Train Discriminator
             optimizer_d.zero_grad()
