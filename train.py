@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from stylegan import EMA
 
 
-def sub_sample_tensor(self, tensor, sub_sample_size):
+def sub_sample_tensor(tensor, sub_sample_size):
     assert tensor.ndim == 4, "Input tensor should have 4 dimensions (batch_size, channels, height, width)"
     assert tensor.shape[-2] >= sub_sample_size[0] and tensor.shape[-1] >= sub_sample_size[1], "Sub-sample size should not exceed the tensor dimensions"
 
