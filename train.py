@@ -6,7 +6,8 @@ from accelerate import Accelerator
 from tqdm.auto import tqdm
 import wandb
 from model import IMFModel, MultiScalePatchDiscriminator,IMFPatchDiscriminator,ADADiscriminator
-from VideoDataset import VideoDataset,gpu_padded_collate
+# from VideoDataset import VideoDataset,gpu_padded_collate
+from OneVideoDataset import VideoDataset,gpu_padded_collate
 from helper import log_grad_flow,count_model_params, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
@@ -115,10 +116,17 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         if ema:
             ema.decay = current_decay 
 
+
         for batch_idx, batch in enumerate(train_dataloader):
-            for _ in range(int(video_repeat)):
-                source_frames = batch['frames']
-                batch_size, num_frames, channels, height, width = source_frames.shape
+            source_frames = batch['source_frame']
+            ref_frames = batch['ref_frame']
+            
+            # Process each frame in the batch
+            for i in range(source_frames.size(0)):
+                x_current = source_frames[i].unsqueeze(0)
+                x_reference = ref_frames[i].unsqueeze(0)
+
+
 
                 noise_magnitude = get_noise_magnitude(
                     epoch, 
@@ -126,103 +134,96 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     initial_magnitude=config.training.initial_noise_magnitude,
                     final_magnitude=config.training.final_noise_magnitude
                 )
-                ref_indices = range(0, num_frames, config.training.every_xref_frames) if config.training.use_many_xrefs else [0]
 
-                for ref_idx in ref_indices:
-                    x_reference = source_frames[:, ref_idx]
-
-                    for current_idx in range(num_frames):
-                        if current_idx == ref_idx:
-                            continue
                         
-                        x_current = source_frames[:, current_idx]
-                        x_reconstructed = model(x_current, x_reference, style_mixing_prob, noise_magnitude)
-                        
-                        # Compute losses that don't require gradients
-                        l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
-                        l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
+    
+                x_reconstructed = model(x_current, x_reference, style_mixing_prob, noise_magnitude)
+                
+                # Compute losses that don't require gradients
+                l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
+                l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
 
-                        # Train Discriminator
-                        optimizer_d.zero_grad()
-                        
-                        x_current.requires_grad = True
-                        real_outputs = discriminator(x_current, update_ada=use_ada)
-                        fake_outputs = discriminator(x_reconstructed.detach())
-                        
-                        # Compute discriminator loss
-                        d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
-                        
-                        # R1 regularization
-                        if r1_gamma > 0:
-                            r1_reg = 0
-                            for real_output in real_outputs:
-                                grad_real = torch.autograd.grad(
-                                    outputs=real_output.sum(), inputs=x_current, create_graph=True
-                                )[0]
-                                r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
-                            d_loss = d_loss + r1_gamma * r1_reg
+                # Train Discriminator
+                optimizer_d.zero_grad()
+                
+                x_current.requires_grad = True
+                real_outputs = discriminator(x_current, update_ada=use_ada)
+                fake_outputs = discriminator(x_reconstructed.detach())
+                
+                # Compute discriminator loss
+                d_loss = gan_loss_fn(real_outputs, fake_outputs, gan_loss_type)
+                
+                # R1 regularization
+                if r1_gamma > 0:
+                    r1_reg = 0
+                    for real_output in real_outputs:
+                        grad_real = torch.autograd.grad(
+                            outputs=real_output.sum(), inputs=x_current, create_graph=True
+                        )[0]
+                        r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+                    d_loss = d_loss + r1_gamma * r1_reg
 
-                        # Gradient penalty
-                        if config.training.lambda_gp > 0:
-                            gradient_penalty = compute_gradient_penalty(discriminator, x_current, x_reconstructed.detach())
-                            d_loss = d_loss + config.training.lambda_gp * gradient_penalty
+                # Gradient penalty
+                if config.training.lambda_gp > 0:
+                    gradient_penalty = compute_gradient_penalty(discriminator, x_current, x_reconstructed.detach())
+                    d_loss = d_loss + config.training.lambda_gp * gradient_penalty
 
-                        accelerator.backward(d_loss)
-                        torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
-                        optimizer_d.step()
+                accelerator.backward(d_loss)
+                torch.nn.utils.clip_grad_norm_(discriminator.parameters(), max_norm=config.training.clip_grad_norm)
+                optimizer_d.step()
 
-                        # Train Generator
-                        optimizer_g.zero_grad()
-                        
-                        # Recompute fake outputs for generator training
-                        fake_outputs = discriminator(x_reconstructed)
-                        g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
+                # Train Generator
+                optimizer_g.zero_grad()
+                
+                # Recompute fake outputs for generator training
+                fake_outputs = discriminator(x_reconstructed)
+                g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
 
-                        g_loss = (config.training.lambda_pixel * l_p +
-                                  config.training.lambda_perceptual * l_v +
-                                  config.training.lambda_adv * g_loss_gan)
+                g_loss = (config.training.lambda_pixel * l_p +
+                            config.training.lambda_perceptual * l_v +
+                            config.training.lambda_adv * g_loss_gan)
 
-                        accelerator.backward(g_loss)
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.training.clip_grad_norm)
-                        optimizer_g.step()
+                accelerator.backward(g_loss)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.training.clip_grad_norm)
+                optimizer_g.step()
 
-                        if ema:
-                            ema.update()
+                if ema:
+                    ema.update()
 
-                        total_g_loss += g_loss.item()
-                        total_d_loss += d_loss.item()
-                        
-                        global_step += 1
-                        
-                        # Logging and visualization
-                        if global_step % config.logging.save_steps == 0:
-                            sample_path = f"recon_step_{global_step}.png"
-                            sample_recon(model, (x_reconstructed, x_current, x_reference), accelerator, sample_path, 
-                                         num_samples=config.logging.sample_size)
+                total_g_loss += g_loss.item()
+                total_d_loss += d_loss.item()
+                
+                global_step += 1
+                
+                # Logging and visualization
+                if global_step % config.logging.save_steps == 0:
+                    sample_path = f"recon_step_{global_step}.png"
+                    sample_recon(model, (x_reconstructed, x_current, x_reference), accelerator, sample_path, 
+                                    num_samples=config.logging.sample_size)
 
-                        if use_ada and (global_step + 1) % config.training.ada_interval == 0:
-                            discriminator.adjust_ada_p(
-                                target_r_t=config.training.ada_target_r_t,
-                                ada_kimg=config.training.ada_kimg,
-                                ada_interval=config.training.ada_interval,
-                                batch_size=config.training.batch_size
-                            )
-                        progress_bar.update(1)
-                        progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
+                if use_ada and (global_step + 1) % config.training.ada_interval == 0:
+                    discriminator.adjust_ada_p(
+                        target_r_t=config.training.ada_target_r_t,
+                        ada_kimg=config.training.ada_kimg,
+                        ada_interval=config.training.ada_interval,
+                        batch_size=config.training.batch_size
+                    )
+                progress_bar.update(1)
+                progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
 
-                    if accelerator.is_main_process:
-                        log_dict = {
-                            "ada_p": discriminator.get_ada_p() if use_ada else 0,
-                            "ema": current_decay,
-                            "noise_magnitude": noise_magnitude,
-                            "batch_g_loss": g_loss.item(),
-                            "batch_d_loss": d_loss.item(),
-                            "pixel_loss": l_p.item(),
-                            "perceptual_loss": l_v.item(),
-                            "gan_loss": g_loss_gan.item(),
-                            "global_step": global_step,
-                        }
-                        wandb.log(log_dict)
+            if accelerator.is_main_process:
+                log_dict = {
+                    "ada_p": discriminator.get_ada_p() if use_ada else 0,
+                    "ema": current_decay,
+                    "noise_magnitude": noise_magnitude,
+                    "batch_g_loss": g_loss.item(),
+                    "batch_d_loss": d_loss.item(),
+                    "pixel_loss": l_p.item(),
+                    "perceptual_loss": l_v.item(),
+                    "gan_loss": g_loss_gan.item(),
+                    "global_step": global_step,
+                }
+                wandb.log(log_dict)
 
                
             if accelerator.is_main_process and batch_idx % config.logging.log_every == 0:
