@@ -292,9 +292,7 @@ def main():
 
 
     full_dataset = VideoDataset(config.dataset.extracted_frames, 
-                                transform=transform, 
-                                frame_skip=0, 
-                                num_frames=240)
+                                transform=transform)
     
     # Split the dataset into training and validation sets
     train_size = int(0.8 * len(full_dataset))
