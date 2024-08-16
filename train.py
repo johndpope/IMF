@@ -17,18 +17,34 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from stylegan import EMA
 import numpy as np
 
-def sub_sample_tensor(tensor, sub_sample_size):
-    assert tensor.ndim == 4, "Input tensor should have 4 dimensions (batch_size, channels, height, width)"
-    assert tensor.shape[-2] >= sub_sample_size[0] and tensor.shape[-1] >= sub_sample_size[1], "Sub-sample size should not exceed the tensor dimensions"
+def consistent_sub_sample(tensor1, tensor2, sub_sample_size):
+    """
+    Consistently sub-sample two tensors with the same random offset.
+    
+    Args:
+    tensor1 (torch.Tensor): First input tensor of shape (B, C, H, W)
+    tensor2 (torch.Tensor): Second input tensor of shape (B, C, H, W)
+    sub_sample_size (tuple): Desired sub-sample size (h, w)
+    
+    Returns:
+    tuple: Sub-sampled versions of tensor1 and tensor2
+    """
+    assert tensor1.shape == tensor2.shape, "Input tensors must have the same shape"
+    assert tensor1.ndim == 4, "Input tensors should have 4 dimensions (B, C, H, W)"
+    
+    batch_size, channels, height, width = tensor1.shape
+    sub_h, sub_w = sub_sample_size
+    
+    assert height >= sub_h and width >= sub_w, "Sub-sample size should not exceed the tensor dimensions"
+    
+    offset_x = torch.randint(0, height - sub_h + 1, (1,)).item()
+    offset_y = torch.randint(0, width - sub_w + 1, (1,)).item()
+    
+    tensor1_sub = tensor1[..., offset_x:offset_x+sub_h, offset_y:offset_y+sub_w]
+    tensor2_sub = tensor2[..., offset_x:offset_x+sub_h, offset_y:offset_y+sub_w]
+    
+    return tensor1_sub, tensor2_sub
 
-    batch_size, channels, height, width = tensor.shape
-    # randomly sample so we cover all the image over training.
-    random_offset_x = np.random.randint(0, height - sub_sample_size[0])
-    random_offset_y = np.random.randint(0, width - sub_sample_size[1])
-
-    sub_sampled_tensor = tensor[..., random_offset_x:random_offset_x+sub_sample_size[0], random_offset_y:random_offset_y+sub_sample_size[1]]
-
-    return sub_sampled_tensor
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -151,8 +167,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
             # Sub-sample tensors https://github.com/johndpope/MegaPortrait-hack/issues/41
             sub_sample_size = (128, 128)  # As mentioned in the paper
-            x_current_sub = sub_sample_tensor(x_current, sub_sample_size)
-            x_reconstructed_sub = sub_sample_tensor(x_reconstructed, sub_sample_size)
+            x_current_sub, x_reconstructed_sub = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
+
             # Compute losses on subsamples
             l_p = pixel_loss_fn(x_reconstructed_sub, x_current_sub).mean()
             l_v = perceptual_loss_fn(x_reconstructed_sub, x_current_sub).mean()
