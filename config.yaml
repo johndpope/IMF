@@ -9,7 +9,7 @@ model:
   num_layers: 4
   use_resnet_feature: False
   use_mlgffn: False
-  use_enhanced_generator: False
+  use_enhanced_generator: True
   use_skip: False
 # Training parameters
 training:
@@ -32,8 +32,8 @@ training:
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
 
   gradient_accumulation_steps: 1
-  lambda_pixel: 5  # in paper lambda-pixel = 10 Adjust this value as needed
-  lambda_perceptual: 20 # lambda perceptual = 10
+  lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
+  lambda_perceptual: 10 # lambda perceptual = 10
   lambda_adv: .5 # adverserial = 1
   lambda_gp: 10  # Gradient penalty coefficient
   lambda_mse: 1.0
