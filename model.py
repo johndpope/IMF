@@ -133,16 +133,23 @@ class DenseFeatureEncoder(nn.Module):
     def forward(self, x):
         debug_print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
         features = []
-        x = self.initial_conv(x)
+        if self.training:
+            x = checkpoint(self.initial_conv, x)
+        else:
+            x = self.initial_conv(x)
         debug_print(f"    After initial conv: {x.shape}")
         
         for i, block in enumerate(self.down_blocks):
-            x = block(x)
+            if self.training:
+                x = checkpoint(block, x)
+            else:
+                x = block(x)
             debug_print(f"    After down_block {i+1}: {x.shape}")
             if i >= 1:  # Start collecting features from the second block
                 features.append(x)
         
         debug_print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
+        
         return features
 
 '''
@@ -303,7 +310,14 @@ class FrameDecoder(nn.Module):
             nn.Sigmoid()
         )
 
+
     def forward(self, features):
+        if self.training:
+            return checkpoint(self._forward, features)
+        else:
+            return self._forward(features)
+        
+    def _forward(self, features):
         debug_print(f"🎒 FrameDecoder input shapes")
         for f in features:
             debug_print(f"f:{f.shape}")
