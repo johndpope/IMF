@@ -18,18 +18,22 @@ from mpl_toolkits.mplot3d import Axes3D
 
 def plot_grad_flow(named_parameters):
     '''Plots the gradients flowing through different layers in the net during training.
-    Can be used for checking for possible gradient vanishing / exploding problems.
-    
-    Usage: Plug this function in Trainer class after loss.backward() as 
-    "plot_grad_flow(self.model.named_parameters())" to visualize the gradient flow'''
+    Can be used for checking for possible gradient vanishing / exploding problems.'''
     ave_grads = []
     max_grads= []
     layers = []
     for n, p in named_parameters:
         if(p.requires_grad) and ("bias" not in n):
             layers.append(n)
-            ave_grads.append(p.grad.abs().mean().item())
-            max_grads.append(p.grad.abs().max().item())
+            if p.grad is not None:
+                ave_grads.append(p.grad.abs().mean().item())
+                max_grads.append(p.grad.abs().max().item())
+            else:
+                ave_grads.append(0)
+                max_grads.append(0)
+                print(f"Warning: No gradient for {n}")
+
+    plt.figure(figsize=(12, 8))  # Increase figure size for better readability
     plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
     plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
     plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
