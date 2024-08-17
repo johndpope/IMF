@@ -234,12 +234,12 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                             align_layer= model.implicit_motion_alignment[i]
                             m_c_i = m_c[i] 
                             m_r_i = m_r[i]
-                            aligned_features, intermediate_outputs = align_layer(m_c_i, m_r_i, f_r_i)
+                            aligned_feature, intermediate_outputs = align_layer(m_c_i, m_r_i, f_r_i)
                             if isinstance(intermediate_outputs, dict) and 'attn_weights' in intermediate_outputs:
                                 attn_weights = intermediate_outputs['attn_weights']
                                 if batch_idx % config.logging.visualize_every == 0:
                                     visualize_attention_maps(attn_weights, f"attention_maps_epoch_{epoch}_batch_{batch_idx}_layer_{i}.png")
-
+                            aligned_features.append(aligned_feature)
 
                         # 5. Frame Decoding
                         x_reconstructed = model.frame_decoder(aligned_features)
