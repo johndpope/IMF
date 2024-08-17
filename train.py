@@ -253,7 +253,9 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
            
                         save_image(x_reconstructed, "x_reconstructed.png", normalize=True)
-
+                        save_image(x_current, "x_current.png", normalize=True)
+                        
+                        
                         # B. Loss Calculation
                         # 1. Pixel-wise Loss
                         l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
