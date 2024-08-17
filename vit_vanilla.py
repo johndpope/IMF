@@ -7,7 +7,7 @@ DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
-        
+
 class PatchEmbedding(nn.Module):
     def __init__(self, patch_size, in_channels, embed_dim):
         super().__init__()
@@ -71,7 +71,7 @@ class TransformerBlock(nn.Module):
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, spatial_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
-        self.patch_size = 1  # We'll treat each pixel as a patch for flexibility
+        self.patch_size = 16  # We'll treat each pixel as a patch for flexibility
         self.embed_dim = feature_dim
         self.spatial_dim = spatial_dim
 
