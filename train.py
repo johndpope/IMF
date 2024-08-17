@@ -132,6 +132,11 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         if ema:
             ema.decay = current_decay 
 
+
+        total_g_loss = 0
+        total_d_loss = 0
+        num_batches = 0
+        
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
             for _ in range(int(video_repeat)):
@@ -142,9 +147,6 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                 ref_idx = 0
 
-                total_g_loss = 0
-                total_d_loss = 0
-                num_batches = 0
                 # Calculate noise magnitude for this epoch
                 noise_magnitude = get_noise_magnitude(
                     epoch, 
