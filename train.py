@@ -261,8 +261,10 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         x_reconstructed = model.frame_decoder(aligned_features)
                         
                         if global_step % 20 == 0:
-                            save_image((x_reconstructed), "x_reconstructed.png")
-                            save_image((x_current), "x_current.png")
+                            a = un_normalize(x_reconstructed)
+                            b = un_normalize(x_current)
+                            save_image(a, "x_reconstructed.png")
+                            save_image(b, "x_current.png")
                         
                         
                         # B. Loss Calculation
