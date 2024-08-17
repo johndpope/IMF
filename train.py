@@ -73,16 +73,14 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
     # Generator optimizer
     optimizer_g = AdamW( model.parameters(),
-        lr=config.training.learning_rate_g,
-        betas=(config.optimizer.beta1, config.optimizer.beta2),
-        weight_decay=config.training.weight_decay )
+        lr=2e-4,  # 2 × 10^-4
+    betas=(0.5, 0.999)
 
     # Discriminator optimizer
     optimizer_d = AdamW(
         discriminator.parameters(),
-        lr=config.training.learning_rate_d,
-        betas=(config.optimizer.beta1, config.optimizer.beta2),
-        weight_decay=config.training.weight_decay
+          lr=2e-4,  # 2 × 10^-4
+    betas=(0.5, 0.999)
     )
 
     # dynamic learning rate
