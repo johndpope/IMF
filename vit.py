@@ -36,21 +36,21 @@ class TransformerBlock(nn.Module):
 
 
     def forward(self, x):
-        print(f"TransformerBlock input shape: {x.shape}")
+        #print(f"TransformerBlock input shape: {x.shape}")
         B, C, H, W = x.shape
         x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
         
         x_norm = self.norm1(x_reshaped)
         att_output, _ = self.attention(x_norm, x_norm, x_norm)
         x_reshaped = x_reshaped + att_output
-        print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
+        #print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
 
         ff_output = self.mlp(self.norm2(x_reshaped))
         x_reshaped = x_reshaped + ff_output
-        print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
+        #print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
 
         output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
-        print(f"TransformerBlock output shape: {output.shape}")
+        #print(f"TransformerBlock output shape: {output.shape}")
         return output
 
 class ImplicitMotionAlignment(nn.Module):
@@ -67,19 +67,19 @@ class ImplicitMotionAlignment(nn.Module):
 
     def forward(self, ml_c, ml_r, fl_r):
         embeddings = []
-        print(f"self.spatial_dim:{self.spatial_dim}")
-        print(f"self.feature_dim:{self.feature_dim}")
-        print(f"self.motion_dim:{self.motion_dim}")
+        #print(f"self.spatial_dim:{self.spatial_dim}")
+        #print(f"self.feature_dim:{self.feature_dim}")
+        #print(f"self.motion_dim:{self.motion_dim}")
         # Cross-attention module
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
         embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
-        print(f"ImplicitMotionAlignment: After cross-attention, V_prime.shape = {V_prime.shape}")
+        #print(f"ImplicitMotionAlignment: After cross-attention, V_prime.shape = {V_prime.shape}")
 
         # Transformer blocks
         for i, block in enumerate(self.transformer_blocks):
             V_prime = block(V_prime)
             embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
-            print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
+            #print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
 
         return V_prime, embeddings
 
@@ -127,9 +127,9 @@ class CrossAttentionModule(nn.Module):
         self.dim_head = dim_qk
         self.scale = dim_qk ** -0.5
 
-        print("CrossAttentionModule:",dim_spatial)
-        print("dim_qk:",dim_qk)
-        print("dim_v:",dim_v)
+        #print("CrossAttentionModule:",dim_spatial)
+        #print("dim_qk:",dim_qk)
+        #print("dim_v:",dim_v)
         
 
         # Separate positional encodings for queries and keys
@@ -167,7 +167,7 @@ class CrossAttentionModule(nn.Module):
 if __name__ == "__main__":
     # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    #print(f"Using device: {device}")
 
     # Example dimensions
     B, C_f, C_m, H, W = 1, 256, 256, 64, 64
@@ -192,9 +192,9 @@ if __name__ == "__main__":
     with torch.no_grad():
         output, embeddings = model(ml_c, ml_r, fl_r)
 
-    print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-    print(f"Output shape: {output.shape}")
+    #print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+    #print(f"Output shape: {output.shape}")
 
     # Visualize embeddings
     model.visualize_embeddings(embeddings, "embeddings_visualization.png")
-    print("Embedding visualization saved as 'embeddings_visualization.png'")
+    #print("Embedding visualization saved as 'embeddings_visualization.png'")
