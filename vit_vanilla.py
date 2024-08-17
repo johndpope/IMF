@@ -3,7 +3,7 @@ import torch.nn as nn
 from einops import repeat, rearrange
 from einops.layers.torch import Rearrange
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
