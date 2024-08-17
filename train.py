@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDis
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import plot_grad_flow,visualize_attention_maps,log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
+from helper import plot_grad_flow,visualize_attention_maps,log_loss_landscape,log_grad_flow,count_model_params,un_normalize, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -255,11 +255,11 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                         # 5. Frame Decoding
                         x_reconstructed = model.frame_decoder(aligned_features)
-                        x_reconstructed_norm = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
+                        x_reconstructed_norm = un_normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
            
                         if global_step % 20 == 0:
-                            save_image(x_reconstructed_norm, "x_reconstructed.png", normalize=True)
-                            save_image(x_current, "x_current.png", normalize=True)
+                            save_image(x_reconstructed_norm, "x_reconstructed.png")
+                            save_image(x_current, "x_current.png")
                         
                         
                         # B. Loss Calculation
