@@ -320,14 +320,14 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         global_step += 1
                     
 
-                        if global_step % config.logging.visualize_every == 0:
-                            plt = plot_grad_flow(model.named_parameters())
-                            plt.savefig(f'grad_flow_epoch_{epoch}_batch_{batch_idx}.png')
-                            #plt.close()
+                        # if global_step % config.logging.visualize_every == 0:
+                        #     plt = plot_grad_flow(model.named_parameters())
+                        #     plt.savefig(f'grad_flow_epoch_{epoch}_batch_{batch_idx}.png')
+                        #     #plt.close()
 
-                            plt = plot_grad_flow(discriminator.named_parameters())
-                            plt.savefig(f'grad_flow_epoch_discrim_{epoch}_batch_{batch_idx}.png')
-                            plt.close()
+                        #     plt = plot_grad_flow(discriminator.named_parameters())
+                        #     plt.savefig(f'grad_flow_epoch_discrim_{epoch}_batch_{batch_idx}.png')
+                        #     plt.close()
                     # Sample and save reconstructions every save_steps
                     sample_path = f"recon_step_{global_step}.png"
                     sample_recon(model, (x_reconstructed, x_current,x_reference), accelerator, sample_path, 
