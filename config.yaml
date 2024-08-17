@@ -13,6 +13,7 @@ model:
   use_skip: False
 # Training parameters
 training:
+  fixed_ref_steps: 500
   ema_decay: 0.999
   style_mixing_prob: 0.9
   initial_noise_magnitude: 0.01

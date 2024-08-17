@@ -116,7 +116,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
     style_mixing_prob = config.training.style_mixing_prob
     r1_gamma = config.training.r1_gamma  # R1 regularization strength
-
+    fixed_ref_steps = config.training.fixed_ref_steps 
 
     global_step = 0
 
@@ -153,10 +153,18 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                     initial_magnitude=config.training.initial_noise_magnitude,
                     final_magnitude=config.training.final_noise_magnitude
                 )
-                if config.training.use_many_xrefs:
-                    ref_indices = range(0, num_frames, config.training.every_xref_frames)
+                # Determine reference frame(s)
+                if global_step < fixed_ref_steps:
+                    # Use only the first frame as reference during initial steps
+                    ref_indices = [0]
+                    x_reference = source_frames[:, 0].clone()  # Clone to ensure it's not modified
                 else:
-                    ref_indices = [0]  # Only use the first frame as reference
+                    # After fixed_ref_steps, use the normal reference frame selection
+                    if config.training.use_many_xrefs:
+                        ref_indices = range(0, num_frames, config.training.every_xref_frames)
+                    else:
+                        ref_indices = [0]  # Only use the first frame as reference
+
 
                 for ref_idx in ref_indices:
                     x_reference = source_frames[:, ref_idx]
