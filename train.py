@@ -66,7 +66,7 @@ def get_layer_wise_learning_rates(model):
 
 
 
-def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
+def train_gan(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
     # layerwise params - 
     # layer_wise_params = get_layer_wise_learning_rates(model)
@@ -432,6 +432,186 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
     unwrapped_model = accelerator.unwrap_model(model)
     accelerator.save(unwrapped_model.state_dict(), f"{config.checkpoints.dir}/final_model.pth")
       
+
+def train(config, model, train_dataloader, val_loader, accelerator):
+    optimizer = AdamW(model.parameters(), lr=config.training.learning_rate_g, betas=(0.9, 0.999))
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10, min_lr=1e-6)
+
+    model, optimizer, train_dataloader = accelerator.prepare(model, optimizer, train_dataloader)
+
+    perceptual_loss_fn = lpips.LPIPS(net='alex', spatial=True).to(accelerator.device)
+    pixel_loss_fn = nn.L1Loss()
+
+    global_step = 0
+
+    for epoch in range(config.training.num_epochs):
+        model.train()
+        progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
+
+        total_loss = 0
+        num_batches = 0
+
+        style_mixing_prob = config.training.style_mixing_prob
+        for batch_idx, batch in enumerate(train_dataloader):
+            source_frames = batch['frames']
+            batch_size, num_frames, channels, height, width = source_frames.shape
+
+            noise_magnitude = get_noise_magnitude(epoch, config.training.num_epochs)
+
+            for ref_idx in range(0, num_frames, config.training.every_xref_frames):
+                x_reference = source_frames[:, ref_idx]
+
+                for current_idx in range(num_frames):
+                    if current_idx == ref_idx:
+                        continue
+
+                    x_current = source_frames[:, current_idx]
+
+                    # A. Forward Pass
+                    # 1. Dense Feature Encoding
+                    f_r = model.dense_feature_encoder(x_reference)
+
+                    # 2. Latent Token Encoding (with noise addition)
+                    t_r = model.latent_token_encoder(x_reference)
+                    t_c = model.latent_token_encoder(x_current)
+
+
+
+                    # Add noise to latent tokens
+                    noise_r = torch.randn_like(t_r) * noise_magnitude
+                    noise_c = torch.randn_like(t_c) * noise_magnitude
+                    t_r = t_r + noise_r
+                    t_c = t_c + noise_c
+
+                    # Style mixing (optional, based on probability)
+                    # Style mixing (optional, based on probability)
+                    # print(f"Original t_c shape: {t_c.shape}")
+                    # print(f"Original t_r shape: {t_r.shape}")
+
+                    if torch.rand(()).item() < style_mixing_prob:
+                        batch_size = t_c.size(0)
+                        rand_indices = torch.randperm(batch_size)
+                        rand_t_c = t_c[rand_indices]
+                        rand_t_r = t_r[rand_indices]
+                        
+                        # print(f"rand_t_c shape: {rand_t_c.shape}")
+                        # print(f"rand_t_r shape: {rand_t_r.shape}")
+                        
+                        # Create a mask for mixing
+                        mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
+                        mix_mask = mix_mask.float()
+                        
+                        # print(f"mix_mask shape: {mix_mask.shape}")
+                        
+                        # Mix the tokens
+                        mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
+                        mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
+                    else:
+                        # print(f"no mixing...")
+                        mix_t_c = t_c
+                        mix_t_r = t_r
+
+                    # print(f"Final mix_t_c shape: {mix_t_c.shape}")
+                    # print(f"Final mix_t_r shape: {mix_t_r.shape}")
+
+                    # Now use mix_t_c and mix_t_r for the rest of the processing
+                    m_c = model.latent_token_decoder(mix_t_c)
+                    m_r = model.latent_token_decoder(mix_t_r)
+
+
+                    # Visualize latent tokens (do this every N batches to avoid overwhelming I/O)
+                    # if batch_idx % config.logging.visualize_every == 0:
+                    #     os.makedirs(f"latent_visualizations/epoch_{epoch}", exist_ok=True)
+                    #     visualize_latent_token(
+                    #         t_r,  # Visualize the first token in the batch
+                    #         f"latent_visualizations/epoch_{epoch}/t_r_token_reference_batch{batch_idx}.png"
+                    #     )
+                    #     visualize_latent_token(
+                    #         m_c[0],  # Visualize the first token in the batch
+                    #         f"latent_visualizations/epoch_{epoch}/m_c_token_current_batch{batch_idx}.png"
+                    #     )
+
+
+                    # 4. Implicit Motion Alignment
+                    # Implicit Motion Alignment
+                    aligned_features = []
+                    for i in range(len(model.implicit_motion_alignment)):
+                        f_r_i = f_r[i]
+                        align_layer= model.implicit_motion_alignment[i]
+                        m_c_i = m_c[i] 
+                        m_r_i = m_r[i]
+                        aligned_feature, intermediate_outputs = align_layer(m_c_i, m_r_i, f_r_i)
+                        if isinstance(intermediate_outputs, dict) and 'attn_weights' in intermediate_outputs:
+                            attn_weights = intermediate_outputs['attn_weights']
+                            if global_step % config.logging.visualize_every == 0:
+                                visualize_attention_maps(attn_weights, f"./visualisations/attention_maps_epoch_{epoch}_batch_{batch_idx}_layer_{i}_{global_step}.png")
+                        aligned_features.append(aligned_feature)
+
+
+                    # 5. Frame Decoding
+                    x_reconstructed = model.frame_decoder(aligned_features)
+                    
+                    if global_step % 20 == 0:
+                        a = un_normalize(x_reconstructed)
+                        b = un_normalize(x_current)
+                        save_image(a, "x_reconstructed.png")
+                        save_image(b, "x_current.png")
+                        
+                    # Loss calculation
+                    l_p = pixel_loss_fn(x_reconstructed, x_current).mean()
+                    l_v = perceptual_loss_fn(x_reconstructed, x_current).mean()
+
+                    loss = config.training.lambda_pixel * l_p + config.training.lambda_perceptual * l_v
+
+                    # Optimization
+                    optimizer.zero_grad()
+                    accelerator.backward(loss)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.training.clip_grad_norm)
+                    optimizer.step()
+
+                    total_loss += loss.item()
+                    num_batches += 1
+
+                    progress_bar.update(1)
+                    progress_bar.set_postfix({"Loss": f"{loss.item():.4f}"})
+
+                    global_step += 1
+
+                # Sample and save reconstructions
+                if global_step % config.logging.save_every == 0:
+                    sample_path = f"recon_step_{global_step}.png"
+                    sample_recon(model, (x_reconstructed, x_current, x_reference), accelerator, sample_path, 
+                                num_samples=config.logging.sample_size)
+
+        progress_bar.close()
+
+        avg_loss = total_loss / num_batches
+        scheduler.step(avg_loss)
+
+        # Logging
+        if accelerator.is_main_process:
+            log_dict = {
+                "epoch": epoch + 1,
+                "avg_loss": avg_loss,
+                "lr": optimizer.param_groups[0]['lr'],
+            }
+            wandb.log(log_dict)
+
+        # Checkpoint saving
+        if (epoch + 1) % config.checkpoints.interval == 0:
+            accelerator.wait_for_everyone()
+            unwrapped_model = accelerator.unwrap_model(model)
+            accelerator.save({
+                'epoch': epoch,
+                'model_state_dict': unwrapped_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+            }, f"{config.checkpoints.dir}/checkpoint_{epoch+1}.pth")
+
+    # Final model saving
+    accelerator.wait_for_everyone()
+    unwrapped_model = accelerator.unwrap_model(model)
+    accelerator.save(unwrapped_model.state_dict(), f"{config.checkpoints.dir}/final_model.pth")
+
 def main():
     config = load_config('config.yaml')
     torch.cuda.empty_cache()
@@ -505,7 +685,8 @@ def main():
 
 
 
-    train(config, model, discriminator, train_dataloader, val_loader,  accelerator)
+    # train_gan(config, model, discriminator, train_dataloader, val_loader,  accelerator)
+    train(config, model,  train_dataloader, val_loader,  accelerator)
 
 if __name__ == "__main__":
     main()

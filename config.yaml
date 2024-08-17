@@ -26,6 +26,7 @@ training:
   batch_size: 1 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
   save_steps: 250
+
   learning_rate_g: 1.0e-4 # Reduced learning rate for generator
   initial_learning_rate_d: 1.0e-4  # Set a lower initial learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
@@ -68,6 +69,7 @@ checkpoints:
 
 # Logging and visualization
 logging:
+  save_every: 1
   sample_interval: 1
   sample_size: 1 # for images on wandb
   output_dir: "./samples"
