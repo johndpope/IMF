@@ -113,7 +113,7 @@ class ResNetFeatureExtractor(nn.Module):
 
 
 class DenseFeatureEncoder(nn.Module):
-    def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64,gradient_scale=0.1):
+    def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64,gradient_scale=0.9):
         super().__init__()
         self.initial_conv = nn.Sequential(
             nn.Conv2d(in_channels, initial_channels, kernel_size=7, stride=1, padding=3),
@@ -284,7 +284,7 @@ The channel dimensions decrease as we go up the network: 512 → 512 → 256 →
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
 class FrameDecoder(nn.Module):
-    def __init__(self):
+    def __init__(self,gradient_scale=0.5):
         super().__init__()
         
         self.upconv_blocks = nn.ModuleList([
@@ -306,6 +306,8 @@ class FrameDecoder(nn.Module):
             # nn.BatchNorm2d(3),
             nn.Sigmoid()
         )
+        
+        add_gradient_rescale(self,gradient_scale)
 
     def forward(self, features):
         debug_print(f"🎒 FrameDecoder input shapes")
