@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDis
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import visualize_attention_maps,log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
+from helper import plot_grad_flow,visualize_attention_maps,log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -241,6 +241,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                                     visualize_attention_maps(attn_weights, f"./visualisations/attention_maps_epoch_{epoch}_batch_{batch_idx}_layer_{i}_{global_step}.png")
                             aligned_features.append(aligned_feature)
 
+
                         # 5. Frame Decoding
                         x_reconstructed = model.frame_decoder(aligned_features)
                         x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
@@ -310,12 +311,17 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         # Update global step
                         global_step += 1
                     
+
+                        if global_step % config.logging.visualize_every == 0:
+                            plt = plot_grad_flow(model.named_parameters())
+                            plt.savefig(f'grad_flow_epoch_{epoch}_batch_{batch_idx}.png')
+                            plt.close()
                     # Sample and save reconstructions every save_steps
                     sample_path = f"recon_step_{global_step}.png"
                     sample_recon(model, (x_reconstructed, x_current,x_reference), accelerator, sample_path, 
                                 num_samples=config.logging.sample_size)
 
-
+                     
                     # Calculate average losses for the epoch
                     avg_g_loss = total_g_loss / len(train_dataloader)
                     avg_d_loss = total_d_loss / len(train_dataloader)
