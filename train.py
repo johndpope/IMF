@@ -126,8 +126,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
         discriminator.train()
         progress_bar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}/{config.training.num_epochs}")
 
-        total_g_loss = 0
-        total_d_loss = 0
+
 
         current_decay = get_ema_decay(epoch, config.training.num_epochs)
         if ema:
@@ -143,6 +142,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                 ref_idx = 0
 
+                total_g_loss = 0
+                total_d_loss = 0
                 # Calculate noise magnitude for this epoch
                 noise_magnitude = get_noise_magnitude(
                     epoch, 
