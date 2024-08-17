@@ -417,7 +417,7 @@ class IMFModel(nn.Module):
         FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder
         self.dense_feature_encoder = FeatureExtractor(output_channels=self.motion_dims)
  
-        IMF = ImplicitMotionAlignmentWithSkip if use_skip else ImplicitMotionAlignment
+        IMF =  ImplicitMotionAlignment
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
             dim = self.motion_dims[i]
