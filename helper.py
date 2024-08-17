@@ -17,24 +17,28 @@ from mpl_toolkits.mplot3d import Axes3D
 
 
 def visualize_attention_maps(attn_weights, save_path):
+    # Convert to numpy if it's a torch tensor
+    if isinstance(attn_weights, torch.Tensor):
+        attn_weights = attn_weights.cpu().detach().numpy()
+    
     # attn_weights shape: (batch_size, num_heads, seq_len, seq_len)
     batch_size, num_heads, seq_len, _ = attn_weights.shape
     
     fig, axes = plt.subplots(batch_size, num_heads, figsize=(num_heads*3, batch_size*3))
     if batch_size == 1:
-        axes = axes.reshape(1, -1)
+        axes = np.array([axes])  # Ensure axes is 2D
     
     for i in range(batch_size):
         for j in range(num_heads):
-            ax = axes[i, j] if batch_size > 1 else axes[j]
-            im = ax.imshow(attn_weights[i, j].cpu().detach(), cmap='viridis')
+            ax = axes[i, j] if batch_size > 1 else axes[0, j]
+            im = ax.imshow(attn_weights[i, j], cmap='viridis')
             ax.set_title(f'Batch {i+1}, Head {j+1}')
             ax.axis('off')
     
     plt.colorbar(im, ax=axes.ravel().tolist(), shrink=0.8)
     plt.tight_layout()
     plt.savefig(save_path)
-    plt.close()
+    plt.close(fig)
 
 def plot_loss_landscape(model, loss_fns, dataloader, num_points=20, alpha=1.0):
     # Store original parameters
