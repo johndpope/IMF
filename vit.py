@@ -109,8 +109,8 @@ class ImplicitMotionAlignment(nn.Module):
             debug_print(f"ImplicitMotionAlignment after block {i+1}: {V_prime.shape}")
         
         debug_print(f"ImplicitMotionAlignment output shape: {V_prime.shape}")
-        return V_prime, attn_weights
-
+        return V_prime, {'attn_weights': attn_weights}
+    
 
 
 
