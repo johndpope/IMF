@@ -580,7 +580,8 @@ def train(config, model, train_dataloader, val_loader, accelerator):
                 # Sample and save reconstructions
                 if global_step % config.logging.save_every == 0:
                     sample_path = f"recon_step_{global_step}.png"
-                    sample_recon(model, (x_reconstructed, x_current, x_reference), accelerator, sample_path, 
+                    a = un_normalize(x_reconstructed)
+                    sample_recon(model, (a, x_current, x_reference), accelerator, sample_path, 
                                 num_samples=config.logging.sample_size)
 
         progress_bar.close()
