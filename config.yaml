@@ -70,12 +70,12 @@ logging:
   sample_interval: 1
   sample_size: 1 # for images on wandb
   output_dir: "./samples"
-  visualize_every: 100  # Visualize latent tokens every 100 batches
+  visualize_every: 10  # Visualize latent tokens every 100 batches
   print_model_details: False
   log_every: 100
 # Accelerator settings
 accelerator:
-  mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
+  mixed_precision: "no"  # Options: "no", "fp16", "bf16"
   cpu: false
   num_processes: 1  # Set to more than 1 for multi-GPU training
 
