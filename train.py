@@ -144,6 +144,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                 total_g_loss = 0
                 total_d_loss = 0
+                num_batches = 0
                 # Calculate noise magnitude for this epoch
                 noise_magnitude = get_noise_magnitude(
                     epoch, 
@@ -319,6 +320,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
                         total_g_loss += g_loss.item()
                         total_d_loss += d_loss.item()
+                        num_batches += 1
+
                         progress_bar.update(1)
                         progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
                     
@@ -340,10 +343,10 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                                 num_samples=config.logging.sample_size)
 
                      
-                    # Calculate average losses for the epoch
-                    avg_g_loss = total_g_loss / len(train_dataloader)
-                    avg_d_loss = total_d_loss / len(train_dataloader)
-                    # Step the schedulers
+                    avg_g_loss = total_g_loss / num_batches
+                    avg_d_loss = total_d_loss / num_batches
+
+                    # Step the schedulers with the average losses
                     scheduler_g.step(avg_g_loss)
                     scheduler_d.step(avg_d_loss)
                     # Logging
@@ -358,6 +361,8 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                             "perceptual_loss": l_v.item(),
                             "gan_loss": g_loss_gan.item(),
                             "batch": batch_idx + epoch * len(train_dataloader),
+                            "avg_g_loss": avg_g_loss,
+                            "avg_d_loss": avg_d_loss,
                         }
 
                         # Add layer-wise learning rates
