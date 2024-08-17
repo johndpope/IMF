@@ -15,7 +15,7 @@ model:
 training:
   fixed_ref_steps: 500
   ema_decay: 0.999
-  style_mixing_prob: 0.9
+  style_mixing_prob: 0.0
   initial_noise_magnitude: 0.01
   final_noise_magnitude: 0.0001 
   use_multiscale_discriminator: True

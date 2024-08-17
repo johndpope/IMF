@@ -5,15 +5,8 @@ import math
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 import numpy as np
-from torch.utils.checkpoint import checkpoint
-from vit_mlgffn import HSCATB, CrossAttentionModule as MLGFFNCrossAttention
 
-DEBUG = False
-def debug_print(*args, **kwargs):
-    if DEBUG:
-        print(*args, **kwargs)
 
-# https://medium.com/pytorch/training-compact-transformers-from-scratch-in-30-minutes-with-pytorch-ff5c21668ed5
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=10000):
         super().__init__()
@@ -41,77 +34,48 @@ class TransformerBlock(nn.Module):
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
 
+
     def forward(self, x):
+        print(f"TransformerBlock input shape: {x.shape}")
         B, C, H, W = x.shape
         x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
         
         x_norm = self.norm1(x_reshaped)
         att_output, _ = self.attention(x_norm, x_norm, x_norm)
         x_reshaped = x_reshaped + att_output
+        print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
 
         ff_output = self.mlp(self.norm2(x_reshaped))
         x_reshaped = x_reshaped + ff_output
+        print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
 
         output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
+        print(f"TransformerBlock output shape: {output.shape}")
         return output
 
-
-class ImplicitMotionAlignmentWithSkip(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio, use_mlgffn=False):
+class ImplicitMotionAlignment(nn.Module):
+    def __init__(self, feature_dim, motion_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
-  
-        if use_mlgffn:
-            self.cross_attention = MLGFFNCrossAttention(feature_dim, motion_dim, num_heads)
-            self.blocks = nn.ModuleList([
-                HSCATB(feature_dim, num_heads, window_size, mlp_ratio) for _ in range(depth)
-            ])
-        else:
-            self.cross_attention = CrossAttentionModule(dim=feature_dim, heads=num_heads, dim_head=feature_dim // num_heads)
-            self.blocks = nn.ModuleList([
-                TransformerBlock(feature_dim, num_heads, feature_dim // num_heads, feature_dim * mlp_ratio)
-                for _ in range(depth)
-            ])
-        self.skip_connections = nn.ModuleList([
-            nn.Linear(motion_dim, motion_dim) for _ in range(depth)
+        self.cross_attention = CrossAttentionModule(feature_dim, motion_dim, heads, dim_head)
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(feature_dim, heads, dim_head, mlp_dim) for _ in range(depth)
         ])
 
-    def forward(self, m_c, m_r, f_r):
-        x = self.cross_attention(m_c, m_r, f_r)
-        for block, skip in zip(self.blocks, self.skip_connections):
-            x = block(x) + skip(x)
-        return x
-
-class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth=2, num_heads=8, window_size=4, mlp_ratio=4, use_mlgffn=False):
-        super().__init__()
-        self.use_mlgffn = use_mlgffn
-        
-        if use_mlgffn:
-            self.cross_attention = MLGFFNCrossAttention(feature_dim, motion_dim, num_heads)
-            self.blocks = nn.ModuleList([
-                HSCATB(feature_dim, num_heads, window_size, mlp_ratio) for _ in range(depth)
-            ])
-        else:
-            self.cross_attention = CrossAttentionModule(dim=feature_dim, heads=num_heads, dim_head=feature_dim // num_heads)
-            self.blocks = nn.ModuleList([
-                TransformerBlock(feature_dim, num_heads, feature_dim // num_heads, feature_dim * mlp_ratio)
-                for _ in range(depth)
-            ])
-
     def forward(self, ml_c, ml_r, fl_r):
-        debug_print(f"ImplicitMotionAlignment input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        embeddings = []
         
-        V_prime,attn_weights = self.cross_attention(ml_c, ml_r, fl_r)
-        debug_print(f"ImplicitMotionAlignment after cross attention: {V_prime.shape}")
-        
-        for i, block in enumerate(self.blocks):
-            V_prime = block(V_prime)
-            debug_print(f"ImplicitMotionAlignment after block {i+1}: {V_prime.shape}")
-        
-        debug_print(f"ImplicitMotionAlignment output shape: {V_prime.shape}")
-        return V_prime, {'attn_weights': attn_weights}
-    
+        # Cross-attention module
+        V_prime = self.cross_attention(ml_c, ml_r, fl_r)
+        embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
+        print(f"ImplicitMotionAlignment: After cross-attention, V_prime.shape = {V_prime.shape}")
 
+        # Transformer blocks
+        for i, block in enumerate(self.transformer_blocks):
+            V_prime = block(V_prime)
+            embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
+            print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
+
+        return V_prime, embeddings
 
 
     @staticmethod
@@ -147,61 +111,63 @@ class ImplicitMotionAlignment(nn.Module):
 
 
 class CrossAttentionModule(nn.Module):
-    def __init__(self, dim=128, heads=8, dim_head=64):
+    def __init__(self, feature_dim, motion_dim, heads, dim_head):
         super().__init__()
-        self.dim = dim
         self.heads = heads
         self.dim_head = dim_head
         self.scale = dim_head ** -0.5
 
-        self.to_q = nn.Linear(dim, heads * dim_head)
-        self.to_k = nn.Linear(dim, heads * dim_head)
-        self.to_v = nn.Linear(dim, heads * dim_head)
-        self.to_out = nn.Linear(heads * dim_head, dim)
+        self.to_q = nn.Linear(motion_dim, heads * dim_head)
+        self.to_k = nn.Linear(motion_dim, heads * dim_head)
+        self.to_v = nn.Linear(feature_dim, heads * dim_head)
+        self.to_out = nn.Linear(heads * dim_head, feature_dim)
+
+        # Separate positional encodings for queries and keys
+        self.pos_encoding_q = PositionalEncoding(motion_dim)
+        self.pos_encoding_k = PositionalEncoding(motion_dim)
 
     def forward(self, ml_c, ml_r, fl_r):
-        debug_print(f"🌻 CrossAttentionModule Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        print(f"CrossAttentionModule input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         
-        B, C, H, W = fl_r.shape
-        
-        # Flatten and transpose inputs
-        ml_c = ml_c.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
-        ml_r = ml_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
-        fl_r = fl_r.view(B, C, -1).transpose(1, 2)  # (B, H*W, C)
-        debug_print(f"After flattening: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        B, C_m, H, W = ml_c.shape
+        _, C_f, _, _ = fl_r.shape
+
+        # Flatten inputs
+        ml_c = ml_c.view(B, C_m, H*W).permute(2, 0, 1)
+        ml_r = ml_r.view(B, C_m, H*W).permute(2, 0, 1)
+        fl_r = fl_r.view(B, C_f, H*W).permute(2, 0, 1)
+        print(f"After flattening - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+
+        # Generate and add positional encodings
+        p_q = self.pos_encoding_q(ml_c)
+        p_k = self.pos_encoding_k(ml_r)
+        ml_c = ml_c + p_q
+        ml_r = ml_r + p_k
+        print(f"After adding positional encodings - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}")
 
         # Compute Q, K, V
-        q = self.to_q(ml_c).view(B, -1, self.heads, self.dim_head).transpose(1, 2)
-        k = self.to_k(ml_r).view(B, -1, self.heads, self.dim_head).transpose(1, 2)
-        v = self.to_v(fl_r).view(B, -1, self.heads, self.dim_head).transpose(1, 2)
+        q = self.to_q(ml_c).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
+        k = self.to_k(ml_r).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
+        v = self.to_v(fl_r).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
+        print(f"Q, K, V shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        # Compute attention for each sample in the batch
-        attn = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        attn_weights = F.softmax(attn, dim=-1)
-        out = torch.matmul(attn_weights, v)
+        # Compute attention weights and output
+        attention_weights = F.softmax(torch.matmul(q, k.transpose(-1, -2)) * self.scale, dim=-1)
+        V_prime = torch.matmul(attention_weights, v)
+        V_prime = V_prime.permute(0, 2, 1, 3).contiguous().view(B, H*W, self.heads * self.dim_head)
+        V_prime = self.to_out(V_prime)
+        print(f"V_prime shape before final reshape: {V_prime.shape}")
 
-        # Reshape and project back to original dimensions
-        out = out.transpose(1, 2).contiguous().view(B, H*W, self.heads * self.dim_head)
-        out = self.to_out(out)
-        out = out.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
+        output = V_prime.permute(0, 2, 1).view(B, C_f, H, W)
+        print(f"CrossAttentionModule output shape: {output.shape}")
+        return output
 
-        return out,attn_weights
-
-# Test the module
-if __name__ == "__main__":
-    B, C, H, W = 2, 128, 64, 64
-    ml_c = torch.randn(B, C, H, W)
-    ml_r = torch.randn(B, C, H, W)
-    fl_r = torch.randn(B, C, H, W)
-
-    module = CrossAttentionModule()
-    output = module(ml_c, ml_r, fl_r)
 
 # Example usage
 if __name__ == "__main__":
     # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #debug_print(f"Using device: {device}")
+    print(f"Using device: {device}")
 
     # Example dimensions
     B, C_f, C_m, H, W = 1, 256, 256, 64, 64
@@ -226,9 +192,9 @@ if __name__ == "__main__":
     with torch.no_grad():
         output, embeddings = model(ml_c, ml_r, fl_r)
 
-    #debug_print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-    #debug_print(f"Output shape: {output.shape}")
+    print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+    print(f"Output shape: {output.shape}")
 
     # Visualize embeddings
     model.visualize_embeddings(embeddings, "embeddings_visualization.png")
-    #debug_print("Embedding visualization saved as 'embeddings_visualization.png'")
+    print("Embedding visualization saved as 'embeddings_visualization.png'")
