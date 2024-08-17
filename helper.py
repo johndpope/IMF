@@ -17,10 +17,9 @@ from mpl_toolkits.mplot3d import Axes3D
 
 
 def plot_grad_flow(named_parameters):
-    '''Plots the gradients flowing through different layers in the net during training.
-    Can be used for checking for possible gradient vanishing / exploding problems.'''
+    '''Plots the gradients flowing through different layers in the net during training.'''
     ave_grads = []
-    max_grads= []
+    max_grads = []
     layers = []
     for n, p in named_parameters:
         if(p.requires_grad) and ("bias" not in n):
@@ -33,15 +32,28 @@ def plot_grad_flow(named_parameters):
                 max_grads.append(0)
                 print(f"Warning: No gradient for {n}")
 
-    plt.figure(figsize=(12, 8))  # Increase figure size for better readability
-    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
-    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
-    plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
-    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
-    plt.xlim(left=0, right=len(ave_grads))
-    plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
+    # Group layers
+    grouped_layers = []
+    grouped_ave_grads = []
+    grouped_max_grads = []
+    current_group = ""
+    for layer, ave_grad, max_grad in zip(layers, ave_grads, max_grads):
+        group = layer.split('.')[0]
+        if group != current_group:
+            grouped_layers.append(group)
+            grouped_ave_grads.append(ave_grad)
+            grouped_max_grads.append(max_grad)
+            current_group = group
+
+    plt.figure(figsize=(20, 10))
+    plt.bar(np.arange(len(grouped_max_grads)), grouped_max_grads, alpha=0.1, lw=1, color="c")
+    plt.bar(np.arange(len(grouped_max_grads)), grouped_ave_grads, alpha=0.1, lw=1, color="b")
+    plt.hlines(0, 0, len(grouped_ave_grads)+1, lw=2, color="k")
+    plt.xticks(range(0,len(grouped_ave_grads), 1), grouped_layers, rotation="vertical")
+    plt.xlim(left=0, right=len(grouped_ave_grads))
+    plt.yscale('symlog')  # Use symmetric log scale
     plt.xlabel("Layers")
-    plt.ylabel("average gradient")
+    plt.ylabel("Gradient (log scale)")
     plt.title("Gradient flow")
     plt.grid(True)
     plt.legend([plt.Line2D([0], [0], color="c", lw=4),
