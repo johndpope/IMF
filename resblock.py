@@ -146,37 +146,37 @@ class DownConvResBlock(nn.Module):
 
 
     def forward(self, x):
-        print(f"DownConvResBlock input shape: {x.shape}")
+        #print(f"DownConvResBlock input shape: {x.shape}")
         
         out = self.conv1(x)
-        print(f"After conv1 shape: {out.shape}")
+        #print(f"After conv1 shape: {out.shape}")
         
         out = self.bn1(out)
-        print(f"After bn1 shape: {out.shape}")
+        #print(f"After bn1 shape: {out.shape}")
         
         out = self.relu(out)
-        print(f"After relu shape: {out.shape}")
+        #print(f"After relu shape: {out.shape}")
         
         out = self.avgpool(out)
-        print(f"After avgpool shape: {out.shape}")
+        #print(f"After avgpool shape: {out.shape}")
         
         out = self.conv2(out)
-        print(f"After conv2 shape: {out.shape}")
+        #print(f"After conv2 shape: {out.shape}")
         
         # out = self.bn2(out) # 🤷
-        # print(f"After bn2 shape: {out.shape}")  # Uncomment if bn2 is used
+        # #print(f"After bn2 shape: {out.shape}")  # Uncomment if bn2 is used
         
         out = self.relu(out) # 🤷
-        print(f"After second relu shape: {out.shape}")
+        #print(f"After second relu shape: {out.shape}")
         
         # out = self.dropout(out) # 🤷
-        # print(f"After dropout shape: {out.shape}")  # Uncomment if dropout is used
+        # #print(f"After dropout shape: {out.shape}")  # Uncomment if dropout is used
         
         out = self.feat_res_block1(out)
-        print(f"After feat_res_block1 shape: {out.shape}")
+        #print(f"After feat_res_block1 shape: {out.shape}")
         
         out = self.feat_res_block2(out)
-        print(f"After feat_res_block2 shape: {out.shape}")
+        #print(f"After feat_res_block2 shape: {out.shape}")
         
         return out
 
