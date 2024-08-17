@@ -111,8 +111,10 @@ class ResNetFeatureExtractor(nn.Module):
 
 
 class DenseFeatureEncoder(nn.Module):
-    def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64):
+    def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64, use_checkpoint=True):
         super().__init__()
+        self.use_checkpoint = use_checkpoint
+        
         self.initial_conv = nn.Sequential(
             nn.Conv2d(in_channels, initial_channels, kernel_size=7, stride=1, padding=3),
             nn.BatchNorm2d(initial_channels),
@@ -132,18 +134,21 @@ class DenseFeatureEncoder(nn.Module):
 
     def forward(self, x):
         debug_print(f"⚾ DenseFeatureEncoder input shape: {x.shape}")
-        features = []
-        if self.training:
+        
+        if self.use_checkpoint and self.training:
             x = checkpoint(self.initial_conv, x)
         else:
             x = self.initial_conv(x)
+        
         debug_print(f"    After initial conv: {x.shape}")
         
+        features = []
         for i, block in enumerate(self.down_blocks):
-            if self.training:
+            if self.use_checkpoint and self.training:
                 x = checkpoint(block, x)
             else:
                 x = block(x)
+            
             debug_print(f"    After down_block {i+1}: {x.shape}")
             if i >= 1:  # Start collecting features from the second block
                 features.append(x)
@@ -151,6 +156,9 @@ class DenseFeatureEncoder(nn.Module):
         debug_print(f"    DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         
         return features
+
+    def set_checkpoint(self, use_checkpoint):
+        self.use_checkpoint = use_checkpoint
 
 '''
 The upsample parameter is replaced with downsample to match the diagram.
