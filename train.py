@@ -13,7 +13,7 @@ from model import IMFModel, debug_print,MultiScalePatchDiscriminator,IMFPatchDis
 from VideoDataset import VideoDataset
 from EMODataset import EMODataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
+from helper import visualize_attention_maps,log_loss_landscape,log_grad_flow,count_model_params,normalize, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -54,10 +54,10 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
 def get_layer_wise_learning_rates(model):
     params = []
     params.append({'params': model.dense_feature_encoder.parameters(), 'lr': 1e-4})
-    params.append({'params': model.latent_token_encoder.parameters(), 'lr': 1e-4})
-    params.append({'params': model.latent_token_decoder.parameters(), 'lr': 1e-4})
+    params.append({'params': model.latent_token_encoder.parameters(), 'lr': 5e-5})
+    params.append({'params': model.latent_token_decoder.parameters(), 'lr': 5e-5})
     params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 1e-4})
-    params.append({'params': model.frame_decoder.parameters(), 'lr': 1e-4})
+    params.append({'params': model.frame_decoder.parameters(), 'lr': 2e-4})
     params.append({'params': model.mapping_network.parameters(), 'lr': 1e-4})
     return params
 
@@ -66,10 +66,10 @@ def get_layer_wise_learning_rates(model):
 def train(config, model, discriminator, train_dataloader, val_loader, accelerator):
 
     # layerwise params - 
-    layer_wise_params = get_layer_wise_learning_rates(model)
+    # layer_wise_params = get_layer_wise_learning_rates(model)
 
     # Generator optimizer
-    optimizer_g = AdamW( layer_wise_params,
+    optimizer_g = AdamW( model.parameters(),
         lr=config.training.learning_rate_g,
         betas=(config.optimizer.beta1, config.optimizer.beta2),
         weight_decay=config.training.weight_decay )
@@ -231,10 +231,14 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         aligned_features = []
                         for i in range(len(model.implicit_motion_alignment)):
                             f_r_i = f_r[i]
-                            align_layer = model.implicit_motion_alignment[i]
+                            align_layer= model.implicit_motion_alignment[i]
                             m_c_i = m_c[i] 
                             m_r_i = m_r[i]
-                            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+                            aligned_feature,intermediate_outputs = align_layer(m_c_i, m_r_i, f_r_i)
+                            attn_weights = intermediate_outputs['attn_weights']
+                            if batch_idx % config.logging.visualize_every == 0:
+                                visualize_attention_maps(attn_weights, f"attention_maps_epoch_{epoch}_batch_{batch_idx}.png")
+
                             aligned_features.append(aligned_feature)
 
 

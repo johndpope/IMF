@@ -101,7 +101,7 @@ class ImplicitMotionAlignment(nn.Module):
     def forward(self, ml_c, ml_r, fl_r):
         debug_print(f"ImplicitMotionAlignment input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         
-        V_prime = self.cross_attention(ml_c, ml_r, fl_r)
+        V_prime,attn_weights = self.cross_attention(ml_c, ml_r, fl_r)
         debug_print(f"ImplicitMotionAlignment after cross attention: {V_prime.shape}")
         
         for i, block in enumerate(self.blocks):
@@ -109,7 +109,7 @@ class ImplicitMotionAlignment(nn.Module):
             debug_print(f"ImplicitMotionAlignment after block {i+1}: {V_prime.shape}")
         
         debug_print(f"ImplicitMotionAlignment output shape: {V_prime.shape}")
-        return V_prime
+        return V_prime, attn_weights
 
 
 
@@ -177,15 +177,15 @@ class CrossAttentionModule(nn.Module):
 
         # Compute attention for each sample in the batch
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        attn = F.softmax(attn, dim=-1)
-        out = torch.matmul(attn, v)
+        attn_weights = F.softmax(attn, dim=-1)
+        out = torch.matmul(attn_weights, v)
 
         # Reshape and project back to original dimensions
         out = out.transpose(1, 2).contiguous().view(B, H*W, self.heads * self.dim_head)
         out = self.to_out(out)
         out = out.view(B, H, W, C).permute(0, 3, 1, 2)  # (B, C, H, W)
 
-        return out
+        return out,attn_weights
 
 # Test the module
 if __name__ == "__main__":

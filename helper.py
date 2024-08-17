@@ -14,6 +14,29 @@ import io
 from PIL import Image
 from mpl_toolkits.mplot3d import Axes3D
 
+
+
+def visualize_attention_maps(self, attn_weights, save_path):
+    # attn_weights shape: (batch_size, num_heads, seq_len, seq_len)
+    batch_size, num_heads, _, _ = attn_weights.shape
+    
+    fig, axes = plt.subplots(batch_size, num_heads, figsize=(num_heads*3, batch_size*3))
+    if batch_size == 1:
+        axes = axes.reshape(1, -1)
+    
+    for i in range(batch_size):
+        for j in range(num_heads):
+            ax = axes[i, j]
+            im = ax.imshow(attn_weights[i, j].cpu().detach(), cmap='viridis')
+            ax.set_title(f'Batch {i+1}, Head {j+1}')
+            ax.axis('off')
+    
+    plt.colorbar(im, ax=axes.ravel().tolist(), shrink=0.8)
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+
+
 def plot_loss_landscape(model, loss_fns, dataloader, num_points=20, alpha=1.0):
     # Store original parameters
     original_params = [p.clone() for p in model.parameters()]
