@@ -7,7 +7,8 @@ class GradientRescale(nn.Module):
         self.scale = scale
 
     def forward(self, x):
-        return GradientRescaleFunction.apply(x, self.scale)
+        return GradientRescaleFunction.apply(x, self.scale).clone()  # Add .clone() here
+
 
     def extra_repr(self):
         return f'scale={self.scale}'

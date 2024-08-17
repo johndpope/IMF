@@ -118,7 +118,7 @@ class DenseFeatureEncoder(nn.Module):
         self.initial_conv = nn.Sequential(
             nn.Conv2d(in_channels, initial_channels, kernel_size=7, stride=1, padding=3),
             nn.BatchNorm2d(initial_channels),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=False)
         )
         
         self.down_blocks = nn.ModuleList()
