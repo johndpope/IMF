@@ -247,16 +247,16 @@ class LatentTokenDecoder(nn.Module):
             StyledConv(const_dim, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),# 512
+            StyledConv(512, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),# 512
+            StyledConv(512, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 256, 3, latent_dim),# 512 ? 🤷 or 256??? https://github.com/hologerry/IMF/issues/4
-            StyledConv(256, 256, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 256, 3, latent_dim, upsample=True),
             StyledConv(256, 256, 3, latent_dim),
-            StyledConv(256, 128, 3, latent_dim) #  256 ? 🤷 or 128 ??
+            StyledConv(256, 256, 3, latent_dim) 
         ])
 
     def forward(self, t):
