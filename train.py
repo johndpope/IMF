@@ -343,7 +343,8 @@ def train_gan(config, model, discriminator, train_dataloader, val_loader, accele
                         #     plt.close()
                     # Sample and save reconstructions every save_steps
                     sample_path = f"recon_step_{global_step}.png"
-                    sample_recon(model, (x_reconstructed, x_current,x_reference), accelerator, sample_path, 
+                    a = un_normalize(x_reconstructed)
+                    sample_recon(model, (a, x_current,x_reference), accelerator, sample_path, 
                                 num_samples=config.logging.sample_size)
 
                      
