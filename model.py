@@ -284,7 +284,7 @@ The channel dimensions decrease as we go up the network: 512 → 512 → 256 →
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
 class FrameDecoder(nn.Module):
-    def __init__(self,gradient_scale=0.5):
+    def __init__(self,gradient_scale=1):
         super().__init__()
         
         self.upconv_blocks = nn.ModuleList([
@@ -405,29 +405,31 @@ class IMFModel(nn.Module):
     def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_skip=False,use_enhanced_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
-        self.encoder_dims = [64, 128, 256, 512]
+
         self.latent_token_encoder = LatentTokenEncoder(
             initial_channels=64,
             output_channels=[256, 256, 512, 512,512, 512],
             dm=32
         ) 
-        self.motion_dims = [128, 256, 512, 512] 
-        self.latent_token_decoder = LatentTokenDecoder()
-       
-        FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder
-        self.dense_feature_encoder = FeatureExtractor(output_channels=self.motion_dims)
- 
-        IMF =  ImplicitMotionAlignment
+        
+        self.latent_token_decoder = LatentTokenDecoder() # seems ok -  this should be the values for cross attention
+        self.feature_dims = [128, 256, 512, 512] # 128 should be 32 channels.
+        self.spatial_dims = [(64, 64), (32, 32), (16, 16), (8, 8)]
+
+        self.dense_feature_encoder = DenseFeatureEncoder(output_channels= self.feature_dims)
+
+        self.motion_dims = [256, 512, 512, 512]
+        
+        # Initialize a list of ImplicitMotionAlignment modules
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
-            dim = self.motion_dims[i]
-            model = IMF(
-                feature_dim=dim,
-                motion_dim=dim,
-                depth=4,
-                num_heads=8
-            )
-            self.implicit_motion_alignment.append(model)
+            feature_dim = self.feature_dims[i]
+            motion_dim = self.motion_dims[i]
+            spatial_dim = self.spatial_dims[i]
+            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,spatial_dim=spatial_dim, )
+            self.implicit_motion_alignment.append(alignment_module)
+       
+        
         
         FrameDecode = EnhancedFrameDecoder if use_enhanced_generator else FrameDecoder
         self.frame_decoder = FrameDecode() #CIPSFrameDecoder(feature_dims=self.motion_dims)

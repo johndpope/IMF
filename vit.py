@@ -54,16 +54,22 @@ class TransformerBlock(nn.Module):
         return output
 
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
+    def __init__(self, feature_dim, motion_dim,spatial_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
-        self.cross_attention = CrossAttentionModule(feature_dim, motion_dim, heads, dim_head)
+        self.cross_attention = CrossAttentionModule(dim_spatial=spatial_dim[0] * spatial_dim[0], dim_qk=motion_dim, dim_v=feature_dim)
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(feature_dim, heads, dim_head, mlp_dim) for _ in range(depth)
         ])
+        self.spatial_dim = spatial_dim
+        self.feature_dim = feature_dim
+        self.motion_dim = motion_dim
+        
 
     def forward(self, ml_c, ml_r, fl_r):
         embeddings = []
-        
+        print(f"self.spatial_dim:{self.spatial_dim}")
+        print(f"self.feature_dim:{self.feature_dim}")
+        print(f"self.motion_dim:{self.motion_dim}")
         # Cross-attention module
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
         embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
@@ -111,56 +117,50 @@ class ImplicitMotionAlignment(nn.Module):
 
 
 class CrossAttentionModule(nn.Module):
-    def __init__(self, feature_dim, motion_dim, heads, dim_head):
+    def __init__(self, 
+        dim_spatial=4096,
+        dim_qk=256,
+        dim_v=256
+        ):
         super().__init__()
-        self.heads = heads
-        self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
 
-        self.to_q = nn.Linear(motion_dim, heads * dim_head)
-        self.to_k = nn.Linear(motion_dim, heads * dim_head)
-        self.to_v = nn.Linear(feature_dim, heads * dim_head)
-        self.to_out = nn.Linear(heads * dim_head, feature_dim)
+        self.dim_head = dim_qk
+        self.scale = dim_qk ** -0.5
+
+        print("CrossAttentionModule:",dim_spatial)
+        print("dim_qk:",dim_qk)
+        print("dim_v:",dim_v)
+        
 
         # Separate positional encodings for queries and keys
-        self.pos_encoding_q = PositionalEncoding(motion_dim)
-        self.pos_encoding_k = PositionalEncoding(motion_dim)
+        self.q_pos_embedding = nn.Parameter(torch.randn(1, dim_spatial, dim_qk))
+        self.k_pos_embedding = nn.Parameter(torch.randn(1, dim_spatial, dim_qk))
+        self.attend = nn.Softmax(dim=-1)
+    def forward(self, queries, keys, values):
+        # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
+        q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
+        q = q + self.q_pos_embedding  # (b, dim_spatial, dim_qk)
 
-    def forward(self, ml_c, ml_r, fl_r):
-        print(f"CrossAttentionModule input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-        
-        B, C_m, H, W = ml_c.shape
-        _, C_f, _, _ = fl_r.shape
+        # in paper, key dim_spatial may be different from query dim_spatial
+        # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
+        k = torch.flatten(keys, start_dim=2).transpose(-1, -2)
+        k = k + self.k_pos_embedding  # (b, dim_spatial, dim_qk)
+        # (b, dim_v, h, w) -> (b, dim_v, dim_spatial) -> (b, dim_spatial, dim_v)
+        v = torch.flatten(values, start_dim=2).transpose(-1, -2)
 
-        # Flatten inputs
-        ml_c = ml_c.view(B, C_m, H*W).permute(2, 0, 1)
-        ml_r = ml_r.view(B, C_m, H*W).permute(2, 0, 1)
-        fl_r = fl_r.view(B, C_f, H*W).permute(2, 0, 1)
-        print(f"After flattening - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        # # (b, dim_spatial, dim_qk) * (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_spatial)
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
-        # Generate and add positional encodings
-        p_q = self.pos_encoding_q(ml_c)
-        p_k = self.pos_encoding_k(ml_r)
-        ml_c = ml_c + p_q
-        ml_r = ml_r + p_k
-        print(f"After adding positional encodings - ml_c: {ml_c.shape}, ml_r: {ml_r.shape}")
+        attn = self.attend(dots)  # (b, dim_spatial, dim_spatial)
 
-        # Compute Q, K, V
-        q = self.to_q(ml_c).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
-        k = self.to_k(ml_r).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
-        v = self.to_v(fl_r).view(H*W, B, self.heads, self.dim_head).permute(1, 2, 0, 3)
-        print(f"Q, K, V shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        # (b, dim_spatial, dim_spatial) * (b, dim_spatial, dim_v) -> (b, dim_spatial, dim_v)
+        out = torch.matmul(attn, v)
 
-        # Compute attention weights and output
-        attention_weights = F.softmax(torch.matmul(q, k.transpose(-1, -2)) * self.scale, dim=-1)
-        V_prime = torch.matmul(attention_weights, v)
-        V_prime = V_prime.permute(0, 2, 1, 3).contiguous().view(B, H*W, self.heads * self.dim_head)
-        V_prime = self.to_out(V_prime)
-        print(f"V_prime shape before final reshape: {V_prime.shape}")
+        # Or the torch version fast attention
+        # out = F.scaled_dot_product_attention(q, k, v)
+        out = torch.reshape(out.transpose(-1, -2), values.shape)  # (b, dim_spatial, dim_v) -> (b, dim_v, h, w)
 
-        output = V_prime.permute(0, 2, 1).view(B, C_f, H, W)
-        print(f"CrossAttentionModule output shape: {output.shape}")
-        return output
+        return out
 
 
 # Example usage

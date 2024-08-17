@@ -134,31 +134,51 @@ class UpConvResBlock(nn.Module):
 
 
 class DownConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, dropout_rate=0.1):
+    def __init__(self, in_channels, out_channels, stride=2, dropout_rate=0.1):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
-        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
+        self.avgpool = nn.AvgPool2d(kernel_size=stride, stride=stride)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        # self.bn2 = nn.BatchNorm2d(out_channels) # 🤷 works with not without
-        # self.dropout = nn.Dropout2d(dropout_rate) # 🤷
         self.feat_res_block1 = FeatResBlock(out_channels)
         self.feat_res_block2 = FeatResBlock(out_channels)
 
-    def forward(self, x):
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.avgpool(out)
-        out = self.conv2(out)
-        # out = self.bn2(out) # 🤷
-        out = self.relu(out) # 🤷
-        # out = self.dropout(out) # 🤷
-        out = self.feat_res_block1(out)
-        out = self.feat_res_block2(out)
-        return out
 
+    def forward(self, x):
+        print(f"DownConvResBlock input shape: {x.shape}")
+        
+        out = self.conv1(x)
+        print(f"After conv1 shape: {out.shape}")
+        
+        out = self.bn1(out)
+        print(f"After bn1 shape: {out.shape}")
+        
+        out = self.relu(out)
+        print(f"After relu shape: {out.shape}")
+        
+        out = self.avgpool(out)
+        print(f"After avgpool shape: {out.shape}")
+        
+        out = self.conv2(out)
+        print(f"After conv2 shape: {out.shape}")
+        
+        # out = self.bn2(out) # 🤷
+        # print(f"After bn2 shape: {out.shape}")  # Uncomment if bn2 is used
+        
+        out = self.relu(out) # 🤷
+        print(f"After second relu shape: {out.shape}")
+        
+        # out = self.dropout(out) # 🤷
+        # print(f"After dropout shape: {out.shape}")  # Uncomment if dropout is used
+        
+        out = self.feat_res_block1(out)
+        print(f"After feat_res_block1 shape: {out.shape}")
+        
+        out = self.feat_res_block2(out)
+        print(f"After feat_res_block2 shape: {out.shape}")
+        
+        return out
 
 class FeatResBlock(nn.Module):
     def __init__(self, channels, dropout_rate=0.1):

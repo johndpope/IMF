@@ -76,7 +76,7 @@ logging:
   log_every: 10
 # Accelerator settings
 accelerator:
-  mixed_precision: "no"  # Options: "no", "fp16", "bf16"
+  mixed_precision: "no"  # WE DONT USE https://github.com/hologerry/IMF/issues/4
   cpu: false
   num_processes: 1  # Set to more than 1 for multi-GPU training
 
