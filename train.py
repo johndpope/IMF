@@ -84,12 +84,11 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
     )
 
     # dynamic learning rate
-    # scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.25, patience=10, verbose=True)
-    # scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.25, patience=10, verbose=True)
-
+    scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.5, patience=10, min_lr=1e-6)
+    scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.5, patience=10, min_lr=1e-6)
     # Learning rate schedulers
-    scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optimizer_g,gamma=0.9)
-    scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optimizer_d,gamma=0.9)
+    # scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optimizer_g,gamma=0.9)
+    # scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optimizer_d,gamma=0.9)
 
     # Make EMA conditional based on config
     if config.training.use_ema:
