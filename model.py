@@ -113,7 +113,7 @@ class ResNetFeatureExtractor(nn.Module):
 
 
 class DenseFeatureEncoder(nn.Module):
-    def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64,gradient_scale=0.9):
+    def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64,gradient_scale=0.1):
         super().__init__()
         self.initial_conv = nn.Sequential(
             nn.Conv2d(in_channels, initial_channels, kernel_size=7, stride=1, padding=3),
