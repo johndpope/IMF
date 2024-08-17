@@ -28,7 +28,6 @@ class PatchEmbedding(nn.Module):
         return x
 
 
-
 class MultiHeadAttention(nn.Module):
     def __init__(self, embed_dim, num_heads):
         super().__init__()
@@ -83,8 +82,8 @@ class ImplicitMotionAlignment(nn.Module):
         
         self.patch_embedding = PatchEmbedding(motion_dim, self.embed_dim, self.patch_size)
         
-        num_patches = (spatial_dim[0] * spatial_dim[1]) // (self.patch_size ** 2)
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, self.embed_dim))
+        self.num_patches = (spatial_dim[0] // self.patch_size) * (spatial_dim[1] // self.patch_size)
+        self.pos_embedding = nn.Parameter(torch.randn(1, self.num_patches + 1, self.embed_dim))
         
         self.transformer = nn.Sequential(*[TransformerBlock(self.embed_dim, heads, mlp_dim) for _ in range(depth)])
         
@@ -110,8 +109,12 @@ class ImplicitMotionAlignment(nn.Module):
         
         # Remove the CLS token and reshape to original spatial dimensions
         x = x[:, 1:, :]
-        x = rearrange(x, 'b (h w) c -> b c h w', h=self.spatial_dim[0], w=self.spatial_dim[1])
+        x = rearrange(x, 'b (h w) c -> b c h w', h=self.spatial_dim[0]//self.patch_size, w=self.spatial_dim[1]//self.patch_size)
         debug_print(f"After rearranging to spatial dimensions: {x.shape}")
+        
+        # Upsample to match the original spatial dimensions
+        x = nn.Upsample(size=self.spatial_dim, mode='bilinear', align_corners=False)(x)
+        debug_print(f"After upsampling: {x.shape}")
         
         # Apply MLP head to each spatial location
         x = self.mlp_head(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
