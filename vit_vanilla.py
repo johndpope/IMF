@@ -9,7 +9,7 @@ def debug_print(*args, **kwargs):
         print(*args, **kwargs)
 
 class PatchEmbedding(nn.Module):
-    def __init__(self, patch_size, in_channels, embed_dim):
+    def __init__(self, in_channels, embed_dim, patch_size):
         super().__init__()
         self.projection = nn.Sequential(
             nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size),
@@ -25,6 +25,7 @@ class PatchEmbedding(nn.Module):
         x = torch.cat([cls_tokens, x], dim=1)
         debug_print(f"PatchEmbedding output shape: {x.shape}")
         return x
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, embed_dim, num_heads):
@@ -71,12 +72,16 @@ class TransformerBlock(nn.Module):
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, spatial_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
-        self.patch_size = 1  # We'll treat each pixel as a patch for flexibility
         self.embed_dim = feature_dim
         self.spatial_dim = spatial_dim
 
-        self.patch_embedding = PatchEmbedding(self.patch_size, motion_dim, self.embed_dim)
-        self.pos_embedding = nn.Parameter(torch.randn(1, spatial_dim[0] * spatial_dim[1] + 1, self.embed_dim))
+        # Calculate patch size based on input spatial dimensions
+        self.patch_size = 256 // spatial_dim[0]  # Assuming 256x256 input
+        
+        self.patch_embedding = PatchEmbedding(motion_dim, self.embed_dim, self.patch_size)
+        
+        num_patches = (spatial_dim[0] * spatial_dim[1]) // (self.patch_size ** 2)
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, self.embed_dim))
         
         self.transformer = nn.Sequential(*[TransformerBlock(self.embed_dim, heads, mlp_dim) for _ in range(depth)])
         
@@ -86,28 +91,28 @@ class ImplicitMotionAlignment(nn.Module):
         )
 
     def forward(self, ml_c, ml_r, fl_r):
-        debug_print(f"VisionTransformer input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+        print(f"VisionTransformer input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         embeddings = []
         
         x = self.patch_embedding(ml_c)
-        debug_print(f"After patch embedding shape: {x.shape}")
+        print(f"After patch embedding shape: {x.shape}")
         x += self.pos_embedding
-        debug_print(f"After adding positional embedding shape: {x.shape}")
+        print(f"After adding positional embedding shape: {x.shape}")
         embeddings.append(("After Patch Embedding", x.detach().cpu()))
         
         for i, block in enumerate(self.transformer):
             x = block(x)
-            debug_print(f"After transformer block {i} shape: {x.shape}")
+            print(f"After transformer block {i} shape: {x.shape}")
             embeddings.append((f"After Transformer Block {i}", x.detach().cpu()))
         
         # Remove the CLS token and reshape to original spatial dimensions
         x = x[:, 1:, :]
         x = rearrange(x, 'b (h w) c -> b c h w', h=self.spatial_dim[0], w=self.spatial_dim[1])
-        debug_print(f"After rearranging to spatial dimensions: {x.shape}")
+        print(f"After rearranging to spatial dimensions: {x.shape}")
         
         # Apply MLP head to each spatial location
         x = self.mlp_head(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-        debug_print(f"Final output shape: {x.shape}")
+        print(f"Final output shape: {x.shape}")
         
         return x, embeddings
 
