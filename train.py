@@ -260,8 +260,9 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
                         x_reconstructed = model.frame_decoder(aligned_features)
                         x_reconstructed = normalize(x_reconstructed) # 🤷 images are washed out - or over saturated...
            
-                        save_image(x_reconstructed, "x_reconstructed.png", normalize=True)
-                        save_image(x_current, "x_current.png", normalize=True)
+                        if global_step % 20 == 0:
+                            save_image(x_reconstructed, "x_reconstructed.png", normalize=True)
+                            save_image(x_current, "x_current.png", normalize=True)
                         
                         
                         # B. Loss Calculation
