@@ -20,12 +20,15 @@ import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
 from loss import wasserstein_loss,hinge_loss,vanilla_gan_loss,gan_loss_fn
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+
 import random
 from vggloss import VGGLoss
 from stylegan import EMA
 from torch.optim import AdamW, SGD
 from transformers import Adafactor
+# from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
 
 def load_config(config_path):
     return OmegaConf.load(config_path)
@@ -83,9 +86,12 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
     )
 
     # dynamic learning rate
-    scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.25, patience=10, verbose=True)
-    scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.25, patience=10, verbose=True)
+    # scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.25, patience=10, verbose=True)
+    # scheduler_d = ReduceLROnPlateau(optimizer_d, mode='min', factor=0.25, patience=10, verbose=True)
 
+    # Learning rate schedulers
+    scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optimizer_g,gamma=0.9)
+    scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optimizer_d,gamma=0.9)
 
     # Make EMA conditional based on config
     if config.training.use_ema:
@@ -103,7 +109,7 @@ def train(config, model, discriminator, train_dataloader, val_loader, accelerato
 
     # Use the unified gan_loss_fn
     gan_loss_type = config.loss.type
-    perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
+    perceptual_loss_fn = lpips.LPIPS(net='alex',spatial=True).to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
 
