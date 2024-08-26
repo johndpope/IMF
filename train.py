@@ -10,8 +10,7 @@ import yaml
 import os
 import torch.nn.functional as F
 from model import IMFModel, debug_print,PatchDiscriminator
-from VideoDataset import VideoDataset
-from EMODataset import EMODataset,gpu_padded_collate
+from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
 from helper import count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
