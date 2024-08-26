@@ -8,9 +8,9 @@ import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_mlgffn import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
 from vit import ImplicitMotionAlignment
-# from stylegan import EqualConv2d,EqualLinear
+from stylegan import EqualConv2d,EqualLinear
 from resblock import ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
-from resblock_new import EqualConv2d,EqualLinear #, ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
+# from resblock_new import EqualConv2d,EqualLinear #, ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
 
 
 
