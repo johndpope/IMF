@@ -106,7 +106,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
     gan_loss_type = config.loss.type
     # perceptual_loss_fn = VGGPerceptualLoss().to(accelerator.device)
     # perceptual_loss_fn = LPIPSPerceptualLoss().to(accelerator.device)
-    perceptual_loss_fn = lpips.LPIPS(net='alex').to(accelerator.device)
+    perceptual_loss_fn = lpips.LPIPS(net='alex',spatial=True).to(accelerator.device)
     pixel_loss_fn = nn.L1Loss()
     
 
