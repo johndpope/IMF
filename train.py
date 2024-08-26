@@ -52,11 +52,36 @@ def get_noise_magnitude(epoch, max_epochs, initial_magnitude=0.1, final_magnitud
     return max(final_magnitude, initial_magnitude - (initial_magnitude - final_magnitude) * (epoch / max_epochs))
 
 
+def get_layer_wise_learning_rates(model):
+    params = []
+    params.append({'params': model.dense_feature_encoder.parameters(), 'lr': 1e-4})
+    params.append({'params': model.latent_token_encoder.parameters(), 'lr': 5e-5})
+    params.append({'params': model.latent_token_decoder.parameters(), 'lr': 5e-5})
+    params.append({'params': model.implicit_motion_alignment.parameters(), 'lr': 1e-4})
+    params.append({'params': model.frame_decoder.parameters(), 'lr': 2e-4})
+    params.append({'params': model.mapping_network.parameters(), 'lr': 1e-4})
+    return params
+
 
 def train(config, model, discriminator, train_dataloader, accelerator):
     # optimizer_g = torch.optim.Adam(model.parameters(), lr=config.training.learning_rate_g, betas=(config.optimizer.beta1, config.optimizer.beta2))
-    optimizer_g = AdamW(model.parameters(), lr=config.training.learning_rate_g, weight_decay=0.01)
-    optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=config.training.initial_learning_rate_d, betas=(config.optimizer.beta1, config.optimizer.beta2))
+ 
+
+    # layerwise params - 
+    layer_wise_params = get_layer_wise_learning_rates(model)
+
+    # Generator optimizer
+    optimizer_g = AdamW( layer_wise_params,
+        lr=2e-4,  # 2 × 10^-4
+    betas=(0.5, 0.999))
+
+    # Discriminator optimizer
+    optimizer_d = AdamW(
+        discriminator.parameters(),
+          lr=2e-4,  # 2 × 10^-4
+    betas=(0.5, 0.999)
+    )
+
 
     # dynamic learning rate
     scheduler_g = ReduceLROnPlateau(optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
@@ -271,6 +296,13 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                         progress_bar.update(1)
                         progress_bar.set_postfix({"G Loss": f"{g_loss.item():.4f}", "D Loss": f"{d_loss.item():.4f}"})
                     
+
+                        if global_step % 20 == 0:
+                                a = (x_reconstructed)
+                                b = (x_current)
+                                save_image(a, "x_reconstructed.png")
+                                save_image(b, "x_current.png")
+                                
                         # Update global step
                         global_step += 1
                     
@@ -289,7 +321,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                     # Logging
                     if accelerator.is_main_process:
                         wandb.log({
-                            "ema":current_decay,
+                            # "ema":current_decay,
                             "noise_magnitude": noise_magnitude,
                             "batch_g_loss": g_loss.item(),
                             "batch_d_loss": d_loss.item(),
