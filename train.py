@@ -105,8 +105,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
         total_g_loss = 0
         total_d_loss = 0
          
-        current_decay = get_ema_decay(epoch, config.training.num_epochs)
-        ema.decay = current_decay
+
 
         for batch_idx, batch in enumerate(train_dataloader):
             # Repeat the current video for the specified number of times
@@ -116,13 +115,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
 
                 ref_idx = 0
 
-                # Calculate noise magnitude for this epoch
-                noise_magnitude = get_noise_magnitude(
-                    epoch, 
-                    config.training.num_epochs, 
-                    initial_magnitude=config.training.initial_noise_magnitude,
-                    final_magnitude=config.training.final_noise_magnitude
-                )
+             
                 if config.training.use_many_xrefs:
                     ref_indices = range(0, num_frames, config.training.every_xref_frames)
                 else:
@@ -344,8 +337,7 @@ def main():
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers,
-        use_resnet_feature=config.model.use_resnet_feature,
-        use_mlgffn=config.model.use_mlgffn
+        use_resnet_feature=config.model.use_resnet_feature
         
     )
     add_gradient_hooks(model)

@@ -7,9 +7,9 @@ model:
   use_mlgffn: False
 # Training parameters
 training:
-  initial_video_repeat: 5
-  final_video_repeat: 2
-  use_ema: True
+  initial_video_repeat: 1
+  final_video_repeat: 1
+  use_ema: False
   use_r1_reg: True
   batch_size: 2 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
   num_epochs: 1000
@@ -19,8 +19,8 @@ training:
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
   ema_decay: 0.999
-  style_mixing_prob: 0.9
-  initial_noise_magnitude: 0.1
+  style_mixing_prob: 0.0
+  noise_magnitude: 0.0
   final_noise_magnitude: 0.001
   gradient_accumulation_steps: 1
   lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
@@ -67,7 +67,7 @@ logging:
 
 # Accelerator settings
 accelerator:
-  mixed_precision: "fp16"  # Options: "no", "fp16", "bf16"
+  mixed_precision: "no"  # Options: "no", "fp16", "bf16"
   cpu: false
   num_processes: 1  # Set to more than 1 for multi-GPU training
 

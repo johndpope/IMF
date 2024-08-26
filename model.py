@@ -10,9 +10,10 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from vit import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
-
+import math
 # from common import DownConvResBlock,UpConvResBlock
 import colored_traceback.auto # makes terminal show color coded output when crash
+import random
 
 DEBUG = False
 def debug_print(*args, **kwargs):
@@ -377,7 +378,6 @@ class StyledConv(nn.Module):
         x = self.conv(x, style)
         x = self.activation(x)
         return x
-
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
@@ -387,16 +387,16 @@ class LatentTokenDecoder(nn.Module):
             StyledConv(const_dim, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),# 512
+            StyledConv(512, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 512, 3, latent_dim),# 512
+            StyledConv(512, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
-            StyledConv(512, 256, 3, latent_dim),# 512 ? 🤷 or 256??? https://github.com/hologerry/IMF/issues/4
-            StyledConv(256, 256, 3, latent_dim, upsample=True),
+            StyledConv(512, 512, 3, latent_dim),
+            StyledConv(512, 256, 3, latent_dim, upsample=True),
             StyledConv(256, 256, 3, latent_dim),
-            StyledConv(256, 128, 3, latent_dim) #  256 ? 🤷 or 128 ??
+            StyledConv(256, 256, 3, latent_dim) 
         ])
 
     def forward(self, t):
@@ -414,7 +414,6 @@ class LatentTokenDecoder(nn.Module):
                 m4 = x
         return m4, m3, m2, m1 
     
-
 '''
 FrameDecoder FeatResBlock
 It uses a series of UpConvResBlock layers that perform upsampling (indicated by ↑2 in the image).
@@ -424,7 +423,7 @@ The channel dimensions decrease as we go up the network: 512 → 512 → 256 →
 It ends with a final convolutional layer (Conv-3-k3-s1-p1) followed by a Sigmoid activation.
 '''
 class FrameDecoder(nn.Module):
-    def __init__(self):
+    def __init__(self,gradient_scale=1):
         super().__init__()
         
         self.upconv_blocks = nn.ModuleList([
@@ -443,13 +442,16 @@ class FrameDecoder(nn.Module):
         
         self.final_conv = nn.Sequential(
             nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
+            # nn.BatchNorm2d(3),
             nn.Sigmoid()
         )
+        
+     
 
     def forward(self, features):
         debug_print(f"🎒 FrameDecoder input shapes")
-        # for f in features:
-        #     print(f"f:{f.shape}")
+        for f in features:
+            debug_print(f"f:{f.shape}")
         # Reshape features
         reshaped_features = []
         for feat in features:
@@ -585,37 +587,35 @@ Decodes the latent tokens into motion features.
 For each scale, aligns the reference features to the current frame using the ImplicitMotionAlignment module.
 '''
 class IMFModel(nn.Module):
-    def __init__(self,use_resnet_feature=False,use_mlgffn=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
+    def __init__(self,use_resnet_feature=False,use_mlgffn=False,use_skip=False,use_enhanced_generator=False, latent_dim=32, base_channels=64, num_layers=4, noise_level=0.1, style_mix_prob=0.5):
         super().__init__()
         
-        self.encoder_dims = [64, 128, 256, 512]
+
         self.latent_token_encoder = LatentTokenEncoder(
             initial_channels=64,
-            output_channels=self.encoder_dims,
+            output_channels=[256, 256, 512, 512,512, 512],
             dm=32
         ) 
-        self.motion_dims = [128, 256, 512, 512] 
-        self.latent_token_decoder = LatentTokenDecoder()
-       
-        FeatureExtractor  = ResNetFeatureExtractor if use_resnet_feature else DenseFeatureEncoder
-        self.dense_feature_encoder = FeatureExtractor(output_channels=self.motion_dims)
- 
+        
+        self.latent_token_decoder = LatentTokenDecoder() # seems ok -  this should be the values for cross attention
+        self.feature_dims = [128, 256, 512, 512] # 128 should be 32 channels.
+        self.spatial_dims = [(64, 64), (32, 32), (16, 16), (8, 8)]
+
+        self.dense_feature_encoder = DenseFeatureEncoder(output_channels= self.feature_dims)
+
+        self.motion_dims = [256, 512, 512, 512]
+        
+        # Initialize a list of ImplicitMotionAlignment modules
         self.implicit_motion_alignment = nn.ModuleList()
         for i in range(num_layers):
-            dim = self.motion_dims[i]
-            model = ImplicitMotionAlignment(
-                feature_dim=dim,
-                motion_dim=dim,
-                depth=4,
-                num_heads=8,
-                window_size=8,
-                mlp_ratio=4,
-                use_mlgffn=use_mlgffn
-            )
-            self.implicit_motion_alignment.append(model)
-        
-        
-        self.frame_decoder = FrameDecoder()
+            feature_dim = self.feature_dims[i]
+            motion_dim = self.motion_dims[i]
+            spatial_dim = self.spatial_dims[i]
+            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,spatial_dim=spatial_dim, )
+            self.implicit_motion_alignment.append(alignment_module)
+       
+
+        self.frame_decoder = FrameDecoder()  
         self.noise_level = noise_level
         self.style_mix_prob = style_mix_prob
 
