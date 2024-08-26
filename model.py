@@ -9,6 +9,8 @@ import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_xformers import ImplicitMotionAlignment
 from vit import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
+from resblock import ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
+
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 import math
 # from common import DownConvResBlock,UpConvResBlock
@@ -22,151 +24,6 @@ def debug_print(*args, **kwargs):
 
 
 # keep everything in 1 class to allow copying / pasting into claude / chatgpt
-class EfficientFeatureExtractor(nn.Module):
-    def __init__(self, output_channels=[24, 40, 112, 320]):
-        super().__init__()
-        # Load pre-trained EfficientNet-B0
-        self.backbone = efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1).features
-        
-        # Define where to extract features
-        self.feature_indices = [2, 3, 5, 7]  # Corresponds to different stages in EfficientNet
-        
-        # Add 1x1 convolutions to adjust channel dimensions if needed
-        self.adjustments = nn.ModuleList([
-            nn.Conv2d(self.backbone[i][-1].out_channels, out_channels, kernel_size=1)
-            for i, out_channels in zip(self.feature_indices, output_channels)
-        ])
-
-    def forward(self, x):
-        features = []
-        for i, layer in enumerate(self.backbone):
-            x = layer(x)
-            if i in self.feature_indices:
-                adj_index = self.feature_indices.index(i)
-                features.append(self.adjustments[adj_index](x))
-        return features
-
-
-
-class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, pretrained=True, output_channels=[128, 256, 512, 512]):
-        super().__init__()
-        debug_print(f"Initializing ResNetFeatureExtractor with output_channels: {output_channels}")
-        # Load a pre-trained ResNet model
-        self.resnet = models.resnet50(pretrained=pretrained)
-        
-        # We'll use the first 4 layers of ResNet
-        self.layer0 = nn.Sequential(self.resnet.conv1, self.resnet.bn1, self.resnet.relu, self.resnet.maxpool)
-        self.layer1 = self.resnet.layer1
-        self.layer2 = self.resnet.layer2
-        self.layer3 = self.resnet.layer3
-        self.layer4 = self.resnet.layer4
-
-        # Add additional convolutional layers to adjust channel dimensions
-        self.adjust1 = nn.Conv2d(256, output_channels[0], kernel_size=1)
-        self.adjust2 = nn.Conv2d(512, output_channels[1], kernel_size=1)
-        self.adjust3 = nn.Conv2d(1024, output_channels[2], kernel_size=1)
-        self.adjust4 = nn.Conv2d(2048, output_channels[3], kernel_size=1)
-
-        # for param in self.resnet.parameters(): Shoots up vram by 10gb
-        #     param.requires_grad = False
-
-    def forward(self, x):
-        debug_print(f"👟 ResNetFeatureExtractor input shape: {x.shape}")
-        features = []
-        
-        x = self.layer0(x)
-        debug_print(f"After layer0: {x.shape}")
-        
-        x = self.layer1(x)
-        debug_print(f"After layer1: {x.shape}")
-        feature1 = self.adjust1(x)
-        debug_print(f"After adjust1: {feature1.shape}")
-        features.append(feature1)
-        
-        x = self.layer2(x)
-        debug_print(f"After layer2: {x.shape}")
-        feature2 = self.adjust2(x)
-        debug_print(f"After adjust2: {feature2.shape}")
-        features.append(feature2)
-        
-        x = self.layer3(x)
-        debug_print(f"After layer3: {x.shape}")
-        feature3 = self.adjust3(x)
-        debug_print(f"After adjust3: {feature3.shape}")
-        features.append(feature3)
-        
-        x = self.layer4(x)
-        debug_print(f"After layer4: {x.shape}")
-        feature4 = self.adjust4(x)
-        debug_print(f"After adjust4: {feature4.shape}")
-        features.append(feature4)
-        
-        debug_print(f"ResNetFeatureExtractor output: {len(features)} features")
-        for i, feat in enumerate(features):
-            debug_print(f"  Feature {i+1} shape: {feat.shape}")
-        
-        return features
-      
-class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-
-        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block = FeatResBlock(out_channels)
-        
-        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
-
-        
-        # Add a 1x1 convolution for the residual connection if channel sizes differ
-        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
-
-    def forward(self, x):
-        residual = self.upsample(x)
-        if self.residual_conv:
-            residual = self.residual_conv(residual)
-        
-        out = self.upsample(x)
-        out = self.conv1(out)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = out + residual
-        out = self.relu(out)
-        out = self.feat_res_block(out)
-        return out
-
-
-class DownConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        self.feat_res_block2 = FeatResBlock(out_channels)
-
-    def forward(self, x):
-        debug_print(f"DownConvResBlock input shape: {x.shape}")
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        debug_print(f"After conv1, bn1, relu: {out.shape}")
-        out = self.avgpool(out)
-        debug_print(f"After avgpool: {out.shape}")
-        out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
-        out = self.feat_res_block1(out)
-        debug_print(f"After feat_res_block1: {out.shape}")
-        out = self.feat_res_block2(out)
-        debug_print(f"DownConvResBlock output shape: {out.shape}")
-        return out
 
 
 '''
@@ -185,28 +42,6 @@ It outputs multiple feature maps (f¹ᵣ, f²ᵣ, f³ᵣ, f⁴ᵣ) as shown in t
 
 Each DownConvResBlock performs downsampling using a strided convolution, maintains a residual connection, and applies BatchNorm and ReLU activations, which is consistent with typical ResNet architectures.'''
 
-
-class FeatResBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-        self.relu2 = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        residual = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu1(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out += residual
-        out = self.relu2(out)
-        return out
 
 
 class DenseFeatureEncoder(nn.Module):
@@ -332,52 +167,6 @@ Unlike keypoint-based methods that use Gaussian heatmaps converted from keypoint
 Our latent tokens are directly learned by the encoder, rather than being restricted to coordinates with a limited value range.
 '''
 
-class ModulatedConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, demodulate=True):
-        super().__init__()
-        self.weight = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size))
-        self.stride = stride
-        self.padding = padding
-        self.demodulate = demodulate
-
-    def forward(self, x, style):
-        batch, in_channel, height, width = x.shape
-        style = style.view(batch, 1, in_channel, 1, 1)
-        
-        # Weight modulation
-        weight = self.weight.unsqueeze(0) * style
-        
-        if self.demodulate:
-            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
-            weight = weight * demod.view(batch, self.weight.size(0), 1, 1, 1)
-
-        weight = weight.view(
-            batch * self.weight.size(0), in_channel, self.weight.size(2), self.weight.size(3)
-        )
-
-        x = x.view(1, batch * in_channel, height, width)
-        out = F.conv2d(x, weight, padding=self.padding, groups=batch)
-        _, _, height, width = out.shape
-        out = out.view(batch, self.weight.size(0), height, width)
-
-        return out
-
-class StyledConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, style_dim, upsample=False, demodulate=True):
-        super().__init__()
-        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, demodulate=demodulate)
-        self.style = nn.Linear(style_dim, in_channels)
-        self.upsample = upsample
-        self.activation = nn.LeakyReLU(0.2)
-
-    def forward(self, x, latent):
-        if self.upsample:
-            x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
-        
-        style = self.style(latent)
-        x = self.conv(x, style)
-        x = self.activation(x)
-        return x
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
@@ -489,61 +278,6 @@ class FrameDecoder(nn.Module):
         debug_print(f"    FrameDecoder final output shape: {x.shape}")
 
         return x
-'''
-The upsample parameter is replaced with downsample to match the diagram.
-The first convolution now has a stride of 2 when downsampling.
-The shortcut connection now uses a 3x3 convolution with stride 2 when downsampling, instead of a 1x1 convolution.
-ReLU activations are applied both after adding the residual and at the end of the block.
-The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
-'''
-class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu2 = nn.ReLU(inplace=True)
-        
-        if downsample or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.shortcut = nn.Identity()
-
-        self.downsample = downsample
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
-    def forward(self, x):
-        debug_print(f"ResBlock input shape: {x.shape}")
-        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
-
-        residual = self.shortcut(x)
-        debug_print(f"After shortcut: {residual.shape}")
-        
-        out = self.conv1(x)
-        debug_print(f"After conv1: {out.shape}")
-        out = self.bn1(out)
-        out = self.relu1(out)
-        debug_print(f"After bn1 and relu1: {out.shape}")
-        
-        out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
-        out = self.bn2(out)
-        debug_print(f"After bn2: {out.shape}")
-        
-        out += residual
-        debug_print(f"After adding residual: {out.shape}")
-        
-        out = self.relu2(out)
-        debug_print(f"ResBlock output shape: {out.shape}")
-        
-        return out
-
 
 class TokenManipulationNetwork(nn.Module):
     def __init__(self, token_dim, condition_dim, hidden_dim=256):
