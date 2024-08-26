@@ -11,7 +11,7 @@ from vit import ImplicitMotionAlignment
 from stylegan import EqualConv2d,EqualLinear
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 import math
-from resblock import UpConvResBlock,DownConvResBlock,FeatResBlock,StyledConv,ResBlock
+# from resblock import UpConvResBlock,DownConvResBlock,FeatResBlock,StyledConv,ResBlock
 
 import colored_traceback.auto # makes terminal show color coded output when crash
 import random
@@ -109,6 +109,67 @@ class ResNetFeatureExtractor(nn.Module):
         
         return features
       
+class UpConvResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+
+        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block = FeatResBlock(out_channels)
+        
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
+
+        
+        # Add a 1x1 convolution for the residual connection if channel sizes differ
+        self.residual_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None
+
+    def forward(self, x):
+        residual = self.upsample(x)
+        if self.residual_conv:
+            residual = self.residual_conv(residual)
+        
+        out = self.upsample(x)
+        out = self.conv1(out)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = out + residual
+        out = self.relu(out)
+        out = self.feat_res_block(out)
+        return out
+
+
+class DownConvResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.feat_res_block1 = FeatResBlock(out_channels)
+        self.feat_res_block2 = FeatResBlock(out_channels)
+
+    def forward(self, x):
+        debug_print(f"DownConvResBlock input shape: {x.shape}")
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        debug_print(f"After conv1, bn1, relu: {out.shape}")
+        out = self.avgpool(out)
+        debug_print(f"After avgpool: {out.shape}")
+        out = self.conv2(out)
+        debug_print(f"After conv2: {out.shape}")
+        out = self.feat_res_block1(out)
+        debug_print(f"After feat_res_block1: {out.shape}")
+        out = self.feat_res_block2(out)
+        debug_print(f"DownConvResBlock output shape: {out.shape}")
+        return out
+
+
 '''
 DenseFeatureEncoder
 It starts with a Conv-64-k7-s1-p3 layer, followed by BatchNorm and ReLU, as shown in the first block of the image.
@@ -124,6 +185,31 @@ DownConvResBlock-512
 It outputs multiple feature maps (f¹ᵣ, f²ᵣ, f³ᵣ, f⁴ᵣ) as shown in the image. These are collected in the features list and returned.
 
 Each DownConvResBlock performs downsampling using a strided convolution, maintains a residual connection, and applies BatchNorm and ReLU activations, which is consistent with typical ResNet architectures.'''
+
+
+class FeatResBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(channels)
+        self.relu2 = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu1(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out += residual
+        out = self.relu2(out)
+        return out
+
+
 class DenseFeatureEncoder(nn.Module):
     def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64):
         super().__init__()
@@ -277,6 +363,22 @@ class ModulatedConv2d(nn.Module):
 
         return out
 
+class StyledConv(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, style_dim, upsample=False, demodulate=True):
+        super().__init__()
+        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, demodulate=demodulate)
+        self.style = nn.Linear(style_dim, in_channels)
+        self.upsample = upsample
+        self.activation = nn.LeakyReLU(0.2)
+
+    def forward(self, x, latent):
+        if self.upsample:
+            x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+        
+        style = self.style(latent)
+        x = self.conv(x, style)
+        x = self.activation(x)
+        return x
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
@@ -388,7 +490,60 @@ class FrameDecoder(nn.Module):
         debug_print(f"    FrameDecoder final output shape: {x.shape}")
 
         return x
+'''
+The upsample parameter is replaced with downsample to match the diagram.
+The first convolution now has a stride of 2 when downsampling.
+The shortcut connection now uses a 3x3 convolution with stride 2 when downsampling, instead of a 1x1 convolution.
+ReLU activations are applied both after adding the residual and at the end of the block.
+The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
+'''
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, downsample=False):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu2 = nn.ReLU(inplace=True)
+        
+        if downsample or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.shortcut = nn.Identity()
 
+        self.downsample = downsample
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+    def forward(self, x):
+        debug_print(f"ResBlock input shape: {x.shape}")
+        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+
+        residual = self.shortcut(x)
+        debug_print(f"After shortcut: {residual.shape}")
+        
+        out = self.conv1(x)
+        debug_print(f"After conv1: {out.shape}")
+        out = self.bn1(out)
+        out = self.relu1(out)
+        debug_print(f"After bn1 and relu1: {out.shape}")
+        
+        out = self.conv2(out)
+        debug_print(f"After conv2: {out.shape}")
+        out = self.bn2(out)
+        debug_print(f"After bn2: {out.shape}")
+        
+        out += residual
+        debug_print(f"After adding residual: {out.shape}")
+        
+        out = self.relu2(out)
+        debug_print(f"ResBlock output shape: {out.shape}")
+        
+        return out
 
 
 class TokenManipulationNetwork(nn.Module):
