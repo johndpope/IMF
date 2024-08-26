@@ -12,7 +12,82 @@ def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
 
+import math
+from typing import Any, Callable
 
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+class EqualLR:
+    """Applies equalized learning rate to the preceding layer."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def compute_weight(self, module: nn.Module) -> Tensor:
+        weight = getattr(module, f"{self.name}_orig")
+        fan_in = weight.data.size(1) * weight.data[0][0].numel()
+
+        return weight * math.sqrt(2 / fan_in)
+
+    @staticmethod
+    def apply(module: nn.Module, name: str) -> 'EqualLR':
+        fn = EqualLR(name)
+
+        weight = getattr(module, name)
+        del module._parameters[name]
+        module.register_parameter(f"{name}_orig", nn.Parameter(weight.data))
+        module.register_forward_pre_hook(fn)
+
+        return fn
+
+    def __call__(self, module: nn.Module, input: Any) -> None:
+        weight = self.compute_weight(module)
+        setattr(module, self.name, weight)
+
+def equal_lr(module: nn.Module, name: str = 'weight') -> nn.Module:
+    """
+    Applies equalized learning rate to a module.
+    
+    Args:
+        module (nn.Module): The module to apply equalized learning rate to.
+        name (str): The name of the weight parameter (default: 'weight').
+    
+    Returns:
+        nn.Module: The module with equalized learning rate applied.
+    """
+    EqualLR.apply(module, name)
+    return module
+
+class EqualConv2d(nn.Module):
+    """A Conv2d layer with equalized learning rate."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+        conv = nn.Conv2d(*args, **kwargs)
+        conv.weight.data.normal_()
+        conv.bias.data.zero_()
+        self.conv = equal_lr(conv)
+
+    def forward(self, input: Tensor) -> Tensor:
+        return self.conv(input)
+
+class EqualLinear(nn.Module):
+    """A Linear layer with equalized learning rate."""
+
+    def __init__(self, in_dim: int, out_dim: int):
+        super().__init__()
+
+        linear = nn.Linear(in_dim, out_dim)
+        linear.weight.data.normal_()
+        linear.bias.data.zero_()
+
+        self.linear = equal_lr(linear)
+
+    def forward(self, input: Tensor) -> Tensor:
+        return self.linear(input)
 
 class NormLayer(nn.Module):
     def __init__(self, num_features, norm_type='batch'):
