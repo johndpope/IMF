@@ -274,7 +274,54 @@ class StyledConv(nn.Module):
         return x
 
 
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, downsample=False):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu2 = nn.ReLU(inplace=True)
+        
+        if downsample or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.shortcut = nn.Identity()
 
+        self.downsample = downsample
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+    def forward(self, x):
+        debug_print(f"ResBlock input shape: {x.shape}")
+        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
+
+        residual = self.shortcut(x)
+        debug_print(f"After shortcut: {residual.shape}")
+        
+        out = self.conv1(x)
+        debug_print(f"After conv1: {out.shape}")
+        out = self.bn1(out)
+        out = self.relu1(out)
+        debug_print(f"After bn1 and relu1: {out.shape}")
+        
+        out = self.conv2(out)
+        debug_print(f"After conv2: {out.shape}")
+        out = self.bn2(out)
+        debug_print(f"After bn2: {out.shape}")
+        
+        out += residual
+        debug_print(f"After adding residual: {out.shape}")
+        
+        out = self.relu2(out)
+        debug_print(f"ResBlock output shape: {out.shape}")
+        
+        return out
+    
 
 def test_upconvresblock(block, input_tensor):
     print("\nTesting UpConvResBlock")
