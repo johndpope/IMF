@@ -486,7 +486,7 @@ Channel progression: 64 -> 128 -> 256 -> 512 -> 1
 Output: The forward method returns a list containing the outputs from both scales.
 Weight Initialization: A helper function init_weights is provided to initialize the weights of the network, which can be applied using the apply method.
 '''
-class PatchDiscriminator(nn.Module):
+class IMFPatchDiscriminator(nn.Module):
     def __init__(self, input_nc=3, ndf=64):
         super(PatchDiscriminator, self).__init__()
         
@@ -554,4 +554,68 @@ def init_weights(m):
 
 
 
+        
+
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=4, stride=2, padding=1, use_instance_norm=True):
+        super(ConvBlock, self).__init__()
+        layers = [
+            spectral_norm(nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)),
+            nn.LeakyReLU(0.2, inplace=True)
+        ]
+        if use_instance_norm:
+            layers.insert(1, nn.InstanceNorm2d(out_channels))
+        self.block = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.block(x)
+
+class PatchDiscriminator(nn.Module):
+    def __init__(self, input_nc, ndf=64, n_layers=3):
+        super(PatchDiscriminator, self).__init__()
+        sequence = [ConvBlock(input_nc, ndf, use_instance_norm=False)]
+        
+        nf_mult = 1
+        for n in range(1, n_layers):
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            sequence += [ConvBlock(ndf * nf_mult_prev, ndf * nf_mult)]
+
+        sequence += [
+            ConvBlock(ndf * nf_mult, ndf * nf_mult, stride=1),
+            spectral_norm(nn.Conv2d(ndf * nf_mult, 1, kernel_size=4, stride=1, padding=1))
+        ]
+
+        self.model = nn.Sequential(*sequence)
+
+    def forward(self, x):
+        return self.model(x)
+
+class MultiScalePatchDiscriminator(nn.Module):
+    def __init__(self, input_nc, ndf=64, n_layers=3, num_D=3):
+        super(MultiScalePatchDiscriminator, self).__init__()
+        self.num_D = num_D
+        self.n_layers = n_layers
+
+        for i in range(num_D):
+            subnetD = PatchDiscriminator(input_nc, ndf, n_layers)
+            setattr(self, f'scale_{i}', subnetD)
+
+    def singleD_forward(self, model, input):
+        return model(input)
+
+    def forward(self, input):
+        result = []
+        input_downsampled = input
+        for i in range(self.num_D):
+            model = getattr(self, f'scale_{i}')
+            result.append(self.singleD_forward(model, input_downsampled))
+            if i != self.num_D - 1:
+                input_downsampled = F.avg_pool2d(input_downsampled, kernel_size=3, stride=2, padding=1, count_include_pad=False)
+        return result
+
+    def get_scale_params(self):
+        return [getattr(self, f'scale_{i}').parameters() for i in range(self.num_D)]
+
+        
         

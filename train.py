@@ -9,7 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from model import IMFModel, debug_print,PatchDiscriminator
+from model import IMFModel, debug_print,PatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
 from helper import count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
@@ -304,6 +304,7 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                                 
                         # Update global step
                         global_step += 1
+                       
                     
                     # Sample and save reconstructions every save_steps
                     sample_path = f"recon_step_{global_step}.png"
@@ -332,7 +333,8 @@ def train(config, model, discriminator, train_dataloader, accelerator):
                             "lr_d": optimizer_d.param_groups[0]['lr']
                         })
 
-        
+                        # Clear unnecessary tensors
+                        del g_loss, d_loss
 
             progress_bar.close()
 
@@ -371,33 +373,16 @@ def main():
         use_resnet_feature=config.model.use_resnet_feature
         
     )
-    add_gradient_hooks(model)
 
-    discriminator = PatchDiscriminator(ndf=config.discriminator.ndf)
-    add_gradient_hooks(discriminator)
-
+    discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
+ 
     transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-
-    # dataset = EMODataset(
-    #     use_gpu=True,
-    #     remove_background=False,
-    #     width=256,
-    #     height=256,
-    #     sample_rate=24,
-    #     img_scale=(1.0, 1.0),
-    #     video_dir=config.dataset.root_dir,
-    #     json_file=config.dataset.json_file,
-    #     transform=transform,
-    #     apply_crop_warping=False
-    # )
-
-
-    dataset = VideoDataset("./celebvhq/35666/images", 
+    dataset = VideoDataset("/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images", 
                            transform=transform, 
                            frame_skip=0, 
                            num_frames=240)
