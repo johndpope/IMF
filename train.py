@@ -9,7 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from model import IMFModel, debug_print,PatchDiscriminator,MultiScalePatchDiscriminator
+from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
 from helper import count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
@@ -278,8 +278,9 @@ def main():
         
     )
 
-    discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
- 
+    # discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
+    discriminator = IMFPatchDiscriminator()
+    
     transform = transforms.Compose([
         transforms.Resize((256, 256)),
         transforms.ToTensor(),

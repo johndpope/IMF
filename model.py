@@ -488,7 +488,7 @@ Weight Initialization: A helper function init_weights is provided to initialize 
 '''
 class IMFPatchDiscriminator(nn.Module):
     def __init__(self, input_nc=3, ndf=64):
-        super(PatchDiscriminator, self).__init__()
+        super(IMFPatchDiscriminator, self).__init__()
         
           
         self.scale1 = nn.Sequential(
