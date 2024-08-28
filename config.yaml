@@ -7,7 +7,7 @@ model:
   use_mlgffn: False
 # Training parameters
 training:
-  initial_video_repeat: 1
+  initial_video_repeat: 2
   final_video_repeat: 1
   use_ema: False
   use_r1_reg: False
@@ -23,9 +23,9 @@ training:
   noise_magnitude: 0.01
   final_noise_magnitude: 0.001
   gradient_accumulation_steps: 1
-  lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
+  lambda_pixel: 5  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10
-  lambda_adv: 1 # adverserial = 1
+  lambda_adv: 0.5 # adverserial = 1
   lambda_gp: 10  # Gradient penalty coefficient
   lambda_mse: 1.0
   n_critic: 2  # Number of discriminator updates per generator update
