@@ -56,51 +56,6 @@ class EqualLinear(nn.Module):
     def forward(self, input):
         return self.linear(input)
 
-class ConvBlock(nn.Module):
-    def __init__(
-        self,
-        in_channel,
-        out_channel,
-        kernel_size,
-        padding,
-        kernel_size2=None,
-        padding2=None,
-        downsample=False,
-        fused=False,
-    ):
-        super().__init__()
-
-        pad1 = padding
-        pad2 = padding
-        if padding2 is not None:
-            pad2 = padding2
-
-        kernel1 = kernel_size
-        kernel2 = kernel_size
-        if kernel_size2 is not None:
-            kernel2 = kernel_size2
-
-        self.conv1 = nn.Sequential(
-            EqualConv2d(in_channel, out_channel, kernel1, padding=pad1),
-            nn.LeakyReLU(0.2),
-        )
-
-        if downsample:
-            self.conv2 = nn.Sequential(
-                EqualConv2d(out_channel, out_channel, kernel2, padding=pad2),
-                nn.AvgPool2d(2),
-                nn.LeakyReLU(0.2),
-            )
-        else:
-            self.conv2 = nn.Sequential(
-                EqualConv2d(out_channel, out_channel, kernel2, padding=pad2),
-                nn.LeakyReLU(0.2),
-            )
-
-    def forward(self, input):
-        out = self.conv1(input)
-        out = self.conv2(out)
-        return out
 
 
 

@@ -5,96 +5,42 @@ import torch.nn.functional as F
 from model import debug_print
 import lpips
 
-class LPIPSPerceptualLoss(nn.Module):
-    def __init__(self, net='alex', debug=True):
-        super(LPIPSPerceptualLoss, self).__init__()
-        self.debug = debug
-        self.lpips_model = lpips.LPIPS(net=net)
-        
-        for param in self.parameters():
-            param.requires_grad = False
+# Wasserstein Loss:
+# Pros:
 
-    def forward(self, x, y):
-        debug_print(f"\nLPIPSPerceptualLoss Forward Pass:")
-        debug_print(f"Input shapes: x: {x.shape}, y: {y.shape}")
-        if x.dim() != 4 or y.dim() != 4:
-            raise ValueError(f"Expected 4D input tensors, got x: {x.dim()}D and y: {y.dim()}D")
-        
-        total_loss = 0
-        for i in range(4):  # Downsample 4 times (i ∈ [0, 3])
-            debug_print(f"\n  Scale {i+1}:")
-            if i > 0:
-                x = F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False)
-                y = F.interpolate(y, scale_factor=0.5, mode='bilinear', align_corners=False)
+# Provides a meaningful distance metric between distributions.
+# Often leads to more stable training and better convergence.
+# Can help prevent mode collapse.
 
-            debug_print(f"    Current shapes: x: {x.shape}, y: {y.shape}")
-            
-            # Compute LPIPS loss
-            scale_loss = self.lpips_model(x, y).mean()
-            total_loss += scale_loss
+# Cons:
 
-            debug_print(f"    Scale {i+1} LPIPS loss: {scale_loss.item():.6f}")
+# Requires careful weight clipping or gradient penalty implementation for Lipschitz constraint.
+# May converge slower than other losses in some cases.
 
-        debug_print(f"\nTotal LPIPS loss: {total_loss.item():.6f}")
-        return total_loss
-    
-class VGGPerceptualLoss(nn.Module):
-    def __init__(self, debug=True):
-        super(VGGPerceptualLoss, self).__init__()
-        self.debug = debug
-        vgg = models.vgg19(pretrained=True).features
-        self.slices = nn.ModuleList([
-            nn.Sequential(*list(vgg.children())[:2]),
-            nn.Sequential(*list(vgg.children())[2:7]),
-            nn.Sequential(*list(vgg.children())[7:12]),
-            nn.Sequential(*list(vgg.children())[12:21]),
-            nn.Sequential(*list(vgg.children())[21:30])
-        ])
-        
-        for param in self.parameters():
-            param.requires_grad = False
 
-    def forward(self, x, y):
-        debug_print(f"\nVGGPerceptualLoss Forward Pass:")
-        debug_print(f"Input shapes: x: {x.shape}, y: {y.shape}")
-        if x.dim() != 4 or y.dim() != 4:
-            raise ValueError(f"Expected 4D input tensors, got x: {x.dim()}D and y: {y.dim()}D")
-        
-        total_loss = 0
-        for i in range(4):  # Downsample 4 times (i ∈ [0, 3])
-            debug_print(f"\n  Scale {i+1}:")
-            if i > 0:
-                x = F.interpolate(x, scale_factor=0.5, mode='bilinear', align_corners=False)
-                y = F.interpolate(y, scale_factor=0.5, mode='bilinear', align_corners=False)
+# Hinge Loss:
+# Pros:
 
-            debug_print(f"    Current shapes: x: {x.shape}, y: {y.shape}")
-            
-            # Compute VGG features
-            x_features, y_features = [], []
-            x_current, y_current = x, y
-            for j, slice in enumerate(self.slices):
-                x_current = slice(x_current)
-                y_current = slice(y_current)
-                debug_print(f"      After VGG slice {j+1}: x: {x_current.shape}, y: {y_current.shape}")
-                x_features.append(x_current)
-                y_features.append(y_current)
-            
-            # Compute loss for each VGG layer
-            scale_loss = 0
-            for j in range(len(x_features)):
-                layer_loss = F.l1_loss(x_features[j], y_features[j])
-                scale_loss += layer_loss
- 
-                debug_print(f"      Layer {j+1} loss: {layer_loss.item():.6f}")
-            
-            total_loss += scale_loss
+# Often results in sharper and more realistic images.
+# Good stability in training, especially for complex architectures.
+# Works well with spectral normalization.
 
-            debug_print(f"    Scale {i+1} total loss: {scale_loss.item():.6f}")
-        
+# Cons:
 
-        debug_print(f"\nTotal perceptual loss: {total_loss.item():.6f}")
-        return total_loss
+# May be sensitive to outliers.
+# Can sometimes lead to more constrained generator outputs.
 
+
+# Vanilla GAN Loss:
+# Pros:
+
+# Simple and straightforward implementation.
+# Works well for many standard GAN applications.
+
+# Cons:
+
+# Can suffer from vanishing gradients and mode collapse.
+# Often less stable than Wasserstein or Hinge loss, especially for complex models.
 
 def wasserstein_loss(real_outputs, fake_outputs):
     """
