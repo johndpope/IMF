@@ -18,7 +18,7 @@ from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
-from loss import gan_loss_fn
+from loss import gan_loss_fn,MediaPipeEyeEnhancementLoss
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import random
@@ -76,6 +76,8 @@ class IMFTrainer:
         self.gan_loss_type = config.loss.type
         self.perceptual_loss_fn = lpips.LPIPS(net='alex', spatial=True).to(accelerator.device)
         self.pixel_loss_fn = nn.L1Loss()
+        self.eye_loss_fn = MediaPipeEyeEnhancementLoss(eye_weight=1.0).to(accelerator.device)
+
 
         self.style_mixing_prob = config.training.style_mixing_prob
         self.noise_magnitude = config.training.noise_magnitude
@@ -101,6 +103,9 @@ class IMFTrainer:
             self.ema.register()
 
     def train_step(self, x_current, x_reference,global_step):
+        if x_current.nelement() == 0:
+            print("🔥 Skipping training step due to empty x_current")
+            return None, None, None, None, None, None
         # Forward Pass
         f_r = self.model.dense_feature_encoder(x_reference)
         t_r = self.model.latent_token_encoder(x_reference)
@@ -140,13 +145,18 @@ class IMFTrainer:
         x_reconstructed = normalize(x_reconstructed)
 
 
+        # In the training loop
+        l_eye = self.eye_loss_fn(x_reconstructed, x_current)
+
         if self.config.training.use_subsampling:
             sub_sample_size = (128, 128)  # As mentioned in the paper
             x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
 
-        # save_image(x_reconstructed, 'x_reconstructed.png',  normalize=True)
-        # save_image(x_current, 'x_current.png',  normalize=True)
-        # save_image(x_reference, 'x_reference.png',  normalize=True)
+
+        if global_step % self.config.logging.sample_every == 0:
+            save_image(x_reconstructed, 'x_reconstructed.png',  normalize=True)
+            save_image(x_current, 'x_current.png',  normalize=True)
+            save_image(x_reference, 'x_reference.png',  normalize=True)
 
         # Discriminator
         self.optimizer_d.zero_grad()
@@ -178,7 +188,8 @@ class IMFTrainer:
 
         g_loss = (self.config.training.lambda_pixel * l_p +
                   self.config.training.lambda_perceptual * l_v +
-                  self.config.training.lambda_adv * g_loss_gan)
+                  self.config.training.lambda_adv * g_loss_gan +
+                  self.config.training.lambda_eye * l_eye)
 
         self.accelerator.backward(g_loss)
         if self.config.training.clip_grad:

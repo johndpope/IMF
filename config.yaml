@@ -26,11 +26,12 @@ training:
   gradient_accumulation_steps: 1
   lambda_pixel: 5  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10
+  lambda_eye: 5
   lambda_adv: 0.5 # adverserial = 1
   lambda_gp: 10  # Gradient penalty coefficient
   lambda_mse: 1.0
   n_critic: 2  # Number of discriminator updates per generator update
-  clip_grad: False
+  clip_grad: True
   clip_grad_norm: 1.0  # Maximum norm for gradient clipping
   r1_gamma: 10
   r1_interval: 16
@@ -63,7 +64,7 @@ checkpoints:
 logging:
   log_every: 250
   sample_every: 100
-  sample_size: 1 # for images on wandb
+  sample_size: 2 # for images on wandb
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
   print_model_details: False
