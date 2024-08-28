@@ -98,7 +98,7 @@ class IMFTrainer:
             self.ema = accelerator.prepare(self.ema)
             self.ema.register()
 
-    def train_step(self, x_current, x_reference):
+    def train_step(self, x_current, x_reference,global_step):
         # Forward Pass
         f_r = self.model.dense_feature_encoder(x_reference)
         t_r = self.model.latent_token_encoder(x_reference)
@@ -215,7 +215,7 @@ class IMFTrainer:
 
                             x_current = source_frames[:, current_idx]
 
-                            d_loss, g_loss, l_p, l_v, g_loss_gan,x_reconstructed = self.train_step(x_current, x_reference)
+                            d_loss, g_loss, l_p, l_v, g_loss_gan,x_reconstructed = self.train_step(x_current, x_reference,global_step)
 
                             epoch_g_loss += g_loss
                             epoch_d_loss += d_loss
