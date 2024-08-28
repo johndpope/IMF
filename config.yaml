@@ -9,7 +9,7 @@ model:
 training:
   use_eye_loss: True
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41
-  initial_video_repeat: 3
+  initial_video_repeat: 5
   final_video_repeat: 1
   use_ema: False
   use_r1_reg: False
@@ -27,7 +27,7 @@ training:
   gradient_accumulation_steps: 1
   lambda_pixel: 5  # in paper lambda-pixel = 10 Adjust this value as needed
   lambda_perceptual: 10 # lambda perceptual = 10
-  lambda_eye: 5
+  lambda_eye: 10
   lambda_adv: 0.5 # adverserial = 1
   lambda_gp: 10  # Gradient penalty coefficient
   lambda_mse: 1.0

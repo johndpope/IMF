@@ -145,12 +145,9 @@ class IMFTrainer:
         x_reconstructed = normalize(x_reconstructed)
 
 
-        # In the training loop
-        if self.config.training.use_eye_loss:
-            l_eye = self.eye_loss_fn(x_reconstructed, x_current)
-            l_eye = self.config.training.lambda_eye * l_eye
-        else:
-            l_eye = 0
+        # eye loss
+        l_eye = self.eye_loss_fn(x_reconstructed, x_current)
+          
         if self.config.training.use_subsampling:
             sub_sample_size = (128, 128)  # As mentioned in the paper
             x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
@@ -192,7 +189,7 @@ class IMFTrainer:
         g_loss = (self.config.training.lambda_pixel * l_p +
                   self.config.training.lambda_perceptual * l_v +
                   self.config.training.lambda_adv * g_loss_gan +
-                 l_eye)
+                 self.config.training.lambda_eye * l_eye)
 
         self.accelerator.backward(g_loss)
         if self.config.training.clip_grad:
@@ -202,7 +199,7 @@ class IMFTrainer:
         if self.ema:
             self.ema.update()
 
-        return d_loss.item(), g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(),x_reconstructed
+        return d_loss.item(), g_loss.item(), l_p.item(), l_v.item(),l_eye.item(), g_loss_gan.item(),x_reconstructed
 
     def train(self):
         global_step = 0
@@ -238,7 +235,7 @@ class IMFTrainer:
 
                             x_current = source_frames[:, current_idx]
 
-                            d_loss, g_loss, l_p, l_v, g_loss_gan,x_reconstructed = self.train_step(x_current, x_reference,global_step)
+                            d_loss, g_loss, l_p, l_v, l_eye,g_loss_gan,x_reconstructed = self.train_step(x_current, x_reference,global_step)
 
                             epoch_g_loss += g_loss
                             epoch_d_loss += d_loss
@@ -249,6 +246,7 @@ class IMFTrainer:
                                     "g_loss": g_loss,
                                     "d_loss": d_loss,
                                     "pixel_loss": l_p,
+                                    "eye_loss": l_eye,
                                     "perceptual_loss": l_v,
                                     "gan_loss": g_loss_gan,
                                     "global_step": global_step,
