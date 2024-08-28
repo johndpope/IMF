@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
+from helper import consistent_sub_sample,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -138,6 +138,11 @@ class IMFTrainer:
 
         x_reconstructed = self.model.frame_decoder(aligned_features)
         x_reconstructed = normalize(x_reconstructed)
+
+
+        if self.config.training.use_subsampling:
+            sub_sample_size = (128, 128)  # As mentioned in the paper
+            x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
 
         # save_image(x_reconstructed, 'x_reconstructed.png',  normalize=True)
         # save_image(x_current, 'x_current.png',  normalize=True)
