@@ -8,7 +8,7 @@ model:
 # Training parameters
 training:
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41
-  initial_video_repeat: 2
+  initial_video_repeat: 3
   final_video_repeat: 1
   use_ema: False
   use_r1_reg: False

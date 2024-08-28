@@ -146,7 +146,7 @@ class IMFTrainer:
 
 
         # In the training loop
-        if self.config.loss.use_eye_loss:
+        if self.config.training.use_eye_loss:
             l_eye = self.eye_loss_fn(x_reconstructed, x_current)
             l_eye = self.config.training.lambda_eye * l_eye
         else:
