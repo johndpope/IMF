@@ -66,19 +66,19 @@ class ImplicitMotionAlignment(nn.Module):
         
 
     def forward(self, ml_c, ml_r, fl_r):
-        embeddings = []
+        # embeddings = []
         #print(f"self.spatial_dim:{self.spatial_dim}")
         #print(f"self.feature_dim:{self.feature_dim}")
         #print(f"self.motion_dim:{self.motion_dim}")
         # Cross-attention module
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
-        embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
+        # embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
         #print(f"ImplicitMotionAlignment: After cross-attention, V_prime.shape = {V_prime.shape}")
 
         # Transformer blocks
         for i, block in enumerate(self.transformer_blocks):
             V_prime = block(V_prime)
-            embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
+            # embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
             #print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
 
         return V_prime

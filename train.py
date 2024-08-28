@@ -137,9 +137,9 @@ class IMFTrainer:
         x_reconstructed = self.model.frame_decoder(aligned_features)
         x_reconstructed = normalize(x_reconstructed)
 
-        save_image(x_reconstructed, 'x_reconstructed.png',  normalize=True)
-        save_image(x_current, 'x_current.png',  normalize=True)
-        save_image(x_reference, 'x_reference.png',  normalize=True)
+        # save_image(x_reconstructed, 'x_reconstructed.png',  normalize=True)
+        # save_image(x_current, 'x_current.png',  normalize=True)
+        # save_image(x_reference, 'x_reference.png',  normalize=True)
 
         # Discriminator
         self.optimizer_d.zero_grad()
@@ -297,11 +297,11 @@ def main():
 
     discriminator = IMFPatchDiscriminator()
 
-    transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
+    # transform = transforms.Compose([
+    #     transforms.Resize((256, 256)),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    # ])
 
 
     dataset = WebVid10M(video_folder=config.dataset.root_dir)
