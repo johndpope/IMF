@@ -68,6 +68,7 @@ logging:
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
   print_model_details: False
+  use_eye_loss: True
 
 # Accelerator settings
 accelerator:

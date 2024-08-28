@@ -146,8 +146,11 @@ class IMFTrainer:
 
 
         # In the training loop
-        l_eye = self.eye_loss_fn(x_reconstructed, x_current)
-
+        if self.config.loss.use_eye_loss:
+            l_eye = self.eye_loss_fn(x_reconstructed, x_current)
+            l_eye = self.config.training.lambda_eye * l_eye
+        else:
+            l_eye = 0
         if self.config.training.use_subsampling:
             sub_sample_size = (128, 128)  # As mentioned in the paper
             x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
@@ -189,7 +192,7 @@ class IMFTrainer:
         g_loss = (self.config.training.lambda_pixel * l_p +
                   self.config.training.lambda_perceptual * l_v +
                   self.config.training.lambda_adv * g_loss_gan +
-                  self.config.training.lambda_eye * l_eye)
+                 l_eye)
 
         self.accelerator.backward(g_loss)
         if self.config.training.clip_grad:

@@ -83,21 +83,19 @@ def gan_loss_fn(real_outputs, fake_outputs, loss_type):
     else:
         raise ValueError(f"Unsupported loss type: {loss_type}")
 
-
 class MediaPipeEyeEnhancementLoss(nn.Module):
-    def __init__(self, eye_weight=1):
+    def __init__(self, eye_weight=10.0):
         super(MediaPipeEyeEnhancementLoss, self).__init__()
         self.eye_weight = eye_weight
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
 
     def forward(self, reconstructed, target):
-        # Base loss (e.g., L1 or MSE)
-        base_loss = F.l1_loss(reconstructed, target)
 
-        # Convert tensors to numpy arrays for MediaPipe
-        recon_np = (reconstructed[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-        target_np = (target[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+
+        # Detach tensors and convert to numpy arrays for MediaPipe
+        recon_np = (reconstructed[0].detach().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        target_np = (target[0].detach().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
 
         # Detect facial landmarks
         recon_results = self.face_mesh.process(cv2.cvtColor(recon_np, cv2.COLOR_RGB2BGR))
@@ -140,6 +138,5 @@ class MediaPipeEyeEnhancementLoss(nn.Module):
                 
                 eye_loss += F.l1_loss(recon_eye_region, target_eye_region)
 
-        # Combine losses
-        total_loss = base_loss + self.eye_weight * eye_loss
-        return total_loss
+        return eye_loss
+        
