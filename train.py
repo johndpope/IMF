@@ -19,7 +19,8 @@ import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
 from loss import gan_loss_fn
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+# from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import random
 
 from stylegan import EMA
@@ -83,8 +84,9 @@ class IMFTrainer:
         self.optimizer_g = AdamW(get_layer_wise_learning_rates(model), lr=2e-4, betas=(0.5, 0.999))
         self.optimizer_d = AdamW(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
-        self.scheduler_g = ReduceLROnPlateau(self.optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
-        self.scheduler_d = ReduceLROnPlateau(self.optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
+        # Learning rate schedulers
+        self.scheduler_g = CosineAnnealingLR(self.optimizer_g, T_max=100, eta_min=1e-6)
+        self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=100, eta_min=1e-6)
 
         if config.training.use_ema:
             self.ema = EMA(model, decay=config.training.ema_decay)
@@ -157,7 +159,7 @@ class IMFTrainer:
         d_loss = d_loss + self.r1_gamma * r1_reg
 
         self.accelerator.backward(d_loss)
-        torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
+        # torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
         self.optimizer_d.step()
 
         # Generator
@@ -173,7 +175,7 @@ class IMFTrainer:
                   self.config.training.lambda_adv * g_loss_gan)
 
         self.accelerator.backward(g_loss)
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer_g.step()
 
         if self.ema:
