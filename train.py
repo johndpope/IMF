@@ -295,8 +295,8 @@ def main():
         use_resnet_feature=config.model.use_resnet_feature
     )
 
-    discriminator = IMFPatchDiscriminator()
-
+    # discriminator = IMFPatchDiscriminator()
+    discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
     # transform = transforms.Compose([
     #     transforms.Resize((256, 256)),
     #     transforms.ToTensor(),
