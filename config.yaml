@@ -7,6 +7,7 @@ model:
   use_mlgffn: False
 # Training parameters
 training:
+  use_eye_loss: True
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41
   initial_video_repeat: 3
   final_video_repeat: 1
@@ -68,7 +69,7 @@ logging:
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
   print_model_details: False
-  use_eye_loss: True
+
 
 # Accelerator settings
 accelerator:
