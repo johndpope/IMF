@@ -254,8 +254,8 @@ class IMFTrainer:
                                     "lr_d": self.optimizer_d.param_groups[0]['lr']
                                 })
                                 # Log gradient flow for generator and discriminator
-                                log_grad_flow(self.model.named_parameters())
-                                log_grad_flow(self.discriminator.named_parameters())
+                                log_grad_flow(self.model.named_parameters(),global_step)
+                                log_grad_flow(self.discriminator.named_parameters(),global_step)
 
                             if global_step % self.config.logging.sample_every == 0:
                                 sample_path = f"recon_step_{global_step}.png"
@@ -319,7 +319,7 @@ def main():
         use_resnet_feature=config.model.use_resnet_feature
     )
     add_gradient_hooks(model)
-    
+
     discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
     add_gradient_hooks(discriminator)
 
