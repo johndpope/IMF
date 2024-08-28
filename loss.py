@@ -90,53 +90,55 @@ class MediaPipeEyeEnhancementLoss(nn.Module):
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
 
+    @torch.no_grad()
+    def get_eye_boxes(self, image):
+        image_np = (image.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        results = self.face_mesh.process(cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR))
+        
+        if not results.multi_face_landmarks:
+            return None
+
+        landmarks = results.multi_face_landmarks[0].landmark
+        left_eye_indices = list(range(362, 374))
+        right_eye_indices = list(range(263, 273))
+
+        def get_eye_box(indices):
+            x_min = min(landmarks[i].x for i in indices)
+            x_max = max(landmarks[i].x for i in indices)
+            y_min = min(landmarks[i].y for i in indices)
+            y_max = max(landmarks[i].y for i in indices)
+            return [int(x_min * image_np.shape[1]), int(y_min * image_np.shape[0]),
+                    int(x_max * image_np.shape[1]), int(y_max * image_np.shape[0])]
+
+        return get_eye_box(left_eye_indices), get_eye_box(right_eye_indices)
+
     def forward(self, reconstructed, target):
-
-
-        # Detach tensors and convert to numpy arrays for MediaPipe
-        recon_np = (reconstructed[0].detach().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-        target_np = (target[0].detach().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-
-        # Detect facial landmarks
-        recon_results = self.face_mesh.process(cv2.cvtColor(recon_np, cv2.COLOR_RGB2BGR))
-        target_results = self.face_mesh.process(cv2.cvtColor(target_np, cv2.COLOR_RGB2BGR))
+        # Base loss (e.g., L1 or MSE)
+        base_loss = F.l1_loss(reconstructed, target)
 
         eye_loss = 0.0
-        if recon_results.multi_face_landmarks and target_results.multi_face_landmarks:
-            # Get eye landmarks (assuming first face)
-            recon_landmarks = recon_results.multi_face_landmarks[0].landmark
-            target_landmarks = target_results.multi_face_landmarks[0].landmark
+        for i in range(reconstructed.size(0)):  # Iterate over batch
+            recon_eyes = self.get_eye_boxes(reconstructed[i])
+            target_eyes = self.get_eye_boxes(target[i])
 
-            # Define eye indices (you may need to adjust these)
-            left_eye_indices = list(range(362, 374))
-            right_eye_indices = list(range(263, 273))
+            if recon_eyes is None or target_eyes is None:
+                continue  # Skip this sample if face not detected
 
-            # Calculate bounding boxes for eyes
-            def get_eye_box(landmarks, indices):
-                x_min = min(landmarks[i].x for i in indices)
-                x_max = max(landmarks[i].x for i in indices)
-                y_min = min(landmarks[i].y for i in indices)
-                y_max = max(landmarks[i].y for i in indices)
-                return [int(x_min * recon_np.shape[1]), int(y_min * recon_np.shape[0]),
-                        int(x_max * recon_np.shape[1]), int(y_max * recon_np.shape[0])]
-
-            recon_left_eye = get_eye_box(recon_landmarks, left_eye_indices)
-            recon_right_eye = get_eye_box(recon_landmarks, right_eye_indices)
-            target_left_eye = get_eye_box(target_landmarks, left_eye_indices)
-            target_right_eye = get_eye_box(target_landmarks, right_eye_indices)
-
-            # Compute eye-specific loss
-            for recon_eye, target_eye in zip([recon_left_eye, recon_right_eye], [target_left_eye, target_right_eye]):
-                recon_eye_region = reconstructed[:, :, recon_eye[1]:recon_eye[3], recon_eye[0]:recon_eye[2]]
-                target_eye_region = target[:, :, target_eye[1]:target_eye[3], target_eye[0]:target_eye[2]]
+            for recon_eye, target_eye in zip(recon_eyes, target_eyes):
+                recon_eye_region = reconstructed[i, :, recon_eye[1]:recon_eye[3], recon_eye[0]:recon_eye[2]]
+                target_eye_region = target[i, :, target_eye[1]:target_eye[3], target_eye[0]:target_eye[2]]
                 
                 # Ensure both regions have the same size
-                min_h = min(recon_eye_region.size(2), target_eye_region.size(2))
-                min_w = min(recon_eye_region.size(3), target_eye_region.size(3))
-                recon_eye_region = recon_eye_region[:, :, :min_h, :min_w]
-                target_eye_region = target_eye_region[:, :, :min_h, :min_w]
+                min_h = min(recon_eye_region.size(1), target_eye_region.size(1))
+                min_w = min(recon_eye_region.size(2), target_eye_region.size(2))
+                recon_eye_region = recon_eye_region[:, :min_h, :min_w]
+                target_eye_region = target_eye_region[:, :min_h, :min_w]
                 
                 eye_loss += F.l1_loss(recon_eye_region, target_eye_region)
 
-        return eye_loss
-        
+        # Normalize eye loss by batch size
+        eye_loss /= reconstructed.size(0)
+
+        # Combine losses
+        total_loss = base_loss + self.eye_weight * eye_loss
+        return total_loss

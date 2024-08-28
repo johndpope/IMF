@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
-from helper import consistent_sub_sample,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
+from helper import log_grad_flow,consistent_sub_sample,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
 from omegaconf import OmegaConf
 import lpips
@@ -253,12 +253,15 @@ class IMFTrainer:
                                     "lr_g": self.optimizer_g.param_groups[0]['lr'],
                                     "lr_d": self.optimizer_d.param_groups[0]['lr']
                                 })
+                                # Log gradient flow for generator and discriminator
+                                log_grad_flow(self.model.named_parameters())
+                                log_grad_flow(self.discriminator.named_parameters())
 
                             if global_step % self.config.logging.sample_every == 0:
                                 sample_path = f"recon_step_{global_step}.png"
                                 sample_recon(self.model, (x_reconstructed, x_current, x_reference), self.accelerator, sample_path, 
                                              num_samples=self.config.logging.sample_size)
-
+                                
                             global_step += 1
 
                 progress_bar.update(1)
@@ -315,15 +318,10 @@ def main():
         num_layers=config.model.num_layers,
         use_resnet_feature=config.model.use_resnet_feature
     )
-
-    # discriminator = IMFPatchDiscriminator()
+    add_gradient_hooks(model)
+    
     discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
-    # transform = transforms.Compose([
-    #     transforms.Resize((256, 256)),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    # ])
-
+    add_gradient_hooks(discriminator)
 
     dataset = WebVid10M(video_folder=config.dataset.root_dir)
 
