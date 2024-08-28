@@ -164,7 +164,8 @@ class IMFTrainer:
         d_loss = d_loss + self.r1_gamma * r1_reg
 
         self.accelerator.backward(d_loss)
-        # torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
+        if self.config.training.clip_grad:
+            torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=self.config.training.clip_grad_norm)
         self.optimizer_d.step()
 
         # Generator
@@ -180,7 +181,8 @@ class IMFTrainer:
                   self.config.training.lambda_adv * g_loss_gan)
 
         self.accelerator.backward(g_loss)
-        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        if self.config.training.clip_grad:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.training.clip_grad_norm)
         self.optimizer_g.step()
 
         if self.ema:

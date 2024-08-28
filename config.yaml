@@ -30,6 +30,7 @@ training:
   lambda_gp: 10  # Gradient penalty coefficient
   lambda_mse: 1.0
   n_critic: 2  # Number of discriminator updates per generator update
+  clip_grad: False
   clip_grad_norm: 1.0  # Maximum norm for gradient clipping
   r1_gamma: 10
   r1_interval: 16
