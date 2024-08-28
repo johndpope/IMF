@@ -11,6 +11,8 @@ if [ $? -ne 0 ]; then
     exit 1
 else
     # echo "Test passed (micro-commit)...."
+    echo "Clearing __pycache__"
+    rm -rf __pycache__
     git add .
     git commit -m "🧗"
     python train.py

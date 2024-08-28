@@ -1,10 +1,3 @@
-data: 
-  image_size: 256
-
-# Loss function
-loss:
-  type: "vanilla"  # vanilla worked ok - https://wandb.ai/snoozie/IMF/runs/sa0i7gs6?nw=nwusersnoozie
-  lpips_spatial: True
 # Model parameters
 model:
   latent_dim: 32
@@ -12,60 +5,45 @@ model:
   num_layers: 4
   use_resnet_feature: False
   use_mlgffn: False
-  use_enhanced_generator: True
-  use_skip: False
 # Training parameters
 training:
-  use_subsampling: False # saves ram?   https://github.com/johndpope/MegaPortrait-hack/issues/41
-  weight_decay: 1e-4 # lower maybe more stable??
-
-  use_r1_reg: True
+  initial_video_repeat: 1
+  final_video_repeat: 1
+  use_ema: False
+  use_r1_reg: False
+  batch_size: 2 #  
+  num_epochs: 1000
+  save_steps: 250
+  learning_rate_g: 1.0e-4 # Reduced learning rate for generator
+  initial_learning_rate_d: 1.0e-4 # Set a lower initial learning rate for discriminator
+  # learning_rate_g: 5.0e-4  # Increased learning rate for generator
+  # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
+  ema_decay: 0.999
+  style_mixing_prob: 0.0
+  noise_magnitude: 0.01
+  final_noise_magnitude: 0.001
+  gradient_accumulation_steps: 1
+  lambda_pixel: 10  # in paper lambda-pixel = 10 Adjust this value as needed
+  lambda_perceptual: 10 # lambda perceptual = 10
+  lambda_adv: 1 # adverserial = 1
+  lambda_gp: 10  # Gradient penalty coefficient
+  lambda_mse: 1.0
+  n_critic: 2  # Number of discriminator updates per generator update
+  clip_grad_norm: 1.0  # Maximum norm for gradient clipping
   r1_gamma: 10
   r1_interval: 16
+  label_smoothing: 0.1
 
-  use_multiscale_discriminator: False
-  ada_augmentation: False
-  ada_target_r_t: 0.6
-  ada_kimg: 500
-  ada_interval: 4
-
-  use_ema: True
-  ema_decay: 0.999
-  style_mixing_prob: 0.5
-  initial_noise_magnitude: 0.01
-  final_noise_magnitude: 0.0001 
-
-  initial_update_ratio: 1
-  update_ratio_adjustment: 0.1
-
- 
-
-  initial_video_repeat: 6
-  final_video_repeat: 2
-
-
-  batch_size: 1 # need to redo emodataset to remove the cache npz - smaller numbers won't work... 
-  num_epochs: 1000
-
-  learning_rate_g: 1.0e-4 # Reduced learning rate for generator
-  learning_rate_d: 4e-4
-
-  gradient_accumulation_steps: 1
-
-  lambda_perceptual: 10 # lambda perceptual = 10
-  lambda_pixel: 5  # in paper lambda-pixel = 10 
-  lambda_adv: 0.5 # 1 # Can sometimes lead to artifacts if weighted too heavily
-  lambda_gp: 10  # Gradient penalty coefficient
-
-
-  clip_grad_norm: 0.75  # Maximum norm for gradient clipping
- 
-
+  min_learning_rate_d: 1.0e-6
+  max_learning_rate_d: 1.0e-3
+  d_lr_adjust_frequency: 100  # Adjust D learning rate every 100 steps
+  d_lr_adjust_factor: 2.0  # Factor to increase/decrease D learning rate
+  target_d_loss_ratio: 0.6  # Target ratio of D loss to G loss
   every_xref_frames: 16
   use_many_xrefs: False
-
-
-
+  
+  scales: [1, 0.5, 0.25, 0.125]
+  enable_xformers_memory_efficient_attention: True
 
 # Dataset parameters
 dataset:
@@ -81,13 +59,13 @@ checkpoints:
 
 # Logging and visualization
 logging:
-  sample_interval: 1
+  log_every: 250
+  sample_every: 100
   sample_size: 1 # for images on wandb
   output_dir: "./samples"
   visualize_every: 100  # Visualize latent tokens every 100 batches
   print_model_details: False
-  log_every: 100
-  save_steps: 250
+
 # Accelerator settings
 accelerator:
   mixed_precision: "no"  # Options: "no", "fp16", "bf16"
@@ -100,7 +78,13 @@ discriminator:
 
 # Optimizer parameters
 optimizer:
-  beta1: 0.0
+  beta1: 0.5
   beta2: 0.999
 
-
+# Loss function
+loss:
+  type: "wasserstein"  # Changed to Wasserstein loss for WGAN-GP
+  weights:
+      perceptual: [10, 10, 10, 10, 10]
+      equivariance_shift: 10
+      equivariance_affine: 10
