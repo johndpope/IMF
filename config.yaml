@@ -6,6 +6,9 @@ model:
   use_resnet_feature: False
   use_mlgffn: False
 # Training parameters
+
+profiling:
+  profile_step: 10
 training:
   use_eye_loss: True
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41

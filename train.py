@@ -29,6 +29,7 @@ from transformers import Adafactor
 from WebVid10M import WebVid10M
 
 
+
 def load_config(config_path):
     return OmegaConf.load(config_path)
 
@@ -72,6 +73,8 @@ class IMFTrainer:
         self.discriminator = discriminator
         self.train_dataloader = train_dataloader
         self.accelerator = accelerator
+        
+
 
         self.gan_loss_type = config.loss.type
         self.perceptual_loss_fn = lpips.LPIPS(net='alex', spatial=True).to(accelerator.device)
@@ -102,10 +105,26 @@ class IMFTrainer:
             self.ema = accelerator.prepare(self.ema)
             self.ema.register()
 
+    def check_exploding_gradients(self, model):
+        for name, param in model.named_parameters():
+            if param.grad is not None:
+                if not torch.isfinite(param.grad).all():
+                    print(f"🔥 Exploding gradients detected in {name}")
+                    return True
+        return False
+
+    def adjust_learning_rate(self, optimizer, factor=0.1, min_lr=1e-6):
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = max(param_group['lr'] * factor, min_lr)
+        print(f"🔥 Adjusted learning rate. New LR: {optimizer.param_groups[0]['lr']}")
+
+
     def train_step(self, x_current, x_reference,global_step):
         if x_current.nelement() == 0:
             print("🔥 Skipping training step due to empty x_current")
             return None, None, None, None, None, None
+        
+
         # Forward Pass
         f_r = self.model.dense_feature_encoder(x_reference)
         t_r = self.model.latent_token_encoder(x_reference)
@@ -174,9 +193,14 @@ class IMFTrainer:
         d_loss = d_loss + self.r1_gamma * r1_reg
 
         self.accelerator.backward(d_loss)
-        if self.config.training.clip_grad:
-            torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=self.config.training.clip_grad_norm)
-        self.optimizer_d.step()
+        # Check for exploding gradients
+        if self.check_exploding_gradients(self.discriminator):
+            print("🔥 Skipping discriminator update due to exploding gradients")
+        else:
+            if self.config.training.clip_grad:
+                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=self.config.training.clip_grad_norm)
+            self.optimizer_d.step()
+
 
         # Generator
         self.optimizer_g.zero_grad()
@@ -192,12 +216,23 @@ class IMFTrainer:
                  self.config.training.lambda_eye * l_eye)
 
         self.accelerator.backward(g_loss)
-        if self.config.training.clip_grad:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.training.clip_grad_norm)
-        self.optimizer_g.step()
+        # Check for exploding gradients
+        # In the train_step function, you can call this when exploding gradients are detected:
+        if self.check_exploding_gradients(self.model):
+            print("🔥 Exploding gradients detected. Adjusting learning rate.")
+            self.adjust_learning_rate(self.optimizer_g)
+            self.adjust_learning_rate(self.optimizer_d)
+            self.optimizer_g.zero_grad()
+            self.optimizer_d.zero_grad()
+        else:
+            if self.config.training.clip_grad:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.training.clip_grad_norm)
+            self.optimizer_g.step()
+            self.optimizer_d.step()
 
         if self.ema:
             self.ema.update()
+
 
         return d_loss.item(), g_loss.item(), l_p.item(), l_v.item(),l_eye.item(), g_loss_gan.item(),x_reconstructed
 
@@ -215,7 +250,8 @@ class IMFTrainer:
 
             epoch_g_loss = 0
             epoch_d_loss = 0
-
+            num_valid_steps = 0
+ 
             for batch in self.train_dataloader:
                 source_frames = batch['frames']
                 batch_size, num_frames, channels, height, width = source_frames.shape
@@ -235,8 +271,18 @@ class IMFTrainer:
 
                             x_current = source_frames[:, current_idx]
 
-                            d_loss, g_loss, l_p, l_v, l_eye,g_loss_gan,x_reconstructed = self.train_step(x_current, x_reference,global_step)
+                            results = self.train_step(x_current, x_reference, global_step)
 
+                            if results[0] is not None:
+                                d_loss, g_loss, l_p, l_v, l_eye, g_loss_gan, x_reconstructed = results
+                                epoch_g_loss += g_loss
+                                epoch_d_loss += d_loss
+                                num_valid_steps += 1
+
+                            else:
+                                print("Skipping step due to error in train_step")
+
+                            global_step += 1
                             epoch_g_loss += g_loss
                             epoch_d_loss += d_loss
 
@@ -268,18 +314,18 @@ class IMFTrainer:
                 progress_bar.set_postfix({"G Loss": f"{g_loss:.4f}", "D Loss": f"{d_loss:.4f}"})
 
             progress_bar.close()
-
             # Calculate average losses for the epoch
-            avg_g_loss = epoch_g_loss / (len(self.train_dataloader) * num_frames * len(ref_indices))
-            avg_d_loss = epoch_d_loss / (len(self.train_dataloader) * num_frames * len(ref_indices))
+            if num_valid_steps > 0:
+                avg_g_loss = epoch_g_loss / num_valid_steps
+                avg_d_loss = epoch_d_loss / num_valid_steps
 
-            # Step the schedulers
-            self.scheduler_g.step(avg_g_loss)
-            self.scheduler_d.step(avg_d_loss)
+                # Step the schedulers
+                self.scheduler_g.step(avg_g_loss)
+                self.scheduler_d.step(avg_d_loss)
 
             # Checkpoint saving
-            if (epoch + 1) % self.config.checkpoints.interval == 0:
-                self.save_checkpoint(epoch)
+            # if global_step % self.config.logging.log_every == 0:
+            self.save_checkpoint(epoch)
 
         # Final model saving
         self.save_checkpoint(epoch, is_final=True)
