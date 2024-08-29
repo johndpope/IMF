@@ -310,22 +310,27 @@ class IMFTrainer:
                                 
                             global_step += 1
 
+                             # Checkpoint saving
+                            if global_step % self.config.training.save_steps == 0:
+                                self.save_checkpoint(epoch)
+
+                # Calculate average losses for the epoch
+                if num_valid_steps > 0:
+                    avg_g_loss = epoch_g_loss / num_valid_steps
+                    avg_d_loss = epoch_d_loss / num_valid_steps
+
+                    # Step the schedulers
+                    self.scheduler_g.step(avg_g_loss)
+                    self.scheduler_d.step(avg_d_loss)
+
+               
+
+
                 progress_bar.update(1)
                 progress_bar.set_postfix({"G Loss": f"{g_loss:.4f}", "D Loss": f"{d_loss:.4f}"})
 
             progress_bar.close()
-            # Calculate average losses for the epoch
-            if num_valid_steps > 0:
-                avg_g_loss = epoch_g_loss / num_valid_steps
-                avg_d_loss = epoch_d_loss / num_valid_steps
-
-                # Step the schedulers
-                self.scheduler_g.step(avg_g_loss)
-                self.scheduler_d.step(avg_d_loss)
-
-            # Checkpoint saving
-            # if global_step % self.config.logging.log_every == 0:
-            self.save_checkpoint(epoch)
+            
 
         # Final model saving
         self.save_checkpoint(epoch, is_final=True)
