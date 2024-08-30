@@ -236,8 +236,9 @@ class IMFTrainer:
 
         return d_loss.item(), g_loss.item(), l_p.item(), l_v.item(),l_eye.item(), g_loss_gan.item(),x_reconstructed
 
-    def train(self):
-        global_step = 0
+    def train(self, start_epoch=0):
+        global_step = start_epoch * len(self.train_dataloader)
+
 
         for epoch in range(self.config.training.num_epochs):
             video_repeat = get_video_repeat(epoch, self.config.training.num_epochs, 
@@ -335,6 +336,26 @@ class IMFTrainer:
         # Final model saving
         self.save_checkpoint(epoch, is_final=True)
 
+
+    def load_checkpoint(self, checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
+        
+        # Load model state
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Load discriminator state
+        self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+        
+        # Load optimizer states
+        self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
+        self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
+        
+        # Load epoch
+        start_epoch = checkpoint['epoch'] + 1
+        
+        print(f"Loaded checkpoint from epoch {start_epoch - 1}")
+        return start_epoch
+
     def save_checkpoint(self, epoch, is_final=False):
         self.accelerator.wait_for_everyone()
         unwrapped_model = self.accelerator.unwrap_model(self.model)
@@ -344,7 +365,7 @@ class IMFTrainer:
             save_path = f"{self.config.checkpoints.dir}/final_model.pth"
             self.accelerator.save(unwrapped_model.state_dict(), save_path)
         else:
-            save_path = f"{self.config.checkpoints.dir}/checkpoint_{epoch+1}.pth"
+            save_path = f"{self.config.checkpoints.dir}/checkpoint.pth"
             self.accelerator.save({
                 'epoch': epoch,
                 'model_state_dict': unwrapped_model.state_dict(),
@@ -385,7 +406,14 @@ def main():
         collate_fn=gpu_padded_collate 
     )
 
+
     trainer = IMFTrainer(config, model, discriminator, dataloader, accelerator)
+    # Check if a checkpoint path is provided in the config
+    if config.training.load_checkpoint:
+        checkpoint_path = config.training.checkpoint_path
+        start_epoch = trainer.load_checkpoint(checkpoint_path)
+    else:
+        start_epoch = 0
     trainer.train()
 
 if __name__ == "__main__":
