@@ -10,8 +10,8 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from vit import ImplicitMotionAlignment
 # from stylegan import EqualConv2d,EqualLinear
 # from resblock import ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
-from resblock_new import EqualConv2d,EqualLinear , ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
-
+from resblock_new import  StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
+from lia_resblocks import EqualConv2d,EqualLinear,ResBlock # these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
 
 
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
@@ -103,7 +103,10 @@ class LatentTokenEncoder(nn.Module):
         self.res_blocks = nn.ModuleList()
         in_channels = initial_channels
         for out_channels in output_channels:
-            self.res_blocks.append(ResBlock(in_channels, out_channels, downsample=True))
+            print("in_channels:",in_channels)
+            print("out_channels:",out_channels)
+            
+            self.res_blocks.append(ResBlock(in_channels,out_channels))
             in_channels = out_channels
 
         self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding=1)
