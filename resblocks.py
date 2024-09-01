@@ -89,11 +89,11 @@ class UpConvResBlock(nn.Module):
         debug_print(f"UpConvResBlock input shape: {x.shape}")
         
         # Upsample Conv-d-k3-s1-p1, BN, ReLU
-        out = self.upsample_conv(x)
-        debug_print(f"After upsample_conv shape: {out.shape}")
+        upsampled = self.upsample_conv(x)
+        debug_print(f"After upsample_conv shape: {upsampled.shape}")
         
         # Conv-d-k3-s1-p1
-        out = self.conv(out)
+        out = self.conv(upsampled)
         debug_print(f"After conv shape: {out.shape}")
         
         # FeatResBlock-d
@@ -104,8 +104,11 @@ class UpConvResBlock(nn.Module):
         out = self.feat_res_block2(out)
         debug_print(f"After feat_res_block2 shape: {out.shape}")
         
+        # Add residual connection
+        out = out + upsampled
+        debug_print(f"After adding residual connection shape: {out.shape}")
+        
         return out
-
 class DownConvResBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -121,6 +124,7 @@ class DownConvResBlock(nn.Module):
         self.feat_res_block3 = FeatResBlock(out_channels)
 
     def forward(self, x):
+        # Initial convolutions and downsampling
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
@@ -129,9 +133,17 @@ class DownConvResBlock(nn.Module):
         out = self.bn2(out)
         out = self.relu(out)
 
+        # Store the output before feature residual blocks
+        residual = out
+
+        # Apply feature residual blocks
         out = self.feat_res_block1(out)
         out = self.feat_res_block2(out)
         out = self.feat_res_block3(out)
+
+        # Add residual connection
+        out = out + residual
+
         return out
     
 class ModulatedConv2d(nn.Module):
