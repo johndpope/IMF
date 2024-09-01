@@ -283,7 +283,7 @@ class IMFTrainer:
                             else:
                                 print("Skipping step due to error in train_step")
 
-                            global_step += 1
+                   
                             epoch_g_loss += g_loss
                             epoch_d_loss += d_loss
 
