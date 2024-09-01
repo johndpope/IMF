@@ -101,9 +101,6 @@ class LatentTokenEncoder(nn.Module):
         self.res_blocks = nn.ModuleList()
         in_channels = initial_channels
         for out_channels in output_channels:
-            print("in_channels:",in_channels)
-            print("out_channels:",out_channels)
-            
             self.res_blocks.append(ResBlock(in_channels,out_channels))
             in_channels = out_channels
 
