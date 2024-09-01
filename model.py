@@ -8,9 +8,7 @@ import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_mlgffn import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
 from vit import ImplicitMotionAlignment
-# from stylegan import EqualConv2d,EqualLinear
-# from resblock import ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
-from resblock_new import  StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
+from resblocks import  StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
 from lia_resblocks import EqualConv2d,EqualLinear,ResBlock # these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
 
 
