@@ -12,138 +12,131 @@ def debug_print(*args, **kwargs):
     if DEBUG:
         debug_print(*args, **kwargs)
 
-
-
-class ConvBNReLU(nn.Module):
-    def __init__(self, channels):
+        
+class NormLayer(nn.Module):
+    def __init__(self, num_features, norm_type='batch'):
         super().__init__()
-        self.bn = nn.BatchNorm2d(channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv = nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1)
+        if norm_type == 'batch':
+            self.norm = nn.BatchNorm2d(num_features)
+        elif norm_type == 'instance':
+            self.norm = nn.InstanceNorm2d(num_features)
+        elif norm_type == 'layer':
+            self.norm = nn.GroupNorm(1, num_features)
+        else:
+            raise ValueError(f"Unsupported normalization type: {norm_type}")
 
     def forward(self, x):
-        out = self.bn(x)
-        out = self.relu(out)
-        out = self.conv(out)
-        return out
-
-class FeatResBlock(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.conv_bn_relu1 = ConvBNReLU(channels)
-        self.conv_bn_relu2 = ConvBNReLU(channels)
-        self.final_relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        debug_print(f"FeatResBlock input shape: {x.shape}")
-
-        residual = x
-
-        out = self.conv_bn_relu1(x)
-        debug_print(f"After conv_bn_relu1 shape: {out.shape}")
-
-        out = self.conv_bn_relu2(out)
-        debug_print(f"After conv_bn_relu2 shape: {out.shape}")
-
-        out = out + residual
-        debug_print(f"After adding residual shape: {out.shape}")
-
-        out = self.final_relu(out)
-        debug_print(f"After final ReLU shape: {out.shape}")
-
-        return out
+        return self.norm(x)
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, 
+                 activation=nn.ReLU, norm_type='batch'):
         super().__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
+        self.norm = NormLayer(out_channels, norm_type)
+        self.activation = activation(inplace=True) if activation else None
 
     def forward(self, x):
-        return self.relu(self.bn(self.conv(x)))
-    
-# this is only used on the densefeatureencoder
-class UpConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+        x = self.conv(x)
+        x = self.norm(x)
+        if self.activation:
+            x = self.activation(x)
+        return x
+
+class FeatResBlock(nn.Module):
+    def __init__(self, channels, dropout_rate=0, activation=nn.ReLU, norm_type='batch'):
         super().__init__()
-        
-        # Upsample Conv-d-k3-s1-p1, BN, ReLU
-        self.upsample_conv = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='nearest'),
-            ConvBlock(in_channels, out_channels)
-        )
-        
-        # Conv-d-k3-s1-p1
-        self.conv = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        
-        # FeatResBlock-d
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        
-        # FeatResBlock-d (second one)
-        self.feat_res_block2 = FeatResBlock(out_channels)
+        self.conv1 = ConvBlock(channels, channels, activation=activation, norm_type=norm_type)
+        self.conv2 = ConvBlock(channels, channels, activation=None, norm_type=norm_type)
+        self.activation = activation(inplace=True) if activation else None
+        self.dropout = nn.Dropout2d(dropout_rate)
 
     def forward(self, x):
-        # Debug debug_print for input
-        debug_print(f"UpConvResBlock input shape: {x.shape}")
-        
-        # Upsample Conv-d-k3-s1-p1, BN, ReLU
-        upsampled = self.upsample_conv(x)
-        debug_print(f"After upsample_conv shape: {upsampled.shape}")
-        
-        # Conv-d-k3-s1-p1
-        out = self.conv(upsampled)
-        debug_print(f"After conv shape: {out.shape}")
-        
-        # FeatResBlock-d
-        out = self.feat_res_block1(out)
-        debug_print(f"After feat_res_block1 shape: {out.shape}")
-        
-        # FeatResBlock-d (second one)
-        out = self.feat_res_block2(out)
-        debug_print(f"After feat_res_block2 shape: {out.shape}")
-        
-        # Add residual connection
-        out = out + upsampled
-        debug_print(f"After adding residual connection shape: {out.shape}")
-        
-        return out
-class DownConvResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.avgpool = nn.AvgPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        self.feat_res_block1 = FeatResBlock(out_channels)
-        self.feat_res_block2 = FeatResBlock(out_channels)
-        self.feat_res_block3 = FeatResBlock(out_channels)
-
-    def forward(self, x):
-        # Initial convolutions and downsampling
+        residual = x
         out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.avgpool(out)
         out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
+        out = self.dropout(out)
+        out += residual
+        if self.activation:
+            out = self.activation(out)
+        return out
 
-        # Store the output before feature residual blocks
-        residual = out
 
-        # Apply feature residual blocks
+# this is only used on the densefeatureencoder
+class DownConvResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout_rate=0, activation=nn.ReLU, 
+                 norm_type='batch', use_residual_scaling=False):
+        super().__init__()
+        self.conv1 = ConvBlock(in_channels, out_channels, stride=2, activation=activation, norm_type=norm_type)
+        self.conv2 = ConvBlock(out_channels, out_channels, activation=None, norm_type=norm_type)
+        self.activation = activation(inplace=True) if activation else None
+        self.dropout = nn.Dropout2d(dropout_rate)
+        self.feat_res_block1 = FeatResBlock(out_channels, dropout_rate, activation, norm_type)
+        self.feat_res_block2 = FeatResBlock(out_channels, dropout_rate, activation, norm_type)
+        
+        self.shortcut = ConvBlock(in_channels, out_channels, kernel_size=1, stride=2, padding=0, 
+                                  activation=None, norm_type=norm_type)
+        self.use_residual_scaling = use_residual_scaling
+        if use_residual_scaling:
+            self.residual_scaling = nn.Parameter(torch.ones(1))
+
+    def forward(self, x):
+        residual = self.shortcut(x)
+        
+        out = self.conv1(x)
+        out = self.conv2(out)
+        out = self.dropout(out)
+        
+        if self.use_residual_scaling:
+            out = out * self.residual_scaling
+        
+        out += residual
+        if self.activation:
+            out = self.activation(out)
+        
         out = self.feat_res_block1(out)
         out = self.feat_res_block2(out)
-        out = self.feat_res_block3(out)
+        return out
 
-        # Add residual connection
-        out = out + residual
+# this is used on the framedecoder / enhancedframedecoder
+class UpConvResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout_rate=0, activation=nn.ReLU, 
+                 norm_type='batch', upsample_mode='nearest', use_residual_scaling=False):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode=upsample_mode)
+        self.conv1 = ConvBlock(in_channels, out_channels, activation=activation, norm_type=norm_type)
+        self.conv2 = ConvBlock(out_channels, out_channels, activation=None, norm_type=norm_type)
+        self.activation = activation(inplace=True) if activation else None
+        self.dropout = nn.Dropout2d(dropout_rate)
+        self.feat_res_block1 = FeatResBlock(out_channels, dropout_rate, activation, norm_type)
+        self.feat_res_block2 = FeatResBlock(out_channels, dropout_rate, activation, norm_type)
+        
+        self.shortcut = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode=upsample_mode),
+            ConvBlock(in_channels, out_channels, kernel_size=1, padding=0, activation=None, norm_type=norm_type)
+        )
+        self.use_residual_scaling = use_residual_scaling
+        if use_residual_scaling:
+            self.residual_scaling = nn.Parameter(torch.ones(1))
 
+    def forward(self, x):
+        residual = self.shortcut(x)
+        
+        out = self.upsample(x)
+        out = self.conv1(out)
+        out = self.conv2(out)
+        out = self.dropout(out)
+        
+        if self.use_residual_scaling:
+            out = out * self.residual_scaling
+        
+        out += residual
+        if self.activation:
+            out = self.activation(out)
+        
+        out = self.feat_res_block1(out)
+        out = self.feat_res_block2(out)
         return out
     
 class ModulatedConv2d(nn.Module):
