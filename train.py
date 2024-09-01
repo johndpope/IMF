@@ -90,8 +90,11 @@ class IMFTrainer:
         self.optimizer_d = AdamW(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
         # Learning rate schedulers
-        self.scheduler_g = CosineAnnealingLR(self.optimizer_g, T_max=100, eta_min=1e-6)
-        self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=100, eta_min=1e-6)
+        # self.scheduler_g = CosineAnnealingLR(self.optimizer_g, T_max=100, eta_min=1e-6)
+        # self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=100, eta_min=1e-6)
+        self.scheduler_g = ReduceLROnPlateau(self.optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
+        self.scheduler_d = ReduceLROnPlateau(self.optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
+
 
         if config.training.use_ema:
             self.ema = EMA(model, decay=config.training.ema_decay)
@@ -177,47 +180,65 @@ class IMFTrainer:
             save_image(x_current, 'x_current.png',  normalize=True)
             save_image(x_reference, 'x_reference.png',  normalize=True)
 
-        # Discriminator
-        self.optimizer_d.zero_grad()
-        x_current.requires_grad = True
-        real_outputs = self.discriminator(x_current)
-        r1_reg = 0
-        for real_output in real_outputs:
-            grad_real = torch.autograd.grad(
-                outputs=real_output.sum(), inputs=x_current, create_graph=True
-            )[0]
-            r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+        # Discriminator updates
+        d_loss_total = 0
+        for _ in range(self.config.training.n_critic):
+            self.optimizer_d.zero_grad()
+            
+            # Real samples
+            real_outputs = self.discriminator(x_current)
+            d_loss_real = sum(torch.mean(F.relu(1 - output)) for output in real_outputs)
+            
+            # Fake samples
+            fake_outputs = self.discriminator(x_reconstructed.detach())
+            d_loss_fake = sum(torch.mean(F.relu(1 + output)) for output in fake_outputs)
+            
+            # Total discriminator loss
+            d_loss = d_loss_real + d_loss_fake
 
-        fake_outputs = self.discriminator(x_reconstructed.detach())
-        d_loss = gan_loss_fn(real_outputs, fake_outputs, self.gan_loss_type)
-        d_loss = d_loss + self.r1_gamma * r1_reg
+            # R1 regularization
+            if self.config.training.use_r1_reg and global_step % self.config.training.r1_interval == 0:
+                x_current.requires_grad = True
+                real_outputs = self.discriminator(x_current)
+                r1_reg = 0
+                for real_output in real_outputs:
+                    grad_real = torch.autograd.grad(
+                        outputs=real_output.sum(), inputs=x_current, create_graph=True
+                    )[0]
+                    r1_reg += grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
+                d_loss += self.config.training.r1_gamma * r1_reg
 
-        self.accelerator.backward(d_loss)
-        # Check for exploding gradients
-        if self.check_exploding_gradients(self.discriminator):
-            print("🔥 Skipping discriminator update due to exploding gradients")
-        else:
-            if self.config.training.clip_grad:
-                torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=self.config.training.clip_grad_norm)
-            self.optimizer_d.step()
+            self.accelerator.backward(d_loss)
+            
+            if self.check_exploding_gradients(self.discriminator):
+                print("🔥 Skipping discriminator update due to exploding gradients")
+            else:
+                if self.config.training.clip_grad:
+                    torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=self.config.training.clip_grad_norm)
+                self.optimizer_d.step()
+            
+            d_loss_total += d_loss.item()
 
 
-        # Generator
+        # Average discriminator loss
+        d_loss_avg = d_loss_total / self.config.training.n_critic
+
+        # Generator update
         self.optimizer_g.zero_grad()
         fake_outputs = self.discriminator(x_reconstructed)
         g_loss_gan = sum(-torch.mean(output) for output in fake_outputs)
 
         l_p = self.pixel_loss_fn(x_reconstructed, x_current).mean()
         l_v = self.perceptual_loss_fn(x_reconstructed, x_current).mean()
+        l_eye = self.eye_loss_fn(x_reconstructed, x_current) if self.config.training.use_eye_loss else 0
 
         g_loss = (self.config.training.lambda_pixel * l_p +
-                  self.config.training.lambda_perceptual * l_v +
-                  self.config.training.lambda_adv * g_loss_gan )
-                #  self.config.training.lambda_eye * l_eye)
+                self.config.training.lambda_perceptual * l_v +
+                self.config.training.lambda_adv * g_loss_gan +
+                self.config.training.lambda_eye * l_eye)
 
         self.accelerator.backward(g_loss)
-        # Check for exploding gradients
-        # In the train_step function, you can call this when exploding gradients are detected:
+
         if self.check_exploding_gradients(self.model):
             print("🔥 Exploding gradients detected. Adjusting learning rate.")
             self.adjust_learning_rate(self.optimizer_g)
@@ -228,13 +249,11 @@ class IMFTrainer:
             if self.config.training.clip_grad:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.training.clip_grad_norm)
             self.optimizer_g.step()
-            self.optimizer_d.step()
 
         if self.ema:
             self.ema.update()
 
-
-        return d_loss.item(), g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(),x_reconstructed
+        return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(), x_reconstructed
 
     def train(self, start_epoch=0):
         global_step = start_epoch * len(self.train_dataloader)
