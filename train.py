@@ -90,10 +90,10 @@ class IMFTrainer:
         self.optimizer_d = AdamW(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
         # Learning rate schedulers
-        # self.scheduler_g = CosineAnnealingLR(self.optimizer_g, T_max=100, eta_min=1e-6)
-        # self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=100, eta_min=1e-6)
-        self.scheduler_g = ReduceLROnPlateau(self.optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
-        self.scheduler_d = ReduceLROnPlateau(self.optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
+        self.scheduler_g = CosineAnnealingLR(self.optimizer_g, T_max=100, eta_min=1e-6)
+        self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=100, eta_min=1e-6)
+        # self.scheduler_g = ReduceLROnPlateau(self.optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
+        # self.scheduler_d = ReduceLROnPlateau(self.optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
 
 
         if config.training.use_ema:
