@@ -79,7 +79,7 @@ class IMFTrainer:
         self.gan_loss_type = config.loss.type
         self.perceptual_loss_fn = lpips.LPIPS(net='alex', spatial=True).to(accelerator.device)
         self.pixel_loss_fn = nn.L1Loss()
-        self.eye_loss_fn = MediaPipeEyeEnhancementLoss(eye_weight=1.0).to(accelerator.device)
+        # self.eye_loss_fn = MediaPipeEyeEnhancementLoss(eye_weight=1.0).to(accelerator.device)
 
 
         self.style_mixing_prob = config.training.style_mixing_prob
@@ -165,7 +165,7 @@ class IMFTrainer:
 
 
         # eye loss
-        l_eye = self.eye_loss_fn(x_reconstructed, x_current)
+        # l_eye = self.eye_loss_fn(x_reconstructed, x_current)
           
         if self.config.training.use_subsampling:
             sub_sample_size = (128, 128)  # As mentioned in the paper
@@ -212,8 +212,8 @@ class IMFTrainer:
 
         g_loss = (self.config.training.lambda_pixel * l_p +
                   self.config.training.lambda_perceptual * l_v +
-                  self.config.training.lambda_adv * g_loss_gan +
-                 self.config.training.lambda_eye * l_eye)
+                  self.config.training.lambda_adv * g_loss_gan )
+                #  self.config.training.lambda_eye * l_eye)
 
         self.accelerator.backward(g_loss)
         # Check for exploding gradients
@@ -234,7 +234,7 @@ class IMFTrainer:
             self.ema.update()
 
 
-        return d_loss.item(), g_loss.item(), l_p.item(), l_v.item(),l_eye.item(), g_loss_gan.item(),x_reconstructed
+        return d_loss.item(), g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(),x_reconstructed
 
     def train(self, start_epoch=0):
         global_step = start_epoch * len(self.train_dataloader)
@@ -275,7 +275,7 @@ class IMFTrainer:
                             results = self.train_step(x_current, x_reference, global_step)
 
                             if results[0] is not None:
-                                d_loss, g_loss, l_p, l_v, l_eye, g_loss_gan, x_reconstructed = results
+                                d_loss, g_loss, l_p, l_v,  g_loss_gan, x_reconstructed = results
                                 epoch_g_loss += g_loss
                                 epoch_d_loss += d_loss
                                 num_valid_steps += 1
@@ -293,7 +293,6 @@ class IMFTrainer:
                                     "g_loss": g_loss,
                                     "d_loss": d_loss,
                                     "pixel_loss": l_p,
-                                    "eye_loss": l_eye,
                                     "perceptual_loss": l_v,
                                     "gan_loss": g_loss_gan,
                                     "global_step": global_step,
