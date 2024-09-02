@@ -57,7 +57,7 @@ class VideoDataset(Dataset):
     def _count_frames(self):
         video_frames = []
         for folder in self.video_folders:
-            frames = [f for f in os.listdir(folder) if f.endswith('.jpg')]
+            frames = [f for f in os.listdir(folder) if f.endswith('.png')]
             video_frames.append(len(frames))
         return video_frames
 
@@ -72,7 +72,7 @@ class VideoDataset(Dataset):
 
     def __getitem__(self, idx):
         video_folder = self.video_folders[idx]
-        frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.jpg')])
+        frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.png')])
         
         if len(frames) < self.num_frames:
             # If not enough frames, duplicate the last frame
