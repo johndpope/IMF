@@ -139,53 +139,6 @@ class UpConvResBlock(nn.Module):
         out = self.feat_res_block2(out)
         return out
     
-class ModulatedConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, demodulate=True):
-        super().__init__()
-        self.weight = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size))
-        self.stride = stride
-        self.padding = padding
-        self.demodulate = demodulate
-
-    def forward(self, x, style):
-        batch, in_channel, height, width = x.shape
-        style = style.view(batch, 1, in_channel, 1, 1)
-        
-        # Weight modulation
-        weight = self.weight.unsqueeze(0) * style
-        
-        if self.demodulate:
-            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
-            weight = weight * demod.view(batch, self.weight.size(0), 1, 1, 1)
-
-        weight = weight.view(
-            batch * self.weight.size(0), in_channel, self.weight.size(2), self.weight.size(3)
-        )
-
-        x = x.view(1, batch * in_channel, height, width)
-        out = F.conv2d(x, weight, padding=self.padding, groups=batch)
-        _, _, height, width = out.shape
-        out = out.view(batch, self.weight.size(0), height, width)
-
-        return out
-
-class StyledConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, style_dim, upsample=False, demodulate=True):
-        super().__init__()
-        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, demodulate=demodulate)
-        self.style = nn.Linear(style_dim, in_channels)
-        self.upsample = upsample
-        self.activation = nn.LeakyReLU(0.2)
-
-    def forward(self, x, latent):
-        if self.upsample:
-            x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
-        
-        style = self.style(latent)
-        x = self.conv(x, style)
-        x = self.activation(x)
-        return x
-
 
     
 

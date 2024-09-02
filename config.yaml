@@ -18,11 +18,11 @@ training:
   initial_video_repeat: 5
   final_video_repeat: 1
   use_ema: False
-  use_r1_reg: False
-  batch_size: 4 #  a100 - 40gb
+  use_r1_reg: True
+  batch_size: 2 #  a100 - 40gb
   num_epochs: 1000
   save_steps: 5000
-  learning_rate_g: 1.0e-4 # Reduced learning rate for generator
+  learning_rate_g: 1.0e-6 # Reduced learning rate for generator
   initial_learning_rate_d: 1.0e-6 # Set a lower initial learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
   # learning_rate_d: 5.0e-4  # Increased learning rate for discriminator
@@ -37,7 +37,7 @@ training:
   lambda_adv: 1 # adverserial = 1
   lambda_gp: 10  # Gradient penalty coefficient
   lambda_mse: 1.0
-  n_critic: 2  # Number of discriminator updates per generator update
+  n_critic: 1  # Number of discriminator updates per generator update
   clip_grad: True
   clip_grad_norm: 1.0  # Maximum norm for gradient clipping
   r1_gamma: 10

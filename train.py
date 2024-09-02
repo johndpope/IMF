@@ -10,7 +10,7 @@ import yaml
 import os
 import torch.nn.functional as F
 from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
-from VideoDataset import VideoDataset,gpu_padded_collate
+from VideoDataset import VideoDataset,LazyVideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
 from helper import log_grad_flow,consistent_sub_sample,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
 from torch.optim import AdamW
@@ -420,7 +420,7 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    dataset = VideoDataset(config.dataset.extracted_frames, 
+    dataset = LazyVideoDataset(config.dataset.root_dir, #config.dataset.extracted_frames, 
                                 transform=transform, 
                                 frame_skip=0, 
                                 num_frames=300)
@@ -428,7 +428,7 @@ def main():
     dataloader = DataLoader(
         dataset,
         batch_size=config.training.batch_size,
-        num_workers=1,
+        num_workers=4,
         shuffle=False,
         pin_memory=True,
         collate_fn=gpu_padded_collate 

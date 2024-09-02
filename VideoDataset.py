@@ -99,6 +99,57 @@ class VideoDataset(Dataset):
             "video_name": os.path.basename(video_folder)
         }
 
+
+class LazyVideoDataset(Dataset):
+    def __init__(self, root_dir, transform=None, frame_skip=0, num_frames=200):
+        self.root_dir = root_dir
+        self.transform = transform
+        self.frame_skip = frame_skip
+        self.num_frames = num_frames
+        self.video_folders = [f.path for f in os.scandir(root_dir) if f.is_dir()]
+        self.video_frames = self._count_frames()
+
+    def _count_frames(self):
+        video_frames = []
+        for folder in self.video_folders:
+            frames = [f for f in os.listdir(folder) if f.endswith('.png')]
+            video_frames.append(len(frames))
+        return video_frames
+
+    def __len__(self):
+        return len(self.video_folders)
+
+    def _load_and_transform_frame(self, frame_path):
+        img = Image.open(frame_path).convert('RGB')
+        if self.transform:
+            img = self.transform(img)
+        return img
+
+    def __getitem__(self, idx):
+        video_folder = self.video_folders[idx]
+        frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.png')])
+        
+        if not frames:
+            raise ValueError(f"No frames found in folder: {video_folder}")
+        
+        total_frames = len(frames)
+        if total_frames < self.num_frames:
+            # If not enough frames, cycle through the available frames
+            frame_indices = [i % total_frames for i in range(self.num_frames)]
+        else:
+            start_idx = random.randint(0, total_frames - self.num_frames)
+            frame_indices = range(start_idx, start_idx + self.num_frames, self.frame_skip + 1)
+        
+        loaded_frames = []
+        for i in frame_indices:
+            img_path = os.path.join(video_folder, frames[i % total_frames])
+            frame = self._load_and_transform_frame(img_path)
+            loaded_frames.append(frame)
+
+        return {
+            "frames": torch.stack(loaded_frames) if isinstance(loaded_frames[0], torch.Tensor) else loaded_frames,
+            "video_name": os.path.basename(video_folder)
+        }
 # Example usage
 if __name__ == "__main__":
     transform = transforms.Compose([
