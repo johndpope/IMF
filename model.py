@@ -358,7 +358,7 @@ class IMFModel(nn.Module):
         self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
         self.noise_injection = NoiseInjection()
 
-        self.apply(self._init_weights)
+        # self.apply(self.frame_decoder)
 
 
     def _init_weights(self, m):
