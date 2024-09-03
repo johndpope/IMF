@@ -77,7 +77,7 @@ class VideoDataset(Dataset):
                 img = self.transform(img)
             return img
         except (OSError, IOError) as e:
-            logging.error(f"Error loading image {frame_path}: {str(e)}")
+            print(f"Error loading image {frame_path}: {str(e)}")
             raise  # Re-raise the exception to be caught in __getitem__
         
     def __getitem__(self, idx):
@@ -85,7 +85,7 @@ class VideoDataset(Dataset):
         frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.png')])
         
         if not frames:
-            logging.error(f"No frames found in folder: {video_folder}")
+            print(f"No frames found in folder: {video_folder}")
             return self.__getitem__((idx + 1) % len(self))  # Move to next item
         
         total_frames = len(frames)
@@ -102,11 +102,11 @@ class VideoDataset(Dataset):
                 frame = self._load_and_transform_frame(img_path)
                 loaded_frames.append(frame)
             except (OSError, IOError) as e:
-                logging.error(f"Error loading image {img_path}: {str(e)}")
+                print(f"Error loading image {img_path}: {str(e)}")
                 continue  # Skip this frame and continue with the next
         
         if not loaded_frames:
-            logging.error(f"No valid frames loaded from {video_folder}")
+            print(f"No valid frames loaded from {video_folder}")
             return self.__getitem__((idx + 1) % len(self))  # Move to next item
         
         return {
