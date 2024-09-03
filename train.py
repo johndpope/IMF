@@ -412,7 +412,8 @@ def main():
     add_gradient_hooks(model)
 
     # discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
-    discriminator = LiaDiscriminator(size=256,channel_multiplier=1)
+    # discriminator = LiaDiscriminator(size=256,channel_multiplier=1)
+    discriminator = IMFPatchDiscriminator()
     add_gradient_hooks(discriminator)
 
     # dataset = WebVid10M(video_folder=config.dataset.root_dir)
