@@ -117,26 +117,17 @@ class IMFTrainer:
                     return True
         return False
 
-    def train_step(self, x_current, x_reference,global_step):
+    def train_step(self, x_current, x_reference, global_step):
         if x_current.nelement() == 0:
             print("🔥 Skipping training step due to empty x_current")
             return None, None, None, None, None, None
-        
 
-        x_reconstructed = self.model(x_current,x_reference)
+        # Generate reconstructed frame
+        x_reconstructed = self.model(x_current, x_reference)
 
-        # eye loss
-        # l_eye = self.eye_loss_fn(x_reconstructed, x_current)
-          
         if self.config.training.use_subsampling:
             sub_sample_size = (128, 128)  # As mentioned in the paper
             x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
-
-
-        if global_step % self.config.logging.sample_every == 0:
-            save_image(x_reconstructed, 'x_reconstructed.png',  normalize=True)
-            save_image(x_current, 'x_current.png',  normalize=True)
-            save_image(x_reference, 'x_reference.png',  normalize=True)
 
         # Discriminator updates
         d_loss_total = 0
@@ -177,7 +168,6 @@ class IMFTrainer:
             
             d_loss_total += d_loss.item()
 
-
         # Average discriminator loss
         d_loss_avg = d_loss_total / self.config.training.n_critic
 
@@ -198,17 +188,26 @@ class IMFTrainer:
         self.accelerator.backward(g_loss)
 
         if self.check_exploding_gradients(self.model):
-            print("🔥 Exploding gradients detected. Adjusting learning rate.")
-       
-            self.optimizer_g.zero_grad()
-            self.optimizer_d.zero_grad()
+            print("🔥 Exploding gradients detected. Clipping gradients.")
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         else:
             if self.config.training.clip_grad:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.training.clip_grad_norm)
-            self.optimizer_g.step()
+        
+        self.optimizer_g.step()
+
+        # Step the schedulers
+        self.scheduler_g.step()
+        self.scheduler_d.step()
 
         if self.ema:
             self.ema.update()
+
+        # Logging
+        if global_step % self.config.logging.sample_every == 0:
+            save_image(x_reconstructed, f'x_reconstructed_{global_step}.png', normalize=True)
+            save_image(x_current, f'x_current_{global_step}.png', normalize=True)
+            save_image(x_reference, f'x_reference_{global_step}.png', normalize=True)
 
         return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(), x_reconstructed
 
@@ -295,9 +294,6 @@ class IMFTrainer:
                     avg_g_loss = epoch_g_loss / num_valid_steps
                     avg_d_loss = epoch_d_loss / num_valid_steps
 
-                # Step the schedulers
-                self.scheduler_g.step(avg_g_loss)
-                self.scheduler_d.step(avg_d_loss)
 
                
 
