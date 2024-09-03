@@ -203,11 +203,11 @@ class IMFTrainer:
         if self.ema:
             self.ema.update()
 
-        # Logging
+        # Logging - locally for sanity check
         if global_step % self.config.logging.sample_every == 0:
-            save_image(x_reconstructed, f'x_reconstructed_{global_step}.png', normalize=True)
-            save_image(x_current, f'x_current_{global_step}.png', normalize=True)
-            save_image(x_reference, f'x_reference_{global_step}.png', normalize=True)
+            save_image(x_reconstructed, f'x_reconstructed.png', normalize=True)
+            save_image(x_current, f'x_current.png', normalize=True)
+            save_image(x_reference, f'x_reference.png', normalize=True)
 
         return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(), x_reconstructed
 
