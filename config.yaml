@@ -19,9 +19,9 @@ training:
   final_video_repeat: 1
   use_ema: False
   use_r1_reg: True
-  batch_size: 4 #  a100 - 40gb
+  batch_size: 2 #  a100 - 40gb
   num_epochs: 1000
-  save_steps: 5000
+  save_steps: 1000
   learning_rate_g: 1.0e-6 # Reduced learning rate for generator
   initial_learning_rate_d: 1.0e-6 # Set a lower initial learning rate for discriminator
   # learning_rate_g: 5.0e-4  # Increased learning rate for generator
@@ -95,7 +95,7 @@ optimizer:
 
 # Loss function
 loss:
-  type: "wasserstein"  # Changed to Wasserstein loss for WGAN-GP
+  type: "hinge"  # Changed to Wasserstein loss for WGAN-GP
   weights:
       perceptual: [10, 10, 10, 10, 10]
       equivariance_shift: 10

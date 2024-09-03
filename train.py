@@ -420,7 +420,7 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    dataset = VideoDataset(config.dataset.extracted_frames, 
+    dataset = VideoDataset(config.dataset.root_dir, 
                                 transform=transform, 
                                 frame_skip=0, 
                                 num_frames=300)
