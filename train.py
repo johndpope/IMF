@@ -21,7 +21,8 @@ from torch.nn.utils import spectral_norm
 import torchvision.models as models
 from loss import gan_loss_fn,MediaPipeEyeEnhancementLoss
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.optim.lr_scheduler import CosineAnnealingLR
+# from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import OneCycleLR
 import random
 
 from stylegan import EMA
@@ -91,10 +92,9 @@ class IMFTrainer:
         self.optimizer_d = AdamW(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
         # Learning rate schedulers
-        # self.scheduler_g = CosineAnnealingLR(self.optimizer_g, T_max=100, eta_min=1e-6)
-        # self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=100, eta_min=1e-6)
-        self.scheduler_g = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
-        self.scheduler_d = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
+        total_steps = config.training.num_epochs * len(train_dataloader)
+        self.scheduler_g = OneCycleLR(self.optimizer_g, max_lr=2e-4, total_steps=total_steps)
+        self.scheduler_d = OneCycleLR(self.optimizer_d, max_lr=2e-4, total_steps=total_steps)
 
 
         if config.training.use_ema:
@@ -116,12 +116,6 @@ class IMFTrainer:
                     print(f"🔥 Exploding gradients detected in {name}")
                     return True
         return False
-
-    def adjust_learning_rate(self, optimizer, factor=0.1, min_lr=1e-6):
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = max(param_group['lr'] * factor, min_lr)
-        print(f"🔥 Adjusted learning rate. New LR: {optimizer.param_groups[0]['lr']}")
-
 
     def train_step(self, x_current, x_reference,global_step):
         if x_current.nelement() == 0:
@@ -205,8 +199,7 @@ class IMFTrainer:
 
         if self.check_exploding_gradients(self.model):
             print("🔥 Exploding gradients detected. Adjusting learning rate.")
-            self.adjust_learning_rate(self.optimizer_g)
-            self.adjust_learning_rate(self.optimizer_d)
+       
             self.optimizer_g.zero_grad()
             self.optimizer_d.zero_grad()
         else:
