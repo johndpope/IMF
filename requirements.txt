@@ -14,3 +14,5 @@ moviepy
 onnxruntime
 opencv-python
 pymatting
+decord
+mediapipe

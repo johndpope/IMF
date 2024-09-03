@@ -8,10 +8,8 @@ import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_mlgffn import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
 from vit import ImplicitMotionAlignment
-from stylegan import EqualConv2d,EqualLinear
-from resblock import ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
-# from resblock_new import EqualConv2d,EqualLinear #, ResBlock,StyledConv,FeatResBlock,UpConvResBlock,DownConvResBlock
-
+from resblocks import  FeatResBlock,UpConvResBlock,DownConvResBlock
+from lia_resblocks import StyledConv,EqualConv2d,EqualLinear,ResBlock # these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
 
 
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
@@ -103,7 +101,7 @@ class LatentTokenEncoder(nn.Module):
         self.res_blocks = nn.ModuleList()
         in_channels = initial_channels
         for out_channels in output_channels:
-            self.res_blocks.append(ResBlock(in_channels, out_channels, downsample=True))
+            self.res_blocks.append(ResBlock(in_channels,out_channels))
             in_channels = out_channels
 
         self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding=1)
@@ -359,6 +357,22 @@ class IMFModel(nn.Module):
         # StyleGAN2-like additions
         self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
         self.noise_injection = NoiseInjection()
+
+        # self.apply(self.frame_decoder)
+
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)       
 
     def add_noise(self, tensor):
         return tensor + torch.randn_like(tensor) * self.noise_level

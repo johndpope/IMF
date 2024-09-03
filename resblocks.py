@@ -5,90 +5,14 @@ import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 from PIL import Image
 import numpy as np
-
+from lia_resblocks import ResBlock
 
 DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
-        print(*args, **kwargs)
+        debug_print(*args, **kwargs)
 
-import math
-from typing import Any, Callable
-
-import torch
-import torch.nn as nn
-from torch import Tensor
-
-class EqualLR:
-    """Applies equalized learning rate to the preceding layer."""
-
-    def __init__(self, name: str):
-        self.name = name
-
-    def compute_weight(self, module: nn.Module) -> Tensor:
-        weight = getattr(module, f"{self.name}_orig")
-        fan_in = weight.data.size(1) * weight.data[0][0].numel()
-
-        return weight * math.sqrt(2 / fan_in)
-
-    @staticmethod
-    def apply(module: nn.Module, name: str) -> 'EqualLR':
-        fn = EqualLR(name)
-
-        weight = getattr(module, name)
-        del module._parameters[name]
-        module.register_parameter(f"{name}_orig", nn.Parameter(weight.data))
-        module.register_forward_pre_hook(fn)
-
-        return fn
-
-    def __call__(self, module: nn.Module, input: Any) -> None:
-        weight = self.compute_weight(module)
-        setattr(module, self.name, weight)
-
-def equal_lr(module: nn.Module, name: str = 'weight') -> nn.Module:
-    """
-    Applies equalized learning rate to a module.
-    
-    Args:
-        module (nn.Module): The module to apply equalized learning rate to.
-        name (str): The name of the weight parameter (default: 'weight').
-    
-    Returns:
-        nn.Module: The module with equalized learning rate applied.
-    """
-    EqualLR.apply(module, name)
-    return module
-
-class EqualConv2d(nn.Module):
-    """A Conv2d layer with equalized learning rate."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-
-        conv = nn.Conv2d(*args, **kwargs)
-        conv.weight.data.normal_()
-        conv.bias.data.zero_()
-        self.conv = equal_lr(conv)
-
-    def forward(self, input: Tensor) -> Tensor:
-        return self.conv(input)
-
-class EqualLinear(nn.Module):
-    """A Linear layer with equalized learning rate."""
-
-    def __init__(self, in_dim: int, out_dim: int):
-        super().__init__()
-
-        linear = nn.Linear(in_dim, out_dim)
-        linear.weight.data.normal_()
-        linear.bias.data.zero_()
-
-        self.linear = equal_lr(linear)
-
-    def forward(self, input: Tensor) -> Tensor:
-        return self.linear(input)
-
+        
 class NormLayer(nn.Module):
     def __init__(self, num_features, norm_type='batch'):
         super().__init__()
@@ -103,6 +27,7 @@ class NormLayer(nn.Module):
 
     def forward(self, x):
         return self.norm(x)
+
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, 
@@ -213,121 +138,62 @@ class UpConvResBlock(nn.Module):
         out = self.feat_res_block1(out)
         out = self.feat_res_block2(out)
         return out
-
-def init_weights(m):
-    if isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-    elif isinstance(m, (nn.BatchNorm2d, nn.InstanceNorm2d, nn.GroupNorm)):
-        nn.init.constant_(m.weight, 1)
-        nn.init.constant_(m.bias, 0)
-
-# Apply weight initialization
-def initialize_model(model):
-    model.apply(init_weights)
     
-    
-class ModulatedConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, demodulate=True):
-        super().__init__()
-        self.weight = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size))
-        self.stride = stride
-        self.padding = padding
-        self.demodulate = demodulate
+# class ModulatedConv2d(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, demodulate=True):
+#         super().__init__()
+#         self.weight = nn.Parameter(torch.randn(out_channels, in_channels, kernel_size, kernel_size))
+#         self.stride = stride
+#         self.padding = padding
+#         self.demodulate = demodulate
 
-    def forward(self, x, style):
-        batch, in_channel, height, width = x.shape
-        style = style.view(batch, 1, in_channel, 1, 1)
+#     def forward(self, x, style):
+#         batch, in_channel, height, width = x.shape
+#         style = style.view(batch, 1, in_channel, 1, 1)
         
-        # Weight modulation
-        weight = self.weight.unsqueeze(0) * style
+#         # Weight modulation
+#         weight = self.weight.unsqueeze(0) * style
         
-        if self.demodulate:
-            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
-            weight = weight * demod.view(batch, self.weight.size(0), 1, 1, 1)
+#         if self.demodulate:
+#             demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
+#             weight = weight * demod.view(batch, self.weight.size(0), 1, 1, 1)
 
-        weight = weight.view(
-            batch * self.weight.size(0), in_channel, self.weight.size(2), self.weight.size(3)
-        )
+#         weight = weight.view(
+#             batch * self.weight.size(0), in_channel, self.weight.size(2), self.weight.size(3)
+#         )
 
-        x = x.view(1, batch * in_channel, height, width)
-        out = F.conv2d(x, weight, padding=self.padding, groups=batch)
-        _, _, height, width = out.shape
-        out = out.view(batch, self.weight.size(0), height, width)
+#         x = x.view(1, batch * in_channel, height, width)
+#         out = F.conv2d(x, weight, padding=self.padding, groups=batch)
+#         _, _, height, width = out.shape
+#         out = out.view(batch, self.weight.size(0), height, width)
 
-        return out
+#         return out
 
-class StyledConv(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, style_dim, upsample=False, demodulate=True):
-        super().__init__()
-        self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, demodulate=demodulate)
-        self.style = nn.Linear(style_dim, in_channels)
-        self.upsample = upsample
-        self.activation = nn.LeakyReLU(0.2)
+# class StyledConv(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size, style_dim, upsample=False, demodulate=True):
+#         super().__init__()
+#         self.conv = ModulatedConv2d(in_channels, out_channels, kernel_size, demodulate=demodulate)
+#         self.style = nn.Linear(style_dim, in_channels)
+#         self.upsample = upsample
+#         self.activation = nn.LeakyReLU(0.2)
 
-    def forward(self, x, latent):
-        if self.upsample:
-            x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
+#     def forward(self, x, latent):
+#         if self.upsample:
+#             x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
         
-        style = self.style(latent)
-        x = self.conv(x, style)
-        x = self.activation(x)
-        return x
+#         style = self.style(latent)
+#         x = self.conv(x, style)
+#         x = self.activation(x)
+#         return x
 
 
-class ResBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2 if downsample else 1, padding=1)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu1 = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu2 = nn.ReLU(inplace=True)
-        
-        if downsample or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=2 if downsample else 1, padding=0),
-                nn.BatchNorm2d(out_channels)
-            )
-        else:
-            self.shortcut = nn.Identity()
-
-        self.downsample = downsample
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
-    def forward(self, x):
-        debug_print(f"ResBlock input shape: {x.shape}")
-        debug_print(f"ResBlock parameters: in_channels={self.in_channels}, out_channels={self.out_channels}, downsample={self.downsample}")
-
-        residual = self.shortcut(x)
-        debug_print(f"After shortcut: {residual.shape}")
-        
-        out = self.conv1(x)
-        debug_print(f"After conv1: {out.shape}")
-        out = self.bn1(out)
-        out = self.relu1(out)
-        debug_print(f"After bn1 and relu1: {out.shape}")
-        
-        out = self.conv2(out)
-        debug_print(f"After conv2: {out.shape}")
-        out = self.bn2(out)
-        debug_print(f"After bn2: {out.shape}")
-        
-        out += residual
-        debug_print(f"After adding residual: {out.shape}")
-        
-        out = self.relu2(out)
-        debug_print(f"ResBlock output shape: {out.shape}")
-        
-        return out
     
 
 def test_upconvresblock(block, input_tensor):
-    print("\nTesting UpConvResBlock")
+    debug_print("\nTesting UpConvResBlock")
     x = input_tensor
     output = block(x)
-    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
+    debug_print(f"Input shape: {x.shape}, Output shape: {output.shape}")
     assert output.shape[2:] == tuple(2*x for x in x.shape[2:]), "UpConvResBlock should double spatial dimensions"
     assert output.shape[1] == block.conv2.out_channels, "Output channels should match block's out_channels"
 
@@ -335,13 +201,13 @@ def test_upconvresblock(block, input_tensor):
     output.sum().backward()
     for name, param in block.named_parameters():
         assert param.grad is not None, f"No gradient for {name}"
-        print(f"{name} gradient shape: {param.grad.shape}")
+        debug_print(f"{name} gradient shape: {param.grad.shape}")
 
 def test_downconvresblock(block, input_tensor):
-    print("\nTesting DownConvResBlock")
+    debug_print("\nTesting DownConvResBlock")
     x = input_tensor
     output = block(x)
-    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
+    debug_print(f"Input shape: {x.shape}, Output shape: {output.shape}")
     assert output.shape[2:] == tuple(x//2 for x in x.shape[2:]), "DownConvResBlock should halve spatial dimensions"
     assert output.shape[1] == block.conv2.out_channels, "Output channels should match block's out_channels"
 
@@ -349,38 +215,38 @@ def test_downconvresblock(block, input_tensor):
     output.sum().backward()
     for name, param in block.named_parameters():
         assert param.grad is not None, f"No gradient for {name}"
-        print(f"{name} gradient shape: {param.grad.shape}")
+        debug_print(f"{name} gradient shape: {param.grad.shape}")
 
 def test_featresblock(block, input_tensor):
-    print("\nTesting FeatResBlock")
+    debug_print("\nTesting FeatResBlock")
     x = input_tensor
     output = block(x)
-    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
+    debug_print(f"Input shape: {x.shape}, Output shape: {output.shape}")
     assert output.shape == x.shape, "FeatResBlock should maintain input shape"
 
     # Test gradient flow
     output.sum().backward()
     for name, param in block.named_parameters():
         assert param.grad is not None, f"No gradient for {name}"
-        print(f"{name} gradient shape: {param.grad.shape}")
+        debug_print(f"{name} gradient shape: {param.grad.shape}")
 
 def test_modulatedconv2d(conv, input_tensor, style):
-    print("\nTesting ModulatedConv2d")
+    debug_print("\nTesting ModulatedConv2d")
     x = input_tensor
     output = conv(x, style)
-    print(f"Input shape: {x.shape}, Style shape: {style.shape}, Output shape: {output.shape}")
+    debug_print(f"Input shape: {x.shape}, Style shape: {style.shape}, Output shape: {output.shape}")
     assert output.shape[1] == conv.weight.shape[0], "Output channels should match conv's out_channels"
 
     # Test gradient flow
     output.sum().backward()
     assert conv.weight.grad is not None, "No gradient for weight"
-    print(f"Weight gradient shape: {conv.weight.grad.shape}")
+    debug_print(f"Weight gradient shape: {conv.weight.grad.shape}")
 
 def test_styledconv(conv, input_tensor, latent):
-    print("\nTesting StyledConv")
+    debug_print("\nTesting StyledConv")
     x = input_tensor
     output = conv(x, latent)
-    print(f"Input shape: {x.shape}, Latent shape: {latent.shape}, Output shape: {output.shape}")
+    debug_print(f"Input shape: {x.shape}, Latent shape: {latent.shape}, Output shape: {output.shape}")
     expected_shape = list(x.shape)
     expected_shape[1] = conv.conv.weight.shape[0]
     if conv.upsample:
@@ -392,22 +258,22 @@ def test_styledconv(conv, input_tensor, latent):
     output.sum().backward()
     for name, param in conv.named_parameters():
         assert param.grad is not None, f"No gradient for {name}"
-        print(f"{name} gradient shape: {param.grad.shape}")
+        debug_print(f"{name} gradient shape: {param.grad.shape}")
 
 def test_block_with_dropout(block, input_tensor, block_name):
-    print(f"\nTesting {block_name}")
+    debug_print(f"\nTesting {block_name}")
     x = input_tensor
     
     # Test in training mode
     block.train()
     output_train = block(x)
-    print(f"Training mode - Input shape: {x.shape}, Output shape: {output_train.shape}")
+    debug_print(f"Training mode - Input shape: {x.shape}, Output shape: {output_train.shape}")
 
     # Test in eval mode
     block.eval()
     with torch.no_grad():
         output_eval = block(x)
-    print(f"Eval mode - Input shape: {x.shape}, Output shape: {output_eval.shape}")
+    debug_print(f"Eval mode - Input shape: {x.shape}, Output shape: {output_eval.shape}")
 
     # Check if outputs are different in train and eval modes
     assert not torch.allclose(output_train, output_eval), f"{block_name} outputs should differ between train and eval modes due to dropout"
@@ -417,9 +283,9 @@ def test_block_with_dropout(block, input_tensor, block_name):
     output_train.sum().backward()
     for name, param in block.named_parameters():
         assert param.grad is not None, f"No gradient for {name}"
-        print(f"{name} gradient shape: {param.grad.shape}")
+        debug_print(f"{name} gradient shape: {param.grad.shape}")
 
-    print(f"{block_name} test passed successfully!")
+    debug_print(f"{block_name} test passed successfully!")
 
 
 def visualize_feature_maps(block, input_data, num_channels=4, latent_dim=None):
@@ -510,13 +376,13 @@ def load_and_preprocess_image(image_path, target_size=(224, 224)):
     return img_tensor
 
 def test_resblock_with_image(resblock, image_tensor):
-    print("\nTesting ResBlock with Image")
+    debug_print("\nTesting ResBlock with Image")
     input_shape = image_tensor.shape
-    print(f"Input shape: {input_shape}")
+    debug_print(f"Input shape: {input_shape}")
     
     # Pass the image through the ResBlock
     output = resblock(image_tensor)
-    print(f"Output shape: {output.shape}")
+    debug_print(f"Output shape: {output.shape}")
     
     # Check output shape
     expected_output_shape = list(input_shape)
@@ -530,7 +396,7 @@ def test_resblock_with_image(resblock, image_tensor):
     output.sum().backward()
     for name, param in resblock.named_parameters():
         assert param.grad is not None, f"No gradient for {name}"
-        print(f"{name} gradient shape: {param.grad.shape}")
+        debug_print(f"{name} gradient shape: {param.grad.shape}")
 
     # Visualize input and output
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
@@ -552,7 +418,7 @@ def test_resblock_with_image(resblock, image_tensor):
     plt.tight_layout()
     plt.show()
     
-    print("ResBlock test with image passed successfully!")
+    debug_print("ResBlock test with image passed successfully!")
 
 
 def visualize_resblock_rgb(block, input_tensor):
@@ -614,8 +480,8 @@ def visualize_resblock_rgb(block, input_tensor):
     plt.show()
 
 def visualize_block_output(block, input_tensor, block_name, num_channels=4):
-    print(f"\nVisualizing {block_name}")
-    print(f"input_tensor: {input_tensor.shape}")
+    debug_print(f"\nVisualizing {block_name}")
+    debug_print(f"input_tensor: {input_tensor.shape}")
     
     x = input_tensor
     
@@ -626,7 +492,7 @@ def visualize_block_output(block, input_tensor, block_name, num_channels=4):
     if isinstance(output, (tuple, list)):
         output = output[0]  # Visualize only the first tensor
     
-    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
+    debug_print(f"Input shape: {x.shape}, Output shape: {output.shape}")
 
     # Visualize input and output
     fig, axs = plt.subplots(2, min(num_channels, output.shape[1]), figsize=(15, 8))
@@ -652,11 +518,11 @@ def visualize_block_output(block, input_tensor, block_name, num_channels=4):
     plt.tight_layout()
     plt.show()
 
-    print(f"{block_name} visualization complete!")
+    debug_print(f"{block_name} visualization complete!")
 
 
 def visualize_block_output_rgb(block, input_tensor, block_name, num_channels=4):
-    print(f"\nVisualizing {block_name}")
+    debug_print(f"\nVisualizing {block_name}")
     x = input_tensor
     
     # Forward pass
@@ -667,7 +533,7 @@ def visualize_block_output_rgb(block, input_tensor, block_name, num_channels=4):
     if isinstance(output, (tuple, list)):
         output = output[0]  # Visualize only the first tensor
     
-    print(f"Input shape: {x.shape}, Output shape: {output.shape}")
+    debug_print(f"Input shape: {x.shape}, Output shape: {output.shape}")
 
     # Visualize input and output
     fig, axs = plt.subplots(2, min(num_channels, max(x.shape[1], output.shape[1])), figsize=(20, 10))
@@ -699,7 +565,7 @@ def visualize_block_output_rgb(block, input_tensor, block_name, num_channels=4):
     plt.tight_layout()
     plt.show()
 
-    print(f"{block_name} visualization complete!")
+    debug_print(f"{block_name} visualization complete!")
 
 def visualize_latent_token(token, save_path):
     """
@@ -780,39 +646,3 @@ if __name__ == "__main__":
 
     featres = FeatResBlock(3)
     test_block_with_dropout(featres, image_tensor, "FeatResBlock")
-
-    resblock = ResBlock(3, 64)
-    test_block_with_dropout(resblock, image_tensor, "ResBlock")
-
-    # Test ResBlock with and without downsampling
-    resblock = ResBlock(3, 64, downsample=False)
-    test_resblock_with_image(resblock, image_tensor)
-
-    resblock_down = ResBlock(3, 64, downsample=True)
-    test_resblock_with_image(resblock_down, image_tensor)
-
-
-
-# BROKEN
-    # styledconv = StyledConv(3, 64, 3, 32, upsample=True)
-    # latent = torch.randn(image_tensor.shape[0], 32)
-    # test_styledconv(styledconv, image_tensor, latent)
-    # visualize_feature_maps(styledconv, image_tensor, num_channels=4, latent_dim=32)
-    
-
-#     upconv = UpConvResBlock(64, 128)
-# test_input = torch.randn(1, 64, 32, 32)
-# visualize_block_output(upconv, test_input, "UpConvResBlock")
-
-# downconv = DownConvResBlock(128, 64)
-# test_input = torch.randn(1, 128, 32, 32)
-# visualize_block_output(downconv, test_input, "DownConvResBlock")
-
-# featres = FeatResBlock(64)
-# test_input = torch.randn(1, 64, 32, 32)
-# visualize_block_output(featres, test_input, "FeatResBlock")
-
-# styledconv = StyledConv(64, 128, 3, 32)
-# test_input = torch.randn(1, 64, 32, 32)
-# latent = torch.randn(1, 32)
-# visualize_block_output(lambda x: styledconv(x, latent), test_input, "StyledConv")
