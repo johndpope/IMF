@@ -9,6 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
+from lia_resblocks import LiaDiscriminator
 from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
@@ -410,7 +411,8 @@ def main():
     )
     add_gradient_hooks(model)
 
-    discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
+    # discriminator = MultiScalePatchDiscriminator(input_nc=3, ndf=64, n_layers=3, num_D=3)
+    discriminator = LiaDiscriminator(size=256,channel_multiplier=1)
     add_gradient_hooks(discriminator)
 
     # dataset = WebVid10M(video_folder=config.dataset.root_dir)
