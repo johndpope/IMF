@@ -46,7 +46,7 @@ def gpu_padded_collate(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
     return {'frames': frames_tensor}
 
 class VideoDataset(Dataset):
-    def __init__(self, root_dir, transform=None, frame_skip=0, num_frames=200):
+    def __init__(self, root_dir, transform=None, frame_skip=0, num_frames=400):
         self.root_dir = root_dir
         self.transform = transform
         self.frame_skip = frame_skip
