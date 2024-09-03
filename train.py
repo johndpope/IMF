@@ -21,7 +21,8 @@ from torch.nn.utils import spectral_norm
 import torchvision.models as models
 from loss import gan_loss_fn,MediaPipeEyeEnhancementLoss
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
-from torch.optim.lr_scheduler import CosineAnnealingLR
+# from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import OneCycleLR
 import random
 
 from stylegan import EMA
@@ -91,10 +92,9 @@ class IMFTrainer:
         self.optimizer_d = AdamW(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
         # Learning rate schedulers
-        # self.scheduler_g = CosineAnnealingLR(self.optimizer_g, T_max=100, eta_min=1e-6)
-        # self.scheduler_d = CosineAnnealingLR(self.optimizer_d, T_max=100, eta_min=1e-6)
-        self.scheduler_g = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_g, mode='min', factor=0.5, patience=5, verbose=True)
-        self.scheduler_d = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer_d, mode='min', factor=0.5, patience=5, verbose=True)
+        total_steps = config.training.num_epochs * len(train_dataloader)
+        self.scheduler_g = OneCycleLR(self.optimizer_g, max_lr=2e-4, total_steps=total_steps)
+        self.scheduler_d = OneCycleLR(self.optimizer_d, max_lr=2e-4, total_steps=total_steps)
 
 
         if config.training.use_ema:
@@ -117,69 +117,17 @@ class IMFTrainer:
                     return True
         return False
 
-    def adjust_learning_rate(self, optimizer, factor=0.1, min_lr=1e-6):
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = max(param_group['lr'] * factor, min_lr)
-        print(f"🔥 Adjusted learning rate. New LR: {optimizer.param_groups[0]['lr']}")
-
-
-    def train_step(self, x_current, x_reference,global_step):
+    def train_step(self, x_current, x_reference, global_step):
         if x_current.nelement() == 0:
             print("🔥 Skipping training step due to empty x_current")
             return None, None, None, None, None, None
-        
 
-        # Forward Pass
-        f_r = self.model.dense_feature_encoder(x_reference)
-        t_r = self.model.latent_token_encoder(x_reference)
-        t_c = self.model.latent_token_encoder(x_current)
+        # Generate reconstructed frame
+        x_reconstructed = self.model(x_current, x_reference)
 
-        noise_r = torch.randn_like(t_r) * self.noise_magnitude
-        noise_c = torch.randn_like(t_c) * self.noise_magnitude
-        t_r = t_r + noise_r
-        t_c = t_c + noise_c
-
-        if torch.rand(()).item() < self.style_mixing_prob:
-            batch_size = t_c.size(0)
-            rand_indices = torch.randperm(batch_size)
-            rand_t_c = t_c[rand_indices]
-            rand_t_r = t_r[rand_indices]
-            mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
-            mix_mask = mix_mask.float()
-            mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
-            mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
-        else:
-            mix_t_c = t_c
-            mix_t_r = t_r
-
-        m_c = self.model.latent_token_decoder(mix_t_c)
-        m_r = self.model.latent_token_decoder(mix_t_r)
-
-        aligned_features = []
-        for i in range(len(self.model.implicit_motion_alignment)):
-            f_r_i = f_r[i]
-            align_layer = self.model.implicit_motion_alignment[i]
-            m_c_i = m_c[i] 
-            m_r_i = m_r[i]
-            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            aligned_features.append(aligned_feature)
-
-        x_reconstructed = self.model.frame_decoder(aligned_features)
-        x_reconstructed = normalize(x_reconstructed)
-
-
-        # eye loss
-        # l_eye = self.eye_loss_fn(x_reconstructed, x_current)
-          
         if self.config.training.use_subsampling:
-            sub_sample_size = (128, 128)  # As mentioned in the paper
+            sub_sample_size = (128, 128)  # As mentioned in the paper https://github.com/johndpope/MegaPortrait-hack/issues/41
             x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
-
-
-        if global_step % self.config.logging.sample_every == 0:
-            save_image(x_reconstructed, 'x_reconstructed.png',  normalize=True)
-            save_image(x_current, 'x_current.png',  normalize=True)
-            save_image(x_reference, 'x_reference.png',  normalize=True)
 
         # Discriminator updates
         d_loss_total = 0
@@ -220,7 +168,6 @@ class IMFTrainer:
             
             d_loss_total += d_loss.item()
 
-
         # Average discriminator loss
         d_loss_avg = d_loss_total / self.config.training.n_critic
 
@@ -241,18 +188,26 @@ class IMFTrainer:
         self.accelerator.backward(g_loss)
 
         if self.check_exploding_gradients(self.model):
-            print("🔥 Exploding gradients detected. Adjusting learning rate.")
-            self.adjust_learning_rate(self.optimizer_g)
-            self.adjust_learning_rate(self.optimizer_d)
-            self.optimizer_g.zero_grad()
-            self.optimizer_d.zero_grad()
+            print("🔥 Exploding gradients detected. Clipping gradients.")
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         else:
             if self.config.training.clip_grad:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.training.clip_grad_norm)
-            self.optimizer_g.step()
+        
+        self.optimizer_g.step()
+
+        # Step the schedulers
+        self.scheduler_g.step()
+        self.scheduler_d.step()
 
         if self.ema:
             self.ema.update()
+
+        # Logging - locally for sanity check
+        if global_step % self.config.logging.sample_every == 0:
+            save_image(x_reconstructed, f'x_reconstructed.png', normalize=True)
+            save_image(x_current, f'x_current.png', normalize=True)
+            save_image(x_reference, f'x_reference.png', normalize=True)
 
         return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(), x_reconstructed
 
@@ -339,9 +294,6 @@ class IMFTrainer:
                     avg_g_loss = epoch_g_loss / num_valid_steps
                     avg_d_loss = epoch_d_loss / num_valid_steps
 
-                # Step the schedulers
-                self.scheduler_g.step(avg_g_loss)
-                self.scheduler_d.step(avg_d_loss)
 
                
 
@@ -356,42 +308,51 @@ class IMFTrainer:
         self.save_checkpoint(epoch, is_final=True)
 
 
-    def load_checkpoint(self, checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
-        
-        # Load model state
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        
-        # Load discriminator state
-        self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-        
-        # Load optimizer states
-        self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
-        self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
-        
-        # Load epoch
-        start_epoch = checkpoint['epoch'] + 1
-        
-        print(f"Loaded checkpoint from epoch {start_epoch - 1}")
-        return start_epoch
-
     def save_checkpoint(self, epoch, is_final=False):
         self.accelerator.wait_for_everyone()
         unwrapped_model = self.accelerator.unwrap_model(self.model)
         unwrapped_discriminator = self.accelerator.unwrap_model(self.discriminator)
         
-        if is_final:
-            save_path = f"{self.config.checkpoints.dir}/final_model.pth"
-            self.accelerator.save(unwrapped_model.state_dict(), save_path)
-        else:
-            save_path = f"{self.config.checkpoints.dir}/checkpoint.pth"
-            self.accelerator.save({
-                'epoch': epoch,
-                'model_state_dict': unwrapped_model.state_dict(),
-                'discriminator_state_dict': unwrapped_discriminator.state_dict(),
-                'optimizer_g_state_dict': self.optimizer_g.state_dict(),
-                'optimizer_d_state_dict': self.optimizer_d.state_dict(),
-            }, save_path)
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': unwrapped_model.state_dict(),
+            'discriminator_state_dict': unwrapped_discriminator.state_dict(),
+            'optimizer_g_state_dict': self.optimizer_g.state_dict(),
+            'optimizer_d_state_dict': self.optimizer_d.state_dict(),
+            'scheduler_g_state_dict': self.scheduler_g.state_dict(),
+            'scheduler_d_state_dict': self.scheduler_d.state_dict(),
+        }
+        
+        if self.ema:
+            checkpoint['ema_state_dict'] = self.ema.state_dict()
+        
+        save_path = f"{self.config.checkpoints.dir}/{'final_model' if is_final else 'checkpoint'}.pth"
+        self.accelerator.save(checkpoint, save_path)
+        print(f"Saved checkpoint for epoch {epoch}")
+
+    def load_checkpoint(self, checkpoint_path):
+        try:
+            checkpoint = self.accelerator.load(checkpoint_path)
+            
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+            self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
+            self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
+            self.scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
+            self.scheduler_d.load_state_dict(checkpoint['scheduler_d_state_dict'])
+            
+            if self.ema and 'ema_state_dict' in checkpoint:
+                self.ema.load_state_dict(checkpoint['ema_state_dict'])
+            
+            start_epoch = checkpoint['epoch'] + 1
+            print(f"Loaded checkpoint from epoch {start_epoch - 1}")
+            return start_epoch
+        except FileNotFoundError:
+            print(f"No checkpoint found at {checkpoint_path}")
+            return 0
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            return 0
 
 def main():
     config = load_config('config.yaml')
