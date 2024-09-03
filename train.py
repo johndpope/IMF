@@ -129,44 +129,7 @@ class IMFTrainer:
             return None, None, None, None, None, None
         
 
-        # Forward Pass
-        f_r = self.model.dense_feature_encoder(x_reference)
-        t_r = self.model.latent_token_encoder(x_reference)
-        t_c = self.model.latent_token_encoder(x_current)
-
-        noise_r = torch.randn_like(t_r) * self.noise_magnitude
-        noise_c = torch.randn_like(t_c) * self.noise_magnitude
-        t_r = t_r + noise_r
-        t_c = t_c + noise_c
-
-        if torch.rand(()).item() < self.style_mixing_prob:
-            batch_size = t_c.size(0)
-            rand_indices = torch.randperm(batch_size)
-            rand_t_c = t_c[rand_indices]
-            rand_t_r = t_r[rand_indices]
-            mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
-            mix_mask = mix_mask.float()
-            mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
-            mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
-        else:
-            mix_t_c = t_c
-            mix_t_r = t_r
-
-        m_c = self.model.latent_token_decoder(mix_t_c)
-        m_r = self.model.latent_token_decoder(mix_t_r)
-
-        aligned_features = []
-        for i in range(len(self.model.implicit_motion_alignment)):
-            f_r_i = f_r[i]
-            align_layer = self.model.implicit_motion_alignment[i]
-            m_c_i = m_c[i] 
-            m_r_i = m_r[i]
-            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
-            aligned_features.append(aligned_feature)
-
-        x_reconstructed = self.model.frame_decoder(aligned_features)
-        x_reconstructed = normalize(x_reconstructed)
-
+        x_reconstructed = self.model(x_current,x_reference)
 
         # eye loss
         # l_eye = self.eye_loss_fn(x_reconstructed, x_current)
@@ -356,42 +319,51 @@ class IMFTrainer:
         self.save_checkpoint(epoch, is_final=True)
 
 
-    def load_checkpoint(self, checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
-        
-        # Load model state
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        
-        # Load discriminator state
-        self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-        
-        # Load optimizer states
-        self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
-        self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
-        
-        # Load epoch
-        start_epoch = checkpoint['epoch'] + 1
-        
-        print(f"Loaded checkpoint from epoch {start_epoch - 1}")
-        return start_epoch
-
     def save_checkpoint(self, epoch, is_final=False):
         self.accelerator.wait_for_everyone()
         unwrapped_model = self.accelerator.unwrap_model(self.model)
         unwrapped_discriminator = self.accelerator.unwrap_model(self.discriminator)
         
-        if is_final:
-            save_path = f"{self.config.checkpoints.dir}/final_model.pth"
-            self.accelerator.save(unwrapped_model.state_dict(), save_path)
-        else:
-            save_path = f"{self.config.checkpoints.dir}/checkpoint.pth"
-            self.accelerator.save({
-                'epoch': epoch,
-                'model_state_dict': unwrapped_model.state_dict(),
-                'discriminator_state_dict': unwrapped_discriminator.state_dict(),
-                'optimizer_g_state_dict': self.optimizer_g.state_dict(),
-                'optimizer_d_state_dict': self.optimizer_d.state_dict(),
-            }, save_path)
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': unwrapped_model.state_dict(),
+            'discriminator_state_dict': unwrapped_discriminator.state_dict(),
+            'optimizer_g_state_dict': self.optimizer_g.state_dict(),
+            'optimizer_d_state_dict': self.optimizer_d.state_dict(),
+            'scheduler_g_state_dict': self.scheduler_g.state_dict(),
+            'scheduler_d_state_dict': self.scheduler_d.state_dict(),
+        }
+        
+        if self.ema:
+            checkpoint['ema_state_dict'] = self.ema.state_dict()
+        
+        save_path = f"{self.config.checkpoints.dir}/{'final_model' if is_final else 'checkpoint'}.pth"
+        self.accelerator.save(checkpoint, save_path)
+        print(f"Saved checkpoint for epoch {epoch}")
+
+    def load_checkpoint(self, checkpoint_path):
+        try:
+            checkpoint = self.accelerator.load(checkpoint_path)
+            
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+            self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
+            self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
+            self.scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
+            self.scheduler_d.load_state_dict(checkpoint['scheduler_d_state_dict'])
+            
+            if self.ema and 'ema_state_dict' in checkpoint:
+                self.ema.load_state_dict(checkpoint['ema_state_dict'])
+            
+            start_epoch = checkpoint['epoch'] + 1
+            print(f"Loaded checkpoint from epoch {start_epoch - 1}")
+            return start_epoch
+        except FileNotFoundError:
+            print(f"No checkpoint found at {checkpoint_path}")
+            return 0
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            return 0
 
 def main():
     config = load_config('config.yaml')

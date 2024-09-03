@@ -10,7 +10,7 @@ import torch.nn.utils.spectral_norm as spectral_norm
 from vit import ImplicitMotionAlignment
 from resblocks import  FeatResBlock,UpConvResBlock,DownConvResBlock
 from lia_resblocks import StyledConv,EqualConv2d,EqualLinear,ResBlock # these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
-
+from helper import normalize
 
 from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 import math
@@ -390,49 +390,50 @@ class IMFModel(nn.Module):
     def forward(self, x_current, x_reference):
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
-
-        # Dense feature encoding
+  # Forward Pass
         f_r = self.dense_feature_encoder(x_reference)
-
-        # Latent token encoding
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
 
-        # StyleGAN2-like mapping network
-        t_r = self.mapping_network(t_r)
-        t_c = self.mapping_network(t_c)
+        # noise_r = torch.randn_like(t_r) * self.noise_magnitude "no noise"
+        # noise_c = torch.randn_like(t_c) * self.noise_magnitude
+        # t_r = t_r + noise_r
+        # t_c = t_c + noise_c
 
-        # Add noise to latent tokens
-        t_r = self.add_noise(t_r)
-        t_c = self.add_noise(t_c)
+        # if torch.rand(()).item() < self.style_mixing_prob:
+        #     batch_size = t_c.size(0)
+        #     rand_indices = torch.randperm(batch_size)
+        #     rand_t_c = t_c[rand_indices]
+        #     rand_t_r = t_r[rand_indices]
+        #     mix_mask = torch.rand(batch_size, 1, device=t_c.device) < 0.5
+        #     mix_mask = mix_mask.float()
+        #     mix_t_c = t_c * mix_mask + rand_t_c * (1 - mix_mask)
+        #     mix_t_r = t_r * mix_mask + rand_t_r * (1 - mix_mask)
+        # else:
+        mix_t_c = t_c
+        mix_t_r = t_r
 
-        # Apply style mixing
-        t_c, t_r = self.style_mixing(t_c, t_r)
+        m_c = self.latent_token_decoder(mix_t_c)
+        m_r = self.latent_token_decoder(mix_t_r)
 
-        # Latent token decoding
-        m_r = self.latent_token_decoder(t_r)
-        m_c = self.latent_token_decoder(t_c)
-
-        # Implicit motion alignment with noise injection
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
-            m_r_i = self.noise_injection(m_r[i])
-            m_c_i = self.noise_injection(m_c[i])
             align_layer = self.implicit_motion_alignment[i]
+            m_c_i = m_c[i] 
+            m_r_i = m_r[i]
             aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
             aligned_features.append(aligned_feature)
 
-    
-        # Frame decoding
-        reconstructed_frame = self.frame_decoder(aligned_features)
-
-        return reconstructed_frame, {
-            'dense_features': f_r,
-            'latent_tokens': (t_c, t_r),
-            'motion_features': (m_c, m_r),
-            'aligned_features': aligned_features
-        }
+        x_reconstructed = self.frame_decoder(aligned_features)
+        x_reconstructed = normalize(x_reconstructed)
+        return x_reconstructed
+        # return reconstructed_frame, {
+        #     'dense_features': f_r,
+        #     'latent_tokens': (t_c, t_r),
+        #     'motion_features': (m_c, m_r),
+        #     'aligned_features': aligned_features
+        # }
 
     def set_noise_level(self, noise_level):
         self.noise_level = noise_level
