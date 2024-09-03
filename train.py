@@ -126,7 +126,7 @@ class IMFTrainer:
         x_reconstructed = self.model(x_current, x_reference)
 
         if self.config.training.use_subsampling:
-            sub_sample_size = (128, 128)  # As mentioned in the paper
+            sub_sample_size = (128, 128)  # As mentioned in the paper https://github.com/johndpope/MegaPortrait-hack/issues/41
             x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
 
         # Discriminator updates
