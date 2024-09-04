@@ -11,6 +11,7 @@ import os
 import torch.nn.functional as F
 from lia_resblocks import LiaDiscriminator
 from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
+from keep_model import IMFKeepModel
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
 from helper import log_grad_flow,consistent_sub_sample,count_model_params,normalize,visualize_latent_token, add_gradient_hooks, sample_recon
@@ -117,13 +118,15 @@ class IMFTrainer:
                     return True
         return False
 
-    def train_step(self, x_current, x_reference, global_step):
+    def train_step(self, x_current, x_reference, x_previous, t_previous, global_step):
+
         if x_current.nelement() == 0:
             print("🔥 Skipping training step due to empty x_current")
             return None, None, None, None, None, None
 
         # Generate reconstructed frame
-        x_reconstructed = self.model(x_current, x_reference)
+        x_reconstructed, t_current = self.model(x_current, x_reference, x_previous, t_previous)
+
 
         if self.config.training.use_subsampling:
             sub_sample_size = (128, 128)  # As mentioned in the paper https://github.com/johndpope/MegaPortrait-hack/issues/41
@@ -209,7 +212,9 @@ class IMFTrainer:
             save_image(x_current, f'x_current.png', normalize=True)
             save_image(x_reference, f'x_reference.png', normalize=True)
 
-        return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(), x_reconstructed
+        return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(), x_reconstructed, t_current
+
+
 
     def train(self, start_epoch=0):
         global_step = start_epoch * len(self.train_dataloader)
@@ -232,6 +237,9 @@ class IMFTrainer:
                 source_frames = batch['frames']
                 batch_size, num_frames, channels, height, width = source_frames.shape
 
+                x_previous = None
+                t_previous = None
+
                 for _ in range(int(video_repeat)):
                     if self.config.training.use_many_xrefs:
                         ref_indices = range(0, num_frames, self.config.training.every_xref_frames)
@@ -247,14 +255,16 @@ class IMFTrainer:
 
                             x_current = source_frames[:, current_idx]
 
-                            results = self.train_step(x_current, x_reference, global_step)
+                            results = self.train_step(x_current, x_reference, x_previous, t_previous, global_step)
+
 
                             if results[0] is not None:
-                                d_loss, g_loss, l_p, l_v,  g_loss_gan, x_reconstructed = results
+                                d_loss, g_loss, l_p, l_v, g_loss_gan, x_reconstructed, t_current = results
                                 epoch_g_loss += g_loss
                                 epoch_d_loss += d_loss
                                 num_valid_steps += 1
-
+                                x_previous = x_current
+                                t_previous = t_current
                             else:
                                 print("Skipping step due to error in train_step")
 
@@ -364,7 +374,9 @@ def main():
         cpu=config.accelerator.cpu
     )
 
-    model = IMFModel(
+
+    Model = IMFKeepModel  if config.training.use_keep else IMFModel
+    model = Model(
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
         num_layers=config.model.num_layers,

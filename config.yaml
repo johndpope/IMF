@@ -10,7 +10,7 @@ model:
 profiling:
   profile_step: 10
 training:
-
+  use_keep: True
   load_checkpoint: False  # Set this to true when you want to load from a checkpoint
   checkpoint_path: './checkpoints/checkpoint.pth'
   use_eye_loss: False
