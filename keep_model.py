@@ -41,7 +41,7 @@ class IMFKeepModel(nn.Module):
         
         # KEEP components
         self.kalman_filter_network = KalmanFilterNetwork(latent_dim)
-        self.cross_frame_attention = CrossFrameAttention(latent_dim)
+        self.cross_frame_attention = CrossFrameAttention(self.feature_dims)
         
         # Initialize ImplicitMotionAlignment modules
         self.implicit_motion_alignment = nn.ModuleList()
@@ -110,25 +110,28 @@ class KalmanFilterNetwork(nn.Module):
         innovation = t_current - t_previous
         t_updated = t_previous + gain * innovation
         return t_updated
-
+    
 class CrossFrameAttention(nn.Module):
-    def __init__(self, feature_dim):
+    def __init__(self, feature_dims):
         super().__init__()
-        self.query_conv = nn.Conv2d(feature_dim, feature_dim // 8, 1)
-        self.key_conv = nn.Conv2d(feature_dim, feature_dim // 8, 1)
-        self.value_conv = nn.Conv2d(feature_dim, feature_dim, 1)
-        self.gamma = nn.Parameter(torch.zeros(1))
+        self.query_convs = nn.ModuleList([nn.Conv2d(dim, dim // 8, 1) for dim in feature_dims])
+        self.key_convs = nn.ModuleList([nn.Conv2d(dim, dim // 8, 1) for dim in feature_dims])
+        self.value_convs = nn.ModuleList([nn.Conv2d(dim, dim, 1) for dim in feature_dims])
+        self.gammas = nn.ParameterList([nn.Parameter(torch.zeros(1)) for _ in feature_dims])
 
     def forward(self, features):
-        B, C, H, W = features[0].shape
-        queries = [self.query_conv(f).view(B, -1, H*W).permute(0, 2, 1) for f in features]
-        keys = [self.key_conv(f).view(B, -1, H*W) for f in features]
-        values = [self.value_conv(f).view(B, -1, H*W) for f in features]
+        outputs = []
+        for i, f in enumerate(features):
+            B, C, H, W = f.shape
+            q = self.query_convs[i](f).view(B, -1, H*W).permute(0, 2, 1)
+            k = self.key_convs[i](f).view(B, -1, H*W)
+            v = self.value_convs[i](f).view(B, -1, H*W)
 
-        attention = [torch.bmm(q, k) for q, k in zip(queries, keys)]
-        attention = [F.softmax(a, dim=-1) for a in attention]
+            attention = torch.bmm(q, k)
+            attention = F.softmax(attention, dim=-1)
 
-        out = [torch.bmm(v, a.permute(0, 2, 1)).view(B, C, H, W) for v, a in zip(values, attention)]
-        out = [self.gamma * o + f for o, f in zip(out, features)]
+            out = torch.bmm(v, attention.permute(0, 2, 1)).view(B, C, H, W)
+            out = self.gammas[i] * out + f
+            outputs.append(out)
 
-        return out
+        return outputs
