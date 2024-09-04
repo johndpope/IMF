@@ -379,8 +379,7 @@ def main():
     model = Model(
         latent_dim=config.model.latent_dim,
         base_channels=config.model.base_channels,
-        num_layers=config.model.num_layers,
-        use_resnet_feature=config.model.use_resnet_feature
+        num_layers=config.model.num_layers
     )
     add_gradient_hooks(model)
 
