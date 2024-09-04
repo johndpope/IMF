@@ -9,13 +9,15 @@ model:
 
 profiling:
   profile_step: 10
-training:
 
+
+
+training:
   load_checkpoint: False  # Set this to true when you want to load from a checkpoint
   checkpoint_path: './checkpoints/checkpoint.pth'
   use_eye_loss: False
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41
-  initial_video_repeat: 1
+  initial_video_repeat: 1000
   final_video_repeat: 1
   use_ema: False
   use_r1_reg: False
@@ -100,3 +102,15 @@ loss:
       perceptual: [10, 10, 10, 10, 10]
       equivariance_shift: 10
       equivariance_affine: 10
+
+
+token_manipulation:
+  token_dim: 512
+  condition_dim: 64
+  learning_rate: 1e-4
+  batch_size: 32
+  num_epochs: 100
+  save_every: 10
+  load_checkpoint: false
+  checkpoint_path: "./checkpoints/token_manipulation_checkpoint.pth"
+ 

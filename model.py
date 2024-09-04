@@ -280,20 +280,23 @@ class FrameDecoder(nn.Module):
 
         return x
 
+
 class TokenManipulationNetwork(nn.Module):
     def __init__(self, token_dim, condition_dim, hidden_dim=256):
         super().__init__()
         self.token_encoder = nn.Sequential(
             nn.Linear(token_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+            nn.Linear(hidden_dim, hidden_dim * 2)
         )
         self.condition_encoder = nn.Sequential(
             nn.Linear(condition_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+            nn.Linear(hidden_dim, hidden_dim * 2)
         )
         self.decoder = nn.Sequential(
+            nn.Linear(hidden_dim * 4, hidden_dim * 2),
+            nn.ReLU(),
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, token_dim)
@@ -305,7 +308,6 @@ class TokenManipulationNetwork(nn.Module):
         combined = torch.cat([token_encoded, condition_encoded], dim=-1)
         edited_token = self.decoder(combined)
         return edited_token
-
 
 
 '''
@@ -358,7 +360,11 @@ class IMFModel(nn.Module):
         self.mapping_network = MappingNetwork(latent_dim, latent_dim, depth=8)
         self.noise_injection = NoiseInjection()
 
-        # self.apply(self.frame_decoder)
+        # Token Manipulation Network (adapter) - to be trained separately
+        self.token_manipulation_network = None
+
+    def set_token_manipulation_network(self, network):
+        self.token_manipulation_network = network
 
 
     def _init_weights(self, m):
@@ -395,6 +401,12 @@ class IMFModel(nn.Module):
         t_r = self.latent_token_encoder(x_reference)
         t_c = self.latent_token_encoder(x_current)
 
+
+
+      # Apply token manipulation if the network is available and editing condition is provided
+        if self.token_manipulation_network is not None and editing_condition is not None:
+            t_c = self.token_manipulation_network(t_c, editing_condition)
+            
         # noise_r = torch.randn_like(t_r) * self.noise_magnitude "no noise"
         # noise_c = torch.randn_like(t_c) * self.noise_magnitude
         # t_r = t_r + noise_r
