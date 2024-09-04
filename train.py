@@ -263,8 +263,9 @@ class IMFTrainer:
                                 epoch_g_loss += g_loss
                                 epoch_d_loss += d_loss
                                 num_valid_steps += 1
-                                x_previous = x_current
-                                t_previous = t_current
+                                x_previous = x_current.detach().clone()
+                                t_previous = t_current.detach().clone()
+                              
                             else:
                                 print("Skipping step due to error in train_step")
 
