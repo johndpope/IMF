@@ -8,6 +8,30 @@ import wandb
 from tqdm.auto import tqdm
 from model import TokenManipulationNetwork
 
+
+class StyleFeatureEditorWrapper(nn.Module):
+    def __init__(self, sfe_model, token_manipulation_network):
+        super().__init__()
+        self.sfe_model = sfe_model
+        self.token_manipulation_network = token_manipulation_network
+
+    def forward(self, x_current, x_reference, editing_condition):
+        # SFE inversion
+        w, F_k = self.sfe_model.inverter(x_current)
+        
+        # Token manipulation
+        edited_w = self.token_manipulation_network(w, editing_condition)
+        
+        # SFE editing
+        delta = self.sfe_model.get_delta(w, edited_w)
+        F_k_edited = self.sfe_model.feature_editor(F_k, delta)
+        
+        # SFE reconstruction
+        x_edited = self.sfe_model.frame_decoder(F_k_edited, edited_w[self.sfe_model.k+1:])
+        
+        return x_edited, w, edited_w, F_k, F_k_edited
+
+
 def train_token_manipulation_network(config):
     accelerator = Accelerator(
         mixed_precision=config.accelerator.mixed_precision,
@@ -32,6 +56,13 @@ def train_token_manipulation_network(config):
         hidden_dim=config.token_manipulation.hidden_dim
     )
 
+    sfe_model = StyleFeatureEditor(config.sfe)
+    sfe_model.load_state_dict(torch.load(config.sfe_checkpoint_path))
+    sfe_model.eval()  # Set SFE to evaluation mode
+
+
+    combined_model = StyleFeatureEditorWrapper(sfe_model, token_manipulation_network)
+
     # Set up optimizer and dataset
     optimizer = optim.Adam(token_manipulation_network.parameters(), lr=config.token_manipulation.learning_rate)
     dataset = YourDataset(config.dataset.root_dir)  # Replace with your actual dataset
@@ -51,33 +82,49 @@ def train_token_manipulation_network(config):
         start_epoch = checkpoint['epoch'] + 1
 
     # Training loop
-    for epoch in range(start_epoch, config.token_manipulation.num_epochs):
-        token_manipulation_network.train()
-        total_loss = 0
-
-        progress_bar = tqdm(total=len(dataloader), desc=f"Epoch {epoch+1}/{config.token_manipulation.num_epochs}")
-        
+     for epoch in range(config.token_manipulation.num_epochs):
         for batch in dataloader:
             x_current, x_reference, editing_condition = batch
             
-            # Get the original token
-            with torch.no_grad():
-                original_token = imf_model.latent_token_encoder(x_current)
+            # Forward pass
+            x_edited, w, edited_w, F_k, F_k_edited = combined_model(x_current, x_reference, editing_condition)
             
-            # Edit the token
-            edited_token = token_manipulation_network(original_token, editing_condition)
+            # Compute losses
+            reconstruction_loss = compute_reconstruction_loss(x_current, x_edited)
+            editing_loss = compute_editing_loss(x_edited, editing_condition)
+            feature_consistency_loss = compute_feature_consistency_loss(F_k, F_k_edited)
             
-            # Generate the edited image
-            imf_model.set_token_manipulation_network(token_manipulation_network)
-            edited_image = imf_model(x_current, x_reference, editing_condition)
+            total_loss = (
+                config.loss_weights.reconstruction * reconstruction_loss +
+                config.loss_weights.editing * editing_loss +
+                config.loss_weights.feature_consistency * feature_consistency_loss
+            )
             
-            # Compute loss (this will depend on your specific editing task)
-            loss = compute_editing_loss(edited_image, x_current, editing_condition)
-            
-            # Backpropagate and update
-            accelerator.backward(loss)
-            optimizer.step()
+            # Backward pass and optimization
             optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
+
+            
+            
+            # # Get the original token
+            # with torch.no_grad():
+            #     original_token = imf_model.latent_token_encoder(x_current)
+            
+            # # Edit the token
+            # edited_token = token_manipulation_network(original_token, editing_condition)
+            
+            # # Generate the edited image
+            # imf_model.set_token_manipulation_network(token_manipulation_network)
+            # edited_image = imf_model(x_current, x_reference, editing_condition)
+            
+            # # Compute loss (this will depend on your specific editing task)
+            # loss = compute_editing_loss(edited_image, x_current, editing_condition)
+            
+            # # Backpropagate and update
+            # accelerator.backward(loss)
+            # optimizer.step()
+            # optimizer.zero_grad()
 
             total_loss += loss.item()
             progress_bar.update(1)
@@ -118,11 +165,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-def main():
-    config = OmegaConf.load('config.yaml')
-    wandb.init(project='IMF-TokenManipulation', config=OmegaConf.to_container(config, resolve=True))
-    
-    train_token_manipulation_network(config)
-
-if __name__ == "__main__":
-    main()

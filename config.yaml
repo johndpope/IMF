@@ -113,4 +113,13 @@ token_manipulation:
   save_every: 10
   load_checkpoint: false
   checkpoint_path: "./checkpoints/token_manipulation_checkpoint.pth"
- 
+  hidden_dim: 256
+
+sfe:
+  checkpoint_path: "path/to/sfe_checkpoint.pth"
+
+
+loss_weights:
+  reconstruction: 1.0
+  editing: 0.1
+  feature_consistency: 0.01
