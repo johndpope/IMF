@@ -19,7 +19,7 @@ from omegaconf import OmegaConf
 import lpips
 from torch.nn.utils import spectral_norm
 import torchvision.models as models
-from loss import gan_loss_fn,MediaPipeEyeEnhancementLoss
+from loss import gan_loss_fn,MediaPipeEyeEnhancementLoss,MediaPipeFaceEnhancementLoss
 # from torch.optim.lr_scheduler import ReduceLROnPlateau
 # from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.lr_scheduler import OneCycleLR
@@ -82,7 +82,8 @@ class IMFTrainer:
         self.perceptual_loss_fn = lpips.LPIPS(net='alex', spatial=True).to(accelerator.device)
         self.pixel_loss_fn = nn.L1Loss()
         # self.eye_loss_fn = MediaPipeEyeEnhancementLoss(eye_weight=1.0).to(accelerator.device)
-
+        self.face_loss_fn = MediaPipeFaceEnhancementLoss(face_weight=1.0).to(accelerator.device)
+        
 
         self.style_mixing_prob = config.training.style_mixing_prob
         self.noise_magnitude = config.training.noise_magnitude
@@ -178,12 +179,12 @@ class IMFTrainer:
 
         l_p = self.pixel_loss_fn(x_reconstructed, x_current).mean()
         l_v = self.perceptual_loss_fn(x_reconstructed, x_current).mean()
-        l_eye = self.eye_loss_fn(x_reconstructed, x_current) if self.config.training.use_eye_loss else 0
+        l_face = self.face_loss_fn(x_reconstructed, x_current) if self.config.training.use_face_loss else 0
 
         g_loss = (self.config.training.lambda_pixel * l_p +
                 self.config.training.lambda_perceptual * l_v +
                 self.config.training.lambda_adv * g_loss_gan +
-                self.config.training.lambda_eye * l_eye)
+                self.config.training.lambda_face * l_face)
 
         self.accelerator.backward(g_loss)
 
@@ -209,7 +210,7 @@ class IMFTrainer:
             save_image(x_current, f'x_current.png', normalize=True)
             save_image(x_reference, f'x_reference.png', normalize=True)
 
-        return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), g_loss_gan.item(), x_reconstructed
+        return d_loss_avg, g_loss.item(), l_p.item(), l_v.item(), l_face.item(), g_loss_gan.item(), x_reconstructed
 
     def train(self, start_epoch=0):
         global_step = start_epoch * len(self.train_dataloader)
@@ -250,7 +251,7 @@ class IMFTrainer:
                             results = self.train_step(x_current, x_reference, global_step)
 
                             if results[0] is not None:
-                                d_loss, g_loss, l_p, l_v,  g_loss_gan, x_reconstructed = results
+                                d_loss, g_loss, l_p, l_v,l_face,  g_loss_gan, x_reconstructed = results
                                 epoch_g_loss += g_loss
                                 epoch_d_loss += d_loss
                                 num_valid_steps += 1
@@ -265,6 +266,7 @@ class IMFTrainer:
                             if self.accelerator.is_main_process and global_step % self.config.logging.log_every == 0:
                                 wandb.log({
                                     "noise_magnitude": self.noise_magnitude,
+                                    "l_face": l_face,
                                     "g_loss": g_loss,
                                     "d_loss": d_loss,
                                     "pixel_loss": l_p,

@@ -83,6 +83,79 @@ def gan_loss_fn(real_outputs, fake_outputs, loss_type):
     else:
         raise ValueError(f"Unsupported loss type: {loss_type}")
 
+
+class MediaPipeFaceEnhancementLoss(nn.Module):
+    def __init__(self, face_weight=10.0):
+        super(MediaPipeFaceEnhancementLoss, self).__init__()
+        self.face_weight = face_weight
+        self.mp_face_mesh = mp.solutions.face_mesh
+        self.face_mesh = self.mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, min_detection_confidence=0.5)
+        
+        # Define facial feature indices
+        self.left_eye_indices = list(range(362, 374))
+        self.right_eye_indices = list(range(263, 273))
+        self.nose_indices = list(range(1, 6)) + list(range(195, 198))
+        self.mouth_indices = list(range(0, 17)) + list(range(61, 69))
+
+    @torch.no_grad()
+    def get_face_boxes(self, image):
+        image_np = (image.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        results = self.face_mesh.process(cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR))
+        
+        if not results.multi_face_landmarks:
+            return None
+
+        landmarks = results.multi_face_landmarks[0].landmark
+
+        def get_feature_box(indices):
+            x_min = min(landmarks[i].x for i in indices)
+            x_max = max(landmarks[i].x for i in indices)
+            y_min = min(landmarks[i].y for i in indices)
+            y_max = max(landmarks[i].y for i in indices)
+            return [int(x_min * image_np.shape[1]), int(y_min * image_np.shape[0]),
+                    int(x_max * image_np.shape[1]), int(y_max * image_np.shape[0])]
+
+        return {
+            'left_eye': get_feature_box(self.left_eye_indices),
+            'right_eye': get_feature_box(self.right_eye_indices),
+            'nose': get_feature_box(self.nose_indices),
+            'mouth': get_feature_box(self.mouth_indices)
+        }
+
+    def forward(self, reconstructed, target):
+        # Base loss (e.g., L1 or MSE)
+        base_loss = F.l1_loss(reconstructed, target)
+
+        face_loss = 0.0
+        for i in range(reconstructed.size(0)):  # Iterate over batch
+            recon_face = self.get_face_boxes(reconstructed[i])
+            target_face = self.get_face_boxes(target[i])
+
+            if recon_face is None or target_face is None:
+                continue  # Skip this sample if face not detected
+
+            for feature in ['left_eye', 'right_eye', 'nose', 'mouth']:
+                recon_box = recon_face[feature]
+                target_box = target_face[feature]
+                
+                recon_region = reconstructed[i, :, recon_box[1]:recon_box[3], recon_box[0]:recon_box[2]]
+                target_region = target[i, :, target_box[1]:target_box[3], target_box[0]:target_box[2]]
+                
+                # Ensure both regions have the same size
+                min_h = min(recon_region.size(1), target_region.size(1))
+                min_w = min(recon_region.size(2), target_region.size(2))
+                recon_region = recon_region[:, :min_h, :min_w]
+                target_region = target_region[:, :min_h, :min_w]
+                
+                face_loss += F.l1_loss(recon_region, target_region)
+
+        # Normalize face loss by batch size
+        face_loss /= reconstructed.size(0)
+
+        # Combine losses
+        total_loss = base_loss + self.face_weight * face_loss
+        return total_loss
+    
 class MediaPipeEyeEnhancementLoss(nn.Module):
     def __init__(self, eye_weight=10.0):
         super(MediaPipeEyeEnhancementLoss, self).__init__()
