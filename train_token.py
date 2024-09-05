@@ -7,6 +7,10 @@ from omegaconf import OmegaConf
 import wandb
 from tqdm.auto import tqdm
 from model import TokenManipulationNetwork,IMFModel
+from models.methods import FSEFull,FSEInverter
+from configs.paths import DefaultPaths
+from VideoDataset import VideoDataset,gpu_padded_collate
+from torchvision import transforms
 
 
 # class StyleFeatureEditorWrapper(nn.Module):
@@ -102,7 +106,7 @@ def train_token_manipulation_network(config):
     imf_model.eval()
 
     # Create the TokenManipulationNetwork
-    sfe_model = StyleFeatureEditor(config.device, config.paths, config.checkpoint_path, config.inverter_pth)
+    sfe_model = StyleFeatureEditor(accelerator.device, DefaultPaths, config.checkpoint_path, config.inverter_pth)
     token_manipulation_network = TokenManipulationNetwork(
         token_dim=512,  # Assuming w_recon has 512 dimensions
         condition_dim=config.condition_dim,
@@ -115,7 +119,17 @@ def train_token_manipulation_network(config):
 
     # Set up optimizer and dataset
     optimizer = optim.Adam(token_manipulation_network.parameters(), lr=config.token_manipulation.learning_rate)
-    dataset = YourDataset(config.dataset.root_dir)  # Replace with your actual dataset
+    
+    transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    dataset = VideoDataset(config.dataset.root_dir, 
+                                transform=transform, 
+                                frame_skip=0, 
+                                num_frames=300)
+
     dataloader = DataLoader(dataset, batch_size=config.token_manipulation.batch_size, shuffle=True)
 
     # Prepare for distributed training

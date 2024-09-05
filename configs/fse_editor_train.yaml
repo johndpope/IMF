@@ -1,0 +1,30 @@
+train:
+  train_runner: fse_editor
+  train_dis: True
+  dis_train_start_step: 45000
+  steps: 500000
+
+
+model:
+  method: fse_full
+  device: "0"
+  batch_size: 8
+
+
+encoder_losses:
+  l2: 1.0
+  lpips: 0.8
+  id: 0.1
+  adv: 0.01
+
+
+disc_losses:
+  main:
+    coef: 1
+  r1:
+    coef: 10
+
+
+optimizers:
+    ranger:
+      lr: 0.0001

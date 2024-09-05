@@ -1,0 +1,15 @@
+inference:
+  inference_runner: fse_inference_runner
+     
+  editings_data: {
+              "age": [ 2, 3, 4, 5, 6, 7, 8],
+              "fs_glasses": [5, 10, 15, 20, 25, 30],
+              "fs_smiling": [-10, -9, -8, -7, -6, -5, -4,-3],
+              "styleclip_global_face with hair_face with fire hair_0.10": [5, 9]
+            }
+
+
+model:
+  method: fse_full
+  device: "0"
+  batch_size: 8
