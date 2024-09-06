@@ -334,10 +334,17 @@ class IMFTrainer:
 
     def load_checkpoint(self, checkpoint_path):
         try:
-            checkpoint = self.accelerator.load(checkpoint_path)
+            # Use torch.load instead of self.accelerator.load
+            checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
             
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+            # Unwrap models before loading state dicts
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_discriminator = self.accelerator.unwrap_model(self.discriminator)
+            
+            unwrapped_model.load_state_dict(checkpoint['model_state_dict'])
+            unwrapped_discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+            
+            # Load optimizer and scheduler states
             self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
             self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
             self.scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
@@ -347,13 +354,13 @@ class IMFTrainer:
                 self.ema.load_state_dict(checkpoint['ema_state_dict'])
             
             start_epoch = checkpoint['epoch'] + 1
-            print(f"Loaded checkpoint from epoch {start_epoch - 1}")
+            print(f"✅ Loaded checkpoint from epoch {start_epoch - 1}")
             return start_epoch
         except FileNotFoundError:
-            print(f"No checkpoint found at {checkpoint_path}")
+            print(f"👺 No checkpoint found at {checkpoint_path}")
             return 0
         except Exception as e:
-            print(f"Error loading checkpoint: {e}")
+            print(f"👺 Error loading checkpoint: {e}")
             return 0
 
 def main():

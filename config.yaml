@@ -11,7 +11,7 @@ profiling:
   profile_step: 10
 training:
 
-  load_checkpoint: False  # Set this to true when you want to load from a checkpoint
+  load_checkpoint: True  # Set this to true when you want to load from a checkpoint
   checkpoint_path: './checkpoints/checkpoint.pth'
   use_face_loss: True
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41
