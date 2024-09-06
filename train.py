@@ -24,6 +24,7 @@ from loss import gan_loss_fn,MediaPipeEyeEnhancementLoss,MediaPipeFaceEnhancemen
 # from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.lr_scheduler import OneCycleLR
 import random
+from google.cloud import storage
 
 from stylegan import EMA
 from torch.optim import AdamW, SGD
@@ -332,6 +333,31 @@ class IMFTrainer:
         self.accelerator.save(checkpoint, save_path)
         print(f"Saved checkpoint for epoch {epoch}")
 
+        # Upload to Google Cloud Storage
+        self.upload_to_gcs(save_path)
+
+    def upload_to_gcs(self, local_file_path):
+        # Ensure you have set the GOOGLE_APPLICATION_CREDENTIALS environment variable
+        client = storage.Client()
+
+        # Get the bucket name from the environment variable
+        bucket_name = os.environ.get('GOOGLE_CLOUD_BUCKET_NAME')
+        if not bucket_name:
+            raise ValueError("GOOGLE_CLOUD_BUCKET_NAME environment variable is not set")
+
+        # Remove the "gs://" prefix if present
+        bucket_name = bucket_name.replace('gs://', '')
+
+        bucket = client.bucket(bucket_name)
+
+        destination_blob_name = os.path.basename(local_file_path)
+        blob = bucket.blob(destination_blob_name)
+
+        blob.upload_from_filename(local_file_path)
+
+        print(f"File {local_file_path} uploaded to {destination_blob_name} in bucket {bucket_name}.")
+        
+        
     def load_checkpoint(self, checkpoint_path):
         try:
             # Use torch.load instead of self.accelerator.load
