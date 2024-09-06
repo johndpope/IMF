@@ -15,7 +15,7 @@ training:
   checkpoint_path: './checkpoints/checkpoint.pth'
   use_face_loss: True
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41
-  initial_video_repeat: 1000
+  initial_video_repeat: 1
   final_video_repeat: 1
   use_ema: False
   use_r1_reg: False

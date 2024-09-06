@@ -402,7 +402,7 @@ def main():
         dataset,
         batch_size=config.training.batch_size,
         num_workers=4,
-        shuffle=False,
+        shuffle=True,
         pin_memory=True,
         collate_fn=gpu_padded_collate 
     )
