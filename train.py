@@ -110,6 +110,9 @@ class IMFTrainer:
             self.ema = accelerator.prepare(self.ema)
             self.ema.register()
 
+        self.worst_face_loss_threshold = config.training.worst_face_loss_threshold
+        self.worst_face_loss_frames = {}
+
     def check_exploding_gradients(self, model):
         for name, param in model.named_parameters():
             if param.grad is not None:
@@ -118,7 +121,7 @@ class IMFTrainer:
                     return True
         return False
 
-    def train_step(self, x_current, x_reference, global_step):
+    def train_step(self, x_current, x_reference, global_step,frame_index):
         if x_current.nelement() == 0:
             print("🔥 Skipping training step due to empty x_current")
             return None, None, None, None, None, None
@@ -180,6 +183,11 @@ class IMFTrainer:
         l_p = self.pixel_loss_fn(x_reconstructed, x_current).mean()
         l_v = self.perceptual_loss_fn(x_reconstructed, x_current).mean()
         l_face = self.face_loss_fn(x_reconstructed, x_current) if self.config.training.use_face_loss else 0
+
+
+        # After calculating face loss
+        if l_face > self.worst_face_loss_threshold:
+            self.worst_face_loss_frames[frame_index] = l_face.item()
 
         g_loss = (self.config.training.lambda_pixel * l_p +
                 self.config.training.lambda_perceptual * l_v +
@@ -248,7 +256,7 @@ class IMFTrainer:
 
                             x_current = source_frames[:, current_idx]
 
-                            results = self.train_step(x_current, x_reference, global_step)
+                            results = self.train_step(x_current, x_reference, global_step,current_idx)
 
                             if results[0] is not None:
                                 d_loss, g_loss, l_p, l_v,l_face,  g_loss_gan, x_reconstructed = results
@@ -259,37 +267,56 @@ class IMFTrainer:
                             else:
                                 print("Skipping step due to error in train_step")
 
-                   
-                            epoch_g_loss += g_loss
-                            epoch_d_loss += d_loss
-
-                            if self.accelerator.is_main_process and global_step % self.config.logging.log_every == 0:
-                                wandb.log({
-                                    "noise_magnitude": self.noise_magnitude,
-                                    "l_face": l_face,
-                                    "g_loss": g_loss,
-                                    "d_loss": d_loss,
-                                    "pixel_loss": l_p,
-                                    "perceptual_loss": l_v,
-                                    "gan_loss": g_loss_gan,
-                                    "global_step": global_step,
-                                    "lr_g": self.optimizer_g.param_groups[0]['lr'],
-                                    "lr_d": self.optimizer_d.param_groups[0]['lr']
-                                })
-                                # Log gradient flow for generator and discriminator
-                                log_grad_flow(self.model.named_parameters(),global_step)
-                                log_grad_flow(self.discriminator.named_parameters(),global_step)
-
-                            if global_step % self.config.logging.sample_every == 0:
-                                sample_path = f"recon_step_{global_step}.png"
-                                sample_recon(self.model, (x_reconstructed, x_current, x_reference), self.accelerator, sample_path, 
-                                             num_samples=self.config.logging.sample_size)
-                                
                             global_step += 1
 
-                             # Checkpoint saving
-                            if global_step % self.config.training.save_steps == 0:
-                                self.save_checkpoint(epoch)
+
+                            
+
+                # Second pass: focus on worst frames
+                worst_frames = sorted(self.worst_face_loss_frames.items(), key=lambda x: x[1], reverse=True)
+                for frame_idx, _ in worst_frames[:self.config.training.num_worst_frames]:
+                    x_current = source_frames[:, frame_idx]
+                    x_reference = source_frames[:, ref_indices[0]]  # Using the first reference frame
+
+                    results = self.train_step(x_current, x_reference, global_step, frame_idx)
+
+                    if results[0] is not None:
+                        d_loss, g_loss, l_p, l_v, l_face, g_loss_gan, x_reconstructed = results
+                        epoch_g_loss += g_loss
+                        epoch_d_loss += d_loss
+                        num_valid_steps += 1
+                    else:
+                        print("Skipping step due to error in train_step")
+
+                    global_step += 1
+
+
+                if self.accelerator.is_main_process and global_step % self.config.logging.log_every == 0:
+                            wandb.log({
+                                "noise_magnitude": self.noise_magnitude,
+                                "l_face": l_face,
+                                "g_loss": g_loss,
+                                "d_loss": d_loss,
+                                "pixel_loss": l_p,
+                                "perceptual_loss": l_v,
+                                "gan_loss": g_loss_gan,
+                                "global_step": global_step,
+                                "lr_g": self.optimizer_g.param_groups[0]['lr'],
+                                "lr_d": self.optimizer_d.param_groups[0]['lr']
+                            })
+                            # Log gradient flow for generator and discriminator
+                            log_grad_flow(self.model.named_parameters(),global_step)
+                            log_grad_flow(self.discriminator.named_parameters(),global_step)
+
+                if global_step % self.config.logging.sample_every == 0:
+                    sample_path = f"recon_step_{global_step}.png"
+                    sample_recon(self.model, (x_reconstructed, x_current, x_reference), self.accelerator, sample_path, 
+                                    num_samples=self.config.logging.sample_size)
+                    
+
+                    # Checkpoint saving
+                if global_step % self.config.training.save_steps == 0:
+                    self.save_checkpoint(epoch)
 
                 # Calculate average losses for the epoch
                 if num_valid_steps > 0:
@@ -395,7 +422,7 @@ def main():
         dataset,
         batch_size=config.training.batch_size,
         num_workers=4,
-        shuffle=False,
+        shuffle=True,
         pin_memory=True,
         collate_fn=gpu_padded_collate 
     )

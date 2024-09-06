@@ -10,12 +10,13 @@ model:
 profiling:
   profile_step: 10
 training:
-
-  load_checkpoint: False  # Set this to true when you want to load from a checkpoint
+  worst_face_loss_threshold: 0.5  
+  num_worst_frames: 10  # Number of worst frames to revisit in each batch
+  load_checkpoint: True  # Set this to true when you want to load from a checkpoint
   checkpoint_path: './checkpoints/checkpoint.pth'
   use_face_loss: True
   use_subsampling: False # saves ram? https://github.com/johndpope/MegaPortrait-hack/issues/41
-  initial_video_repeat: 1000
+  initial_video_repeat: 1
   final_video_repeat: 1
   use_ema: False
   use_r1_reg: False
