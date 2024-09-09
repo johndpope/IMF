@@ -1,18 +1,19 @@
-# implicit-motion-function
+# Implicit-Motion-Function (unofficial)
 
 see current training here 
 https://wandb.ai/snoozie/IMF
 
 
-The frame_skip in VideoDataset - is only at 1. 
-
-
 ![Image](ok.png)
 
 
+overfitting example - 
+https://wandb.ai/snoozie/IMF/runs/xscj3hjo?nw=nwusersnoozie
 
-**xformers + cuda **
-https://github.com/facebookresearch/xformers
+![Image](
+https://private-user-images.githubusercontent.com/289994/364994301-1dcf3d67-2890-47be-bea6-88c6be4fe2f1.png?jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3MjU4NDQxODksIm5iZiI6MTcyNTg0Mzg4OSwicGF0aCI6Ii8yODk5OTQvMzY0OTk0MzAxLTFkY2YzZDY3LTI4OTAtNDdiZS1iZWE2LTg4YzZiZTRmZTJmMS5wbmc_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjQwOTA5JTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI0MDkwOVQwMTA0NDlaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT0xNjhhMDU4NTk2OGM5NDgyOWNmZGYwNmVjNTdmZjgwMDFlMzJhODFiNGI2Mjc4MDMwMDgzNjczYTA5OGY4ZTY2JlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZhY3Rvcl9pZD0wJmtleV9pZD0wJnJlcG9faWQ9MCJ9.NzpGtGiODnfoiPgItrxEeQGgEg0wD3q_qWcqh-dFRWQ)
+
+
 
 
 
