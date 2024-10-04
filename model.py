@@ -387,6 +387,12 @@ class IMFModel(nn.Module):
             return t_c_mixed, t_r_mixed
         return t_c, t_r
 
+    def tokens(self, x_current, x_reference):
+        f_r = self.dense_feature_encoder(x_reference)
+        t_r = self.latent_token_encoder(x_reference)
+        t_c = self.latent_token_encoder(x_current)
+        return f_r,t_r,t_c
+
     def decode_latent_tokens(self,f_r,t_r,t_c):
         mix_t_c = t_c
         mix_t_r = t_r
