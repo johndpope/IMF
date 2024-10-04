@@ -477,6 +477,18 @@ class IMFModel(nn.Module):
         
         return m_c, m_r
 
+
+class IMFEncoder(nn.Module):
+    def __init__(self, model):
+        super(IMFEncoder, self).__init__()
+        self.model = model
+
+    def forward(self, x_current, x_reference):
+        f_r = self.model.dense_feature_encoder(x_reference)
+        t_r = self.model.latent_token_encoder(x_reference)
+        t_c = self.model.latent_token_encoder(x_current)
+        return f_r, t_r, t_c
+
 class MappingNetwork(nn.Module):
     def __init__(self, latent_dim, w_dim, depth):
         super().__init__()
