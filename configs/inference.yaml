@@ -8,7 +8,7 @@ checkpoint_path: "./checkpoints/checkpoint.pth"
 
 input:
   # For video processing
-  video_path: "face.mp4"
+  video_path: "M2Ohb0FAaJU_1.mp4"
   frame_skip: 0
 
   # For single frame processing
