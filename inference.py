@@ -18,15 +18,12 @@ def load_image(image_path, transform):
 def save_output(tensor, filename):
     save_image(tensor, filename, normalize=True)
 
-def process_video(model, video_path, output_path, transform, device, frame_skip=0):
+def process_video(model, video_path, output_dir, transform, device, frame_skip=0):
     ctx = gpu(0) if torch.cuda.is_available() else cpu(0)
     vr = VideoReader(video_path, ctx=ctx)
     
-    fps = vr.get_avg_fps()
-    width, height = vr[0].shape[1], vr[0].shape[0]
-    
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    # Create output directory if it doesn't exist
+    # os.makedirs(output_dir, exist_ok=True)
 
     # Process reference frame
     reference_frame = vr[0].asnumpy()
@@ -50,13 +47,15 @@ def process_video(model, video_path, output_path, transform, device, frame_skip=
             t_c = model.latent_token_encoder(current_frame)
             reconstructed_frame = model.decode_latent_tokens(f_r, t_r, t_c)
 
-        reconstructed_frame = reconstructed_frame.squeeze().cpu().numpy().transpose(1, 2, 0)
-        reconstructed_frame = (reconstructed_frame * 255).astype(np.uint8)
-        reconstructed_frame = cv2.cvtColor(reconstructed_frame, cv2.COLOR_RGB2BGR)
+        # Convert the reconstructed frame to a PIL Image
+        reconstructed_frame = reconstructed_frame.squeeze().cpu()
+        reconstructed_frame = transforms.ToPILImage()(reconstructed_frame)
+        
+        # Save the reconstructed frame as an image
+        output_path = os.path.join(output_dir, f"frame_{i:04d}.png")
+        reconstructed_frame.save(output_path)
 
-        out.write(reconstructed_frame)
-
-    out.release()
+    print(f"Processed {total_frames} frames. Output saved in {output_dir}")
 
 def main():
     # Load configuration
@@ -83,7 +82,7 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    process_video(model, config.input.video_path, config.output.path, transform, device, config.input.frame_skip)
+    process_video(model, config.input.video_path, config.output.directory, transform, device, config.input.frame_skip)
 
 
 if __name__ == "__main__":

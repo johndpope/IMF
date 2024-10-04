@@ -17,3 +17,4 @@ input:
 
 output:
   path: "output.mp4"  # or "path/to/output.png" for single frame
+  directory: "image_reconstruction"
