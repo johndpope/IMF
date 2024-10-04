@@ -387,6 +387,26 @@ class IMFModel(nn.Module):
             return t_c_mixed, t_r_mixed
         return t_c, t_r
 
+    def decode_latent_tokens(self,f_r,t_r,t_c):
+        mix_t_c = t_c
+        mix_t_r = t_r
+
+        m_c = self.latent_token_decoder(mix_t_c)
+        m_r = self.latent_token_decoder(mix_t_r)
+
+        aligned_features = []
+        for i in range(len(self.implicit_motion_alignment)):
+            f_r_i = f_r[i]
+            align_layer = self.implicit_motion_alignment[i]
+            m_c_i = m_c[i] 
+            m_r_i = m_r[i]
+            aligned_feature = align_layer(m_c_i, m_r_i, f_r_i)
+            aligned_features.append(aligned_feature)
+
+        x_reconstructed = self.frame_decoder(aligned_features)
+        x_reconstructed = normalize(x_reconstructed)
+        return x_reconstructed
+
     def forward(self, x_current, x_reference):
         x_current = x_current.requires_grad_()
         x_reference = x_reference.requires_grad_()
