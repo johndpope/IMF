@@ -16,3 +16,6 @@ opencv-python
 pymatting
 decord
 mediapipe
+
+onnx 
+onnxconverter_common
