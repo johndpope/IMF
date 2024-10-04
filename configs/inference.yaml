@@ -1,0 +1,19 @@
+model:
+  latent_dim: 32
+  base_channels: 64
+  num_layers: 4
+  use_resnet_feature: false
+
+checkpoint_path: "./checkpoints/checkpoint.pth"
+
+input:
+  # For video processing
+  video_path: "face.mp4"
+  frame_skip: 0
+
+  # For single frame processing
+  current_frame_path: "path/to/current_frame.jpg"
+  reference_frame_path: "path/to/reference_frame.jpg"
+
+output:
+  path: "output.mp4"  # or "path/to/output.png" for single frame
