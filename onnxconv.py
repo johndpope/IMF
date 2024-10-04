@@ -5,6 +5,17 @@ import torch.nn as nn
 from PIL import Image
 from torchvision import transforms
 
+
+class IMFDecoder(nn.Module):
+    def __init__(self, model):
+        super(IMFDecoder, self).__init__()
+        self.model = model
+
+    def decode_latent_tokens(self,f_r,t_r,t_c):
+        return  self.model.decode_latent_tokens(f_r,t_r,t_c)
+
+
+
 # Define the IMFEncoder class
 class IMFEncoder(nn.Module):
     def __init__(self, model):
