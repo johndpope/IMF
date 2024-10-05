@@ -150,7 +150,7 @@ def export_to_onnx(model, x_current, x_reference, file_name):
             (x_current, x_reference),
             file_name,
             export_params=True,
-            opset_version=21,
+            opset_version=20,
             do_constant_folding=True,
             input_names=['x_current', 'x_reference'],
             output_names=['f_r', 't_r', 't_c'],
@@ -213,6 +213,8 @@ def export_to_onnx(model, x_current, x_reference, file_name):
 
         print(f"\nConverted and validated model saved to {web_compatible_file}")
         print("This model should now be compatible with WONNX")
+
+        print(f"nnx info {web_compatible_file} > output.txt 2>&1")
 
     except Exception as e:
         print(f"Error during ONNX export and validation: {str(e)}")
