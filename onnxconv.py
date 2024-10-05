@@ -150,7 +150,7 @@ def export_to_onnx(model, x_current, x_reference, file_name):
             (x_current, x_reference),
             file_name,
             export_params=True,
-            opset_version=11,
+            opset_version=14,
             do_constant_folding=True,
             input_names=['x_current', 'x_reference'],
             output_names=['f_r', 't_r', 't_c'],
@@ -208,7 +208,7 @@ def export_to_onnx(model, x_current, x_reference, file_name):
         
         # Run inference
         ort_outputs = ort_session.run(None, ort_inputs)
-        print("ONNX Runtime inference successful")
+        print("✅ ONNX Runtime inference successful ")
 
         print(f"\nConverted and validated model saved to {web_compatible_file}")
         print("This model should now be compatible with WONNX")
