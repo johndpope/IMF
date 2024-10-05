@@ -161,7 +161,7 @@ def export_to_onnx(model, x_current, x_reference, file_name):
                 't_r': {0: 'batch_size'},
                 't_c': {0: 'batch_size'}
             },
-            export_params=True,
+    
             verbose=True
         )
         print(f"Model exported successfully to {file_name}")
