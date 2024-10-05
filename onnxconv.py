@@ -150,7 +150,7 @@ def export_to_onnx(model, x_current, x_reference, file_name):
             (x_current, x_reference),
             file_name,
             export_params=True,
-            opset_version=14,
+            opset_version=19,
             do_constant_folding=True,
             input_names=['x_current', 'x_reference'],
             output_names=['f_r', 't_r', 't_c'],
@@ -161,6 +161,7 @@ def export_to_onnx(model, x_current, x_reference, file_name):
                 't_r': {0: 'batch_size'},
                 't_c': {0: 'batch_size'}
             },
+            export_params=True,
             verbose=True
         )
         print(f"Model exported successfully to {file_name}")
