@@ -10,6 +10,9 @@ import numpy as np
 from onnx import shape_inference
 import onnxruntime as ort
 
+import onnx
+from onnx import numpy_helper
+import numpy as np
 class IMFDecoder(nn.Module):
     def __init__(self, model):
         super(IMFDecoder, self).__init__()
@@ -68,9 +71,6 @@ def print_model_structure(model):
             print(f"  Bias shape: {module.bias.shape}")
 
 
-import onnx
-from onnx import numpy_helper
-import numpy as np
 
 def convert_float64_to_float32(tensor):
     return onnx.helper.make_tensor(
