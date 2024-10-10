@@ -332,17 +332,22 @@ class IMFTrainer:
 
     def load_checkpoint(self, checkpoint_path):
         try:
-            checkpoint = self.accelerator.load(checkpoint_path)
+            checkpoint = torch.load(checkpoint_path, map_location=self.accelerator.device)
             
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            self.discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+            # Unwrap the models before loading state dict
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_discriminator = self.accelerator.unwrap_model(self.discriminator)
+            
+            unwrapped_model.load_state_dict(checkpoint['model_state_dict'])
+            unwrapped_discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
             self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
             self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
             self.scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
             self.scheduler_d.load_state_dict(checkpoint['scheduler_d_state_dict'])
             
             if self.ema and 'ema_state_dict' in checkpoint:
-                self.ema.load_state_dict(checkpoint['ema_state_dict'])
+                unwrapped_ema = self.accelerator.unwrap_model(self.ema)
+                unwrapped_ema.load_state_dict(checkpoint['ema_state_dict'])
             
             start_epoch = checkpoint['epoch'] + 1
             print(f"Loaded checkpoint from epoch {start_epoch - 1}")
@@ -397,6 +402,9 @@ def main():
         pin_memory=True,
         collate_fn=gpu_padded_collate 
     )
+
+    print("using float32 for onnx training....")
+    torch.set_default_dtype(torch.float32)
 
 
     trainer = IMFTrainer(config, model, discriminator, dataloader, accelerator)
