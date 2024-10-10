@@ -3,22 +3,26 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import math
+import numpy as np
+
+
+# class FusedLeakyReLU(nn.Module):
+#     def __init__(self, channel):
+#         super().__init__()
+
+#         self.bias = nn.Parameter(torch.zeros(channel))
+#         self.scale = 1.414
+
+#     def forward(self, input):
+#         shape = (1, self.bias.shape[0], 1, 1)
+#         output = F.leaky_relu(input + self.bias.view(shape), negative_slope=0.2)
+#         return output * self.scale
 
 
 
-class FusedLeakyReLU(nn.Module):
-    def __init__(self, channel, negative_slope=0.2, scale=2 ** 0.5):
-        super().__init__()
-        self.bias = nn.Parameter(torch.zeros(1, channel, 1, 1))
-        self.negative_slope = negative_slope
-        self.scale = scale
-
-    def forward(self, input):
-        return F.leaky_relu(input + self.bias, negative_slope=self.negative_slope) * self.scale
-
-# Replace the original fused_leaky_relu function with this one
-def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
-    return F.leaky_relu(input + bias.view(1, -1, 1, 1), negative_slope=negative_slope) * scale
+# # Replace the original fused_leaky_relu function with this one
+# def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
+#     return F.leaky_relu(input + bias.view(1, -1, 1, 1), negative_slope=negative_slope) * scale
 
 def upfirdn2d_native(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, pad_y0, pad_y1):
     _, minor, in_h, in_w = input.shape
@@ -132,7 +136,9 @@ class EqualLinear(nn.Module):
 
         if self.activation:
             out = F.linear(input, self.weight * self.scale)
-            out = fused_leaky_relu(out, self.bias * self.lr_mul)
+            # out = fused_leaky_relu(out, self.bias * self.lr_mul)
+            out = nn.LeakyReLU(negative_slope=0.2)(out)
+
         else:
             out = F.linear(input, self.weight * self.scale, bias=self.bias * self.lr_mul)
 
@@ -153,7 +159,8 @@ class DownsampleConvLayer(nn.Module):
         self.blur = Blur()
         
         if activate:
-            self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
+            self.activation = nn.LeakyReLU(negative_slope=0.2) if bias else ScaledLeakyReLU(0.2)
+            # self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
         else:
             self.activation = nn.Identity()
 
@@ -172,7 +179,7 @@ class UpsampleConvLayer(nn.Module):
         self.conv = EqualConv2d(in_channel, out_channel, kernel_size, stride=1, padding=kernel_size//2, bias=bias and not activate)
         
         if activate:
-            self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
+            self.activation = nn.LeakyReLU(negative_slope=0.2) if bias else ScaledLeakyReLU(0.2)
         else:
             self.activation = nn.Identity()
 
@@ -192,7 +199,7 @@ class ConvLayer(nn.Module):
         else:
             self.layer = EqualConv2d(in_channel, out_channel, kernel_size, padding=kernel_size//2, bias=bias and not activate)
             if activate:
-                self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
+                self.activation = nn.LeakyReLU(negative_slope=0.2)  if bias else ScaledLeakyReLU(0.2)
             else:
                 self.activation = nn.Identity()
 
@@ -404,7 +411,8 @@ class StyledConv(nn.Module):
         )
 
         self.noise = NoiseInjection()
-        self.activate = FusedLeakyReLU(out_channel)
+        self.activate = nn.LeakyReLU(negative_slope=0.2)
+
 
     def forward(self, input, style, noise=None):
         out = self.conv(input, style)
