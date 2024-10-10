@@ -139,44 +139,69 @@ class EqualLinear(nn.Module):
         return (f'{self.__class__.__name__}({self.weight.shape[1]}, {self.weight.shape[0]})')
 
 
-class ConvLayer(nn.Sequential):
-    def __init__(
-            self,
-            in_channel,
-            out_channel,
-            kernel_size,
-            downsample=False,
-            blur_kernel=[1, 3, 3, 1],
-            bias=True,
-            activate=True,
-    ):
-        layers = []
-
-        if downsample:
-            factor = 2
-            p = (len(blur_kernel) - factor) + (kernel_size - 1)
-            pad0 = (p + 1) // 2
-            pad1 = p // 2
-
-            layers.append(Blur(blur_kernel, pad=(pad0, pad1)))
-
-            stride = 2
-            self.padding = 0
-
-        else:
-            stride = 1
-            self.padding = kernel_size // 2
-
-        layers.append(EqualConv2d(in_channel, out_channel, kernel_size, padding=self.padding, stride=stride,
-                                  bias=bias and not activate))
-
+class DownsampleConvLayer(nn.Module):
+    def __init__(self, in_channel, out_channel, kernel_size, bias=True, activate=True):
+        super().__init__()
+        
+        # Fixed blur kernel and pad size
+        self.blur = Blur([1, 3, 3, 1], pad=(1, 1))
+        
+        # Use padding to ensure output size is exactly half of input size
+        padding = kernel_size // 2
+        self.conv = EqualConv2d(in_channel, out_channel, kernel_size, stride=2, padding=padding, bias=bias and not activate)
+        
         if activate:
-            if bias:
-                layers.append(FusedLeakyReLU(out_channel))
-            else:
-                layers.append(ScaledLeakyReLU(0.2))
+            self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
+        else:
+            self.activation = nn.Identity()
 
-        super().__init__(*layers)
+    def forward(self, input):
+        out = self.blur(input)
+        out = self.conv(out)
+        out = self.activation(out)
+        return out
+
+
+class UpsampleConvLayer(nn.Module):
+    def __init__(self, in_channel, out_channel, kernel_size, bias=True, activate=True):
+        super().__init__()
+        
+        self.upsample = Upsample([1, 3, 3, 1], 2)
+        
+        self.conv = EqualConv2d(in_channel, out_channel, kernel_size, stride=1, padding=kernel_size//2, bias=bias and not activate)
+        
+        if activate:
+            self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
+        else:
+            self.activation = nn.Identity()
+
+    def forward(self, input):
+        out = self.upsample(input)
+        out = self.conv(out)
+        out = self.activation(out)
+        return out
+
+
+class ConvLayer(nn.Module):
+    def __init__(self, in_channel, out_channel, kernel_size, downsample=False, bias=True, activate=True):
+        super().__init__()
+        
+        if downsample:
+            self.layer = DownsampleConvLayer(in_channel, out_channel, kernel_size, bias, activate)
+        else:
+            self.layer = EqualConv2d(in_channel, out_channel, kernel_size, padding=kernel_size//2, bias=bias and not activate)
+            if activate:
+                self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
+            else:
+                self.activation = nn.Identity()
+
+    def forward(self, input):
+        if isinstance(self.layer, DownsampleConvLayer):
+            return self.layer(input)
+        else:
+            out = self.layer(input)
+            out = self.activation(out)
+            return out
 
 
 class ResBlock(nn.Module):
@@ -193,10 +218,14 @@ class ResBlock(nn.Module):
         out = self.conv2(out)
 
         skip = self.skip(input)
+
+        # Ensure out and skip have the same size
+        if out.size(2) != skip.size(2) or out.size(3) != skip.size(3):
+            out = F.interpolate(out, size=(skip.size(2), skip.size(3)), mode='bilinear', align_corners=False)
+
         out = (out + skip) / math.sqrt(2)
 
         return out
-
 
 
 

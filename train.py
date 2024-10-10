@@ -339,8 +339,8 @@ class IMFTrainer:
             unwrapped_discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
             self.optimizer_g.load_state_dict(checkpoint['optimizer_g_state_dict'])
             self.optimizer_d.load_state_dict(checkpoint['optimizer_d_state_dict'])
-            self.scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
-            self.scheduler_d.load_state_dict(checkpoint['scheduler_d_state_dict'])
+            # self.scheduler_g.load_state_dict(checkpoint['scheduler_g_state_dict'])
+            # self.scheduler_d.load_state_dict(checkpoint['scheduler_d_state_dict'])
             
             if self.ema and 'ema_state_dict' in checkpoint:
                 unwrapped_ema = self.accelerator.unwrap_model(self.ema)
@@ -412,7 +412,7 @@ def main():
         start_epoch = trainer.load_checkpoint(checkpoint_path)
     else:
         start_epoch = 0
-    trainer.train()
+    trainer.train(start_epoch)
 
 if __name__ == "__main__":
     main()
