@@ -403,7 +403,7 @@ def main():
         collate_fn=gpu_padded_collate 
     )
 
-    print("using float32 for onnx training....")
+    print("🍄 using float32 for onnx training....")
     torch.set_default_dtype(torch.float32)
 
 
