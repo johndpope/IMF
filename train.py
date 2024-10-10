@@ -69,7 +69,7 @@ def get_layer_wise_learning_rates(model):
 
 
 class IMFTrainer:
-    def __init__(self, config, model, discriminator, train_dataloader, accelerator):
+    def __init__(self, config, model, discriminator, train_dataloader, accelerator,num_frames):
         self.config = config
         self.model = model
         self.discriminator = discriminator
@@ -92,7 +92,7 @@ class IMFTrainer:
         self.optimizer_d = AdamW(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
         # Learning rate schedulers
-        total_steps = config.training.num_epochs * len(train_dataloader)
+        total_steps = config.training.num_epochs * len(train_dataloader) * num_frames
         self.scheduler_g = OneCycleLR(self.optimizer_g, max_lr=2e-4, total_steps=total_steps)
         self.scheduler_d = OneCycleLR(self.optimizer_d, max_lr=2e-4, total_steps=total_steps)
 
@@ -125,9 +125,6 @@ class IMFTrainer:
         # Generate reconstructed frame
         x_reconstructed = self.model(x_current, x_reference)
 
-        if self.config.training.use_subsampling:
-            sub_sample_size = (128, 128)  # As mentioned in the paper https://github.com/johndpope/MegaPortrait-hack/issues/41
-            x_current, x_reconstructed = consistent_sub_sample(x_current, x_reconstructed, sub_sample_size)
 
         # Discriminator updates
         d_loss_total = 0
@@ -389,10 +386,11 @@ def main():
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
+    num_frames = 300
     dataset = VideoDataset(config.dataset.root_dir, 
                                 transform=transform, 
                                 frame_skip=0, 
-                                num_frames=300)
+                                num_frames=num_frames)
 
     dataloader = DataLoader(
         dataset,
@@ -407,7 +405,7 @@ def main():
     torch.set_default_dtype(torch.float32)
 
 
-    trainer = IMFTrainer(config, model, discriminator, dataloader, accelerator)
+    trainer = IMFTrainer(config, model, discriminator, dataloader, accelerator,num_frames)
     # Check if a checkpoint path is provided in the config
     if config.training.load_checkpoint:
         checkpoint_path = config.training.checkpoint_path

@@ -21,6 +21,12 @@ def extract_frames(video_path, output_folder, frame_skip=0, max_frames=None, sav
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
     
+    if save_quadrants:
+        for i in range(4):
+            quadrant_folder = os.path.join(output_folder + f"_{i}")
+            if not os.path.exists(quadrant_folder):
+                os.makedirs(quadrant_folder)
+    
     success, image = video.read()
     count = 0
     saved_count = 0
@@ -34,8 +40,8 @@ def extract_frames(video_path, output_folder, frame_skip=0, max_frames=None, sav
                 if save_quadrants:
                     quadrants = extract_quadrants(image)
                     for i, quadrant in enumerate(quadrants):
-                        quadrant_name = f"frame_{saved_count:06d}_quadrant_{i}.png"
-                        cv2.imwrite(os.path.join(output_folder, quadrant_name), quadrant)
+                        quadrant_folder = os.path.join(output_folder + f"_{i}")
+                        cv2.imwrite(os.path.join(quadrant_folder, frame_name), quadrant)
                 
                 saved_count += 1
                 if max_frames and saved_count >= max_frames:
