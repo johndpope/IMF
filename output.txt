@@ -1,0 +1,147 @@
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/conv2/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/conv2/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/skip/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/skip/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.1/conv2/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.1/conv2/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.1/skip/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.1/skip/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/conv2/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/conv2/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/skip/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/skip/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/conv2/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/conv2/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/skip/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/skip/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/conv2/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/conv2/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/skip/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/skip/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/conv2/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/conv2/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/skip/layer/blur/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/skip/layer/blur/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/conv2/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/conv2/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/skip/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.0/skip/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.1/conv2/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.1/skip/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.1/skip/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/conv2/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/conv2/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/skip/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.2/skip/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/conv2/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/conv2/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/skip/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.3/skip/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/conv2/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/conv2/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/skip/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.4/skip/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/conv2/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/conv2/layer/blur_1/Pad_1' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/skip/layer/blur_1/Pad' input '' has unknown shape
+[2024-10-10T08:18:36Z ERROR nnx::info] Node '/latent_token_encoder/res_blocks.5/skip/layer/blur_1/Pad_1' input '' has unknown shape
++------------------+-------------------------------------------------------------------+
+| Model version    | 0                                                                 |
++------------------+-------------------------------------------------------------------+
+| IR version       | 8                                                                 |
++------------------+-------------------------------------------------------------------+
+| Producer name    | pytorch                                                           |
++------------------+-------------------------------------------------------------------+
+| Producer version | 2.4.0                                                             |
++------------------+-------------------------------------------------------------------+
+| Opsets           | 15                                                                |
++------------------+-------------------------------------------------------------------+
+| Inputs           | +-------------+-------------+----------------------------+------+ |
+|                  | | Name        | Description | Shape                      | Type | |
+|                  | +-------------+-------------+----------------------------+------+ |
+|                  | | x_current   |             | batch_size x 3 x 256 x 256 | f32  | |
+|                  | +-------------+-------------+----------------------------+------+ |
+|                  | | x_reference |             | batch_size x 3 x 256 x 256 | f32  | |
+|                  | +-------------+-------------+----------------------------+------+ |
++------------------+-------------------------------------------------------------------+
+| Outputs          | +------+-------------+----------------------------+------+        |
+|                  | | Name | Description | Shape                      | Type |        |
+|                  | +------+-------------+----------------------------+------+        |
+|                  | | f_r  |             | batch_size x 128 x 64 x 64 | f32  |        |
+|                  | +------+-------------+----------------------------+------+        |
+|                  | | t_r  |             | batch_size x 256 x 32 x 32 | f32  |        |
+|                  | +------+-------------+----------------------------+------+        |
+|                  | | t_c  |             | batch_size x 512 x 16 x 16 | f32  |        |
+|                  | +------+-------------+----------------------------+------+        |
+|                  | | x    |             | batch_size x 512 x 8 x 8   | f32  |        |
+|                  | +------+-------------+----------------------------+------+        |
+|                  | | 3031 |             | Gemm3031_dim_0 x 32        | f32  |        |
+|                  | +------+-------------+----------------------------+------+        |
+|                  | | 4798 |             | Gemm4798_dim_0 x 32        | f32  |        |
+|                  | +------+-------------+----------------------------+------+        |
++------------------+-------------------------------------------------------------------+
+| Ops used         | +-----------------+---------------------+                         |
+|                  | | Op              | Attributes          |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Add             |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Cast            | to=7                |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Concat          | axis=0              |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Constant        | value=<TENSOR>      |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | ConstantOfShape | value=<TENSOR>      |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Conv            | dilations=<INTS>    |                         |
+|                  | |                 | group=1             |                         |
+|                  | |                 | kernel_shape=<INTS> |                         |
+|                  | |                 | pads=<INTS>         |                         |
+|                  | |                 | strides=<INTS>      |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Div             |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Gather          | axis=0              |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Gemm            | alpha=1             |                         |
+|                  | |                 | beta=1              |                         |
+|                  | |                 | transB=1            |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Identity        |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | LeakyRelu       | alpha=0.2           |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Mul             |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Pad             | mode=constant       |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | ReduceMean      | axes=<INTS>         |                         |
+|                  | |                 | keepdims=0          |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Relu            |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Reshape         | allowzero=0         |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Shape           |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Slice           |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Sub             |                     |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Transpose       | perm=<INTS>         |                         |
+|                  | +-----------------+---------------------+                         |
+|                  | | Unsqueeze       |                     |                         |
+|                  | +-----------------+---------------------+                         |
++------------------+-------------------------------------------------------------------+
+| Memory usage     | +--------------+-----------+                                      |
+|                  | | Inputs       |       0 B |                                      |
+|                  | +--------------+-----------+                                      |
+|                  | | Outputs      |       0 B |                                      |
+|                  | +--------------+-----------+                                      |
+|                  | | Intermediate |  67.3 KiB |                                      |
+|                  | +--------------+-----------+                                      |
+|                  | | Weights      | 204.4 MiB |                                      |
+|                  | +--------------+-----------+                                      |
+|                  | | Total        | 204.5 MiB |                                      |
+|                  | +--------------+-----------+                                      |
++------------------+-------------------------------------------------------------------+

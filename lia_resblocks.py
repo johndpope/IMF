@@ -4,8 +4,6 @@ from torch import nn
 from torch.nn import functional as F
 import math
 
-def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
-    return F.leaky_relu(input + bias, negative_slope) * scale
 
 
 class FusedLeakyReLU(nn.Module):
@@ -16,9 +14,11 @@ class FusedLeakyReLU(nn.Module):
         self.scale = scale
 
     def forward(self, input):
-        out = fused_leaky_relu(input, self.bias, self.negative_slope, self.scale)
-        return out
+        return F.leaky_relu(input + self.bias, negative_slope=self.negative_slope) * self.scale
 
+# Replace the original fused_leaky_relu function with this one
+def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
+    return F.leaky_relu(input + bias.view(1, -1, 1, 1), negative_slope=negative_slope) * scale
 
 def upfirdn2d_native(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, pad_y0, pad_y1):
     _, minor, in_h, in_w = input.shape
@@ -42,7 +42,10 @@ def upfirdn2d_native(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, 
 
 
 def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
+    # Ensure that 'pad' is a tuple of integers
+    pad = tuple(map(int, pad))
     return upfirdn2d_native(input, kernel, up, up, down, down, pad[0], pad[1], pad[0], pad[1])
+
 
 
 def make_kernel(k):
@@ -56,21 +59,21 @@ def make_kernel(k):
     return k
 
 
+
+
 class Blur(nn.Module):
-    def __init__(self, kernel, pad, upsample_factor=1):
+    def __init__(self, kernel=[1, 3, 3, 1], pad=(1, 1)):
         super().__init__()
-
-        kernel = make_kernel(kernel)
-
-        if upsample_factor > 1:
-            kernel = kernel * (upsample_factor ** 2)
-
-        self.register_buffer('kernel', kernel)
-
+        kernel = torch.tensor(kernel, dtype=torch.float32)
+        kernel = kernel[:, None] * kernel[None, :]
+        kernel = kernel / kernel.sum()
+        self.register_buffer('kernel', kernel[None, None, :, :])
         self.pad = pad
 
     def forward(self, input):
-        return upfirdn2d(input, self.kernel, pad=self.pad)
+        b, c, h, w = input.shape
+        kernel = self.kernel.expand(c, 1, 4, 4)
+        return F.conv2d(input, kernel, padding=self.pad, groups=c)
 
 
 class ScaledLeakyReLU(nn.Module):
@@ -139,16 +142,15 @@ class EqualLinear(nn.Module):
         return (f'{self.__class__.__name__}({self.weight.shape[1]}, {self.weight.shape[0]})')
 
 
+
 class DownsampleConvLayer(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size, bias=True, activate=True):
         super().__init__()
         
-        # Fixed blur kernel and pad size
-        self.blur = Blur([1, 3, 3, 1], pad=(1, 1))
-        
-        # Use padding to ensure output size is exactly half of input size
         padding = kernel_size // 2
         self.conv = EqualConv2d(in_channel, out_channel, kernel_size, stride=2, padding=padding, bias=bias and not activate)
+        
+        self.blur = Blur()
         
         if activate:
             self.activation = FusedLeakyReLU(out_channel) if bias else ScaledLeakyReLU(0.2)
@@ -160,7 +162,6 @@ class DownsampleConvLayer(nn.Module):
         out = self.conv(out)
         out = self.activation(out)
         return out
-
 
 class UpsampleConvLayer(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size, bias=True, activate=True):
@@ -209,9 +210,9 @@ class ResBlock(nn.Module):
         super().__init__()
 
         self.conv1 = ConvLayer(in_channel, in_channel, 3)
-        self.conv2 = ConvLayer(in_channel, out_channel, 3, downsample=True)
+        self.conv2 = DownsampleConvLayer(in_channel, out_channel, 3)
 
-        self.skip = ConvLayer(in_channel, out_channel, 1, downsample=True, activate=False, bias=False)
+        self.skip = DownsampleConvLayer(in_channel, out_channel, 1, activate=False, bias=False)
 
     def forward(self, input):
         out = self.conv1(input)
@@ -219,14 +220,9 @@ class ResBlock(nn.Module):
 
         skip = self.skip(input)
 
-        # Ensure out and skip have the same size
-        if out.size(2) != skip.size(2) or out.size(3) != skip.size(3):
-            out = F.interpolate(out, size=(skip.size(2), skip.size(3)), mode='bilinear', align_corners=False)
-
         out = (out + skip) / math.sqrt(2)
 
         return out
-
 
 
 
@@ -246,15 +242,6 @@ class MotionPixelNorm(nn.Module):
         return input * torch.rsqrt(torch.mean(input ** 2, dim=2, keepdim=True) + 1e-8)
 
 
-def make_kernel(k):
-    k = torch.tensor(k, dtype=torch.float32)
-
-    if k.ndim == 1:
-        k = k[None, :] * k[:, None]
-
-    k /= k.sum()
-
-    return k
 
 
 class Upsample(nn.Module):
@@ -295,92 +282,10 @@ class Downsample(nn.Module):
         return upfirdn2d(input, self.kernel, up=1, down=self.factor, pad=self.pad)
 
 
-class Blur(nn.Module):
-    def __init__(self, kernel, pad, upsample_factor=1):
-        super().__init__()
-
-        kernel = make_kernel(kernel)
-
-        if upsample_factor > 1:
-            kernel = kernel * (upsample_factor ** 2)
-
-        self.register_buffer('kernel', kernel)
-
-        self.pad = pad
-
-    def forward(self, input):
-        return upfirdn2d(input, self.kernel, pad=self.pad)
-
-
-class EqualConv2d(nn.Module):
-    def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding=0, bias=True):
-        super().__init__()
-
-        self.weight = nn.Parameter(torch.randn(out_channel, in_channel, kernel_size, kernel_size))
-        self.scale = 1 / math.sqrt(in_channel * kernel_size ** 2)
-
-        self.stride = stride
-        self.padding = padding
-
-        if bias:
-            self.bias = nn.Parameter(torch.zeros(out_channel))
-        else:
-            self.bias = None
-
-    def forward(self, input):
-
-        return F.conv2d(input, self.weight * self.scale, bias=self.bias, stride=self.stride, padding=self.padding, )
-
-    def __repr__(self):
-        return (
-            f'{self.__class__.__name__}({self.weight.shape[1]}, {self.weight.shape[0]},'
-            f' {self.weight.shape[2]}, stride={self.stride}, padding={self.padding})'
-        )
-
-
-class EqualLinear(nn.Module):
-    def __init__(self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1, activation=None):
-        super().__init__()
-
-        self.weight = nn.Parameter(torch.randn(out_dim, in_dim).div_(lr_mul))
-
-        if bias:
-            self.bias = nn.Parameter(torch.zeros(out_dim).fill_(bias_init))
-        else:
-            self.bias = None
-
-        self.activation = activation
-
-        self.scale = (1 / math.sqrt(in_dim)) * lr_mul
-        self.lr_mul = lr_mul
-
-    def forward(self, input):
-
-        if self.activation:
-            out = F.linear(input, self.weight * self.scale)
-            out = fused_leaky_relu(out, self.bias * self.lr_mul)
-        else:
-            out = F.linear(input, self.weight * self.scale, bias=self.bias * self.lr_mul)
-
-        return out
-
-    def __repr__(self):
-        return (f'{self.__class__.__name__}({self.weight.shape[1]}, {self.weight.shape[0]})')
-
-
-class ScaledLeakyReLU(nn.Module):
-    def __init__(self, negative_slope=0.2):
-        super().__init__()
-
-        self.negative_slope = negative_slope
-
-    def forward(self, input):
-        return F.leaky_relu(input, negative_slope=self.negative_slope)
-
 
 class ModulatedConv2d(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size, style_dim, demodulate=True, upsample=False,
-                 downsample=False, blur_kernel=[1, 3, 3, 1], ):
+                 downsample=False, blur_kernel=[1, 3, 3, 1]):
         super().__init__()
 
         self.eps = 1e-8
@@ -395,16 +300,15 @@ class ModulatedConv2d(nn.Module):
             p = (len(blur_kernel) - factor) - (kernel_size - 1)
             pad0 = (p + 1) // 2 + factor - 1
             pad1 = p // 2 + 1
-
-            self.blur = Blur(blur_kernel, pad=(pad0, pad1), upsample_factor=factor)
-
-        if downsample:
+            self.blur = Blur(blur_kernel, pad=(pad0, pad1))
+        elif downsample:
             factor = 2
             p = (len(blur_kernel) - factor) + (kernel_size - 1)
             pad0 = (p + 1) // 2
             pad1 = p // 2
-
             self.blur = Blur(blur_kernel, pad=(pad0, pad1))
+        else:
+            self.blur = None
 
         fan_in = in_channel * kernel_size ** 2
         self.scale = 1 / math.sqrt(fan_in)
@@ -436,8 +340,7 @@ class ModulatedConv2d(nn.Module):
         if self.upsample:
             input = input.view(1, batch * in_channel, height, width)
             weight = weight.view(batch, self.out_channel, in_channel, self.kernel_size, self.kernel_size)
-            weight = weight.transpose(1, 2).reshape(batch * in_channel, self.out_channel, self.kernel_size,
-                                                    self.kernel_size)
+            weight = weight.transpose(1, 2).reshape(batch * in_channel, self.out_channel, self.kernel_size, self.kernel_size)
             out = F.conv_transpose2d(input, weight, padding=0, stride=2, groups=batch)
             _, _, height, width = out.shape
             out = out.view(batch, self.out_channel, height, width)
