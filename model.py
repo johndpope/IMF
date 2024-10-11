@@ -414,8 +414,7 @@ class IMFModel(nn.Module):
         return x_reconstructed
 
     def forward(self, x_current, x_reference):
-        x_current = x_current.requires_grad_()
-        x_reference = x_reference.requires_grad_()
+
   # Forward Pass
         f_r = self.dense_feature_encoder(x_reference)
         t_r = self.latent_token_encoder(x_reference)

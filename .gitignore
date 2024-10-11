@@ -14,3 +14,5 @@ imf_encoder.onnx
 imf_encoder_web.onnx
 tfjs_imf_encoder/group1-shard1of1.bin
 tfjs_imf_encoder/weights.bin
+tfjs_imf_encoder/model.onnx
+tfjs_imf_encoder/modelsimple.onnx
