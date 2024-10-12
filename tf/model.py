@@ -124,8 +124,12 @@ class LatentTokenEncoder(tf.keras.Model):
             self.res_blocks.append(ResBlock(in_channels, out_channels))
             in_channels = out_channels
 
-        self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding=1)
-
+        self.equalconv = EqualConv2d(
+            filters=output_channels[-1],
+            kernel_size=3,
+            strides=1,
+            padding=1
+        )
         self.linear_layers = [EqualLinear(output_channels[-1], output_channels[-1]) for _ in range(4)]
         
         self.final_linear = EqualLinear(output_channels[-1], dm)
@@ -254,7 +258,7 @@ class FrameDecoder(tf.keras.Model):
         ])
 
     def call(self, features):
-        debug_print(f"FrameDecoder input shapes")
+        debug_print(f"🎒  FrameDecoder input shapes")
         for f in features:
             debug_print(f"f:{f.shape}")
         x = features[-1]

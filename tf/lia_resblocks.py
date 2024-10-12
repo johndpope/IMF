@@ -67,28 +67,69 @@ class FusedLeakyReLU(tf.keras.layers.Layer):
 
 
 @tf.function
-def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
-    batch, channels, in_h, in_w = tf.unstack(tf.shape(input))
-    
-    # Upsample
-    if up > 1:
-        input = tf.reshape(input, [batch, channels, in_h, 1, in_w, 1])
-        input = tf.pad(input, [[0,0], [0,0], [0,0], [0, up-1], [0,0], [0, up-1]])
-        input = tf.reshape(input, [batch, channels, in_h * up, in_w * up])
+def upfirdn2d_native(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, pad_y0, pad_y1):
+    print(f"⛽ upfirdn2d_native - input shape: {input.shape}, kernel shape: {kernel.shape}")
 
-    # Pad
-    pad_y0, pad_y1 = pad
-    pad_x0, pad_x1 = pad
-    input = tf.pad(input, [[0,0], [0,0], [pad_y0, pad_y1], [pad_x0, pad_x1]])
+    # Get input and kernel shapes
+    input_shape = tf.shape(input)
+    batch_size = input_shape[0]
+    minor = input_shape[1]  # Number of channels
+    in_h = input_shape[2]
+    in_w = input_shape[3]
+    kernel_h = tf.shape(kernel)[0]
+    kernel_w = tf.shape(kernel)[1]
 
-    # Convolve with kernel
-    input = tf.reshape(input, [batch * channels, 1, in_h * up + pad_y0 + pad_y1, in_w * up + pad_x0 + pad_x1])
-    kernel = tf.reshape(kernel, [1, 1, kernel.shape[0], kernel.shape[1]])
-    out = tf.nn.conv2d(input, kernel, strides=[1, 1, down, down], padding='VALID', data_format='NCHW')
-    out = tf.reshape(out, [batch, channels, out.shape[2], out.shape[3]])
+    # Convert input to 'NHWC' format for TensorFlow
+    input = tf.transpose(input, [0, 2, 3, 1])  # Shape: [batch_size, in_h, in_w, channels]
 
+    # Upsample: Insert zeros between pixels
+    input = tf.reshape(input, [batch_size, in_h, 1, in_w, 1, minor])
+    padding = [[0, 0], [0, 0], [0, up_y - 1], [0, 0], [0, up_x - 1], [0, 0]]
+    input = tf.pad(input, padding)
+    out = tf.reshape(input, [batch_size, in_h * up_y, in_w * up_x, minor])
+
+    # Pad the output
+    pad_y0_pos = max(pad_y0, 0)
+    pad_y1_pos = max(pad_y1, 0)
+    pad_x0_pos = max(pad_x0, 0)
+    pad_x1_pos = max(pad_x1, 0)
+    padding = [[0, 0], [pad_y0_pos, pad_y1_pos], [pad_x0_pos, pad_x1_pos], [0, 0]]
+    out = tf.pad(out, padding)
+
+    # Crop if padding values are negative
+    start_y = tf.maximum(-pad_y0, 0)
+    end_y = tf.shape(out)[1] - tf.maximum(-pad_y1, 0)
+    start_x = tf.maximum(-pad_x0, 0)
+    end_x = tf.shape(out)[2] - tf.maximum(-pad_x1, 0)
+    out = out[:, start_y:end_y, start_x:end_x, :]
+
+    # Reshape for convolution
+    out = tf.reshape(out, [-1, in_h * up_y + pad_y0 + pad_y1, in_w * up_x + pad_x0 + pad_x1, 1])
+
+    # Prepare the kernel
+    kernel = tf.reverse(kernel, axis=[0, 1])
+    kernel = tf.reshape(kernel, [kernel_h, kernel_w, 1, 1])
+
+    # Perform convolution
+    out = tf.nn.conv2d(out, kernel, strides=[1, 1, 1, 1], padding='VALID', data_format='NHWC')
+
+    # Reshape back to original dimensions
+    out = tf.reshape(out, [batch_size, minor, tf.shape(out)[1], tf.shape(out)[2]])
+    out = tf.transpose(out, [0, 2, 3, 1])  # Convert back to 'NCHW' format
+
+    # Downsample
+    out = out[:, ::down_y, ::down_x, :]
+    out = tf.transpose(out, [0, 3, 1, 2])  # Final output in 'NCHW' format
+
+    print(f"upfirdn2d_native - output shape: {out.shape}")
     return out
 
+
+def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
+    print(f"upfirdn2d - input shape: {input.shape}, kernel shape: {kernel.shape}")
+    out = upfirdn2d_native(input, kernel, up, up, down, down, pad[0], pad[1], pad[0], pad[1])
+    print(f"upfirdn2d - output shape: {out.shape}")
+    return out
 
 def make_kernel(k):
     k = np.array(k, dtype=np.float32)

@@ -23,7 +23,7 @@ class FusedLeakyReLU(nn.Module):
         return out
 
 def upfirdn2d_native(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, pad_y0, pad_y1):
-    print(f"upfirdn2d_native - input shape: {input.shape}, kernel shape: {kernel.shape}")
+    print(f"⛽ upfirdn2d_native - input shape: {input.shape}, kernel shape: {kernel.shape}")
     _, minor, in_h, in_w = input.shape
     kernel_h, kernel_w = kernel.shape
 
