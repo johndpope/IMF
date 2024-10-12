@@ -14,7 +14,7 @@ from tensorflow.keras import models
 import tensorflow.keras.backend as K
 import math
 
-DEBUG = False
+DEBUG = True
 def debugPrint(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -111,7 +111,6 @@ The shortcut connection now uses a 3x3 convolution with stride 2 when downsampli
 relu activations are applied both after adding the residual and at the end of the block.
 The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
 '''
-
 class LatentTokenEncoder(tf.keras.Model):
     def __init__(self, initial_channels=64, output_channels=[128, 256, 512, 512], dm=32):
         super(LatentTokenEncoder, self).__init__()
@@ -126,7 +125,7 @@ class LatentTokenEncoder(tf.keras.Model):
             self.res_blocks.append(ResBlock(in_channels, out_channels))
             in_channels = out_channels
 
-        self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1],kernel_size=3, stride=1, padding='same')
+        self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding='same')
 
         # 4× EqualLinear layers
         self.linear_layers = [EqualLinear(output_channels[-1], output_channels[-1]) for _ in range(4)]
@@ -134,14 +133,14 @@ class LatentTokenEncoder(tf.keras.Model):
         self.final_linear = EqualLinear(output_channels[-1], dm)
 
     def call(self, x):
-        debugPrint(f"LatentTokenEncoder input shape: {x.shape}")
+        debugPrint(f"🥊 LatentTokenEncoder input shape: {x.shape}")
 
         x = self.activation(self.conv1(x))
         debugPrint(f"After initial conv and activation: {x.shape}")
         
         for i, res_block in enumerate(self.res_blocks):
             x = res_block(x)
-            debugPrint(f"After resBlock {i+1}: {x.shape}")
+            debugPrint(f"After res_block {i+1}: {x.shape}")
         
         x = self.equalconv(x)
         debugPrint(f"After equalconv: {x.shape}")
@@ -152,7 +151,7 @@ class LatentTokenEncoder(tf.keras.Model):
         
         for i, linear_layer in enumerate(self.linear_layers):
             x = self.activation(linear_layer(x))
-            debugPrint(f"After dense layer {i+1}: {x.shape}")
+            debugPrint(f"After linear layer {i+1}: {x.shape}")
         
         x = self.final_linear(x)
         debugPrint(f"Final output: {x.shape}")

@@ -12,13 +12,16 @@ class VideoDataset(tf.keras.utils.Sequence):
         self.frame_skip = frame_skip
         self.num_frames = num_frames
         self.video_folders = [f.path for f in os.scandir(root_dir) if f.is_dir()]
+        print(f"Found {len(self.video_folders)} video folders in {root_dir}")
         self.video_frames = self.count_frames()
+        print(f"Total frames across all videos: {sum(self.video_frames)}")
 
     def count_frames(self):
         video_frames = []
         for folder in self.video_folders:
             frames = [f for f in os.listdir(folder) if f.endswith('.png')]
             video_frames.append(len(frames))
+            print(f"Folder {folder}: {len(frames)} frames")
         return video_frames
 
     def __len__(self):
@@ -40,6 +43,8 @@ class VideoDataset(tf.keras.utils.Sequence):
     def __getitem__(self, idx):
         video_folder = self.video_folders[idx]
         frames = sorted([f for f in os.listdir(video_folder) if f.endswith('.png')])
+        print(f"Processing video folder: {video_folder}")
+        print(f"Number of frames found: {len(frames)}")
 
         if not frames:
             print(f"No frames found in folder: {video_folder}")
@@ -67,9 +72,13 @@ class VideoDataset(tf.keras.utils.Sequence):
             return self.__getitem__((idx + 1) % len(self))  # Move to next item
 
         frames_tensor = np.stack(loaded_frames)  # Shape: (num_frames, height, width, channels)
+        # Transpose the tensor to match the expected shape (frames, channels, height, width)
+        frames_tensor = np.transpose(frames_tensor, (0, 3, 1, 2))
+        print(f"Loaded {frames_tensor.shape[0]} frames for video {os.path.basename(video_folder)}")
+        print(f"Frames tensor shape: {frames_tensor.shape}")
 
         return {
-            "frames": frames_tensor,  # NumPy array
+            "frames": frames_tensor,  # NumPy array with shape (frames, channels, height, width)
             "video_name": os.path.basename(video_folder)
         }
 
@@ -83,12 +92,12 @@ if __name__ == "__main__":
         root_dir="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/images",
         transform=transform,
         frame_skip=0,
-        num_frames=2
+        num_frames=300
     )
     print(f"Total videos in dataset: {len(dataset)}")
 
     sample = dataset[0]
     print(f"Sample keys: {sample.keys()}")
-    print(f"Number of frames: {len(sample['frames'])}")
+    print(f"Number of frames: {sample['frames'].shape[0]}")
     print(f"Frames tensor shape: {sample['frames'].shape}")
     print(f"Video name: {sample['video_name']}")

@@ -18,7 +18,7 @@ import math
 import colored_traceback.auto # makes terminal show color coded output when crash
 import random
 
-DEBUG = False
+DEBUG = True
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -101,6 +101,7 @@ class LatentTokenEncoder(nn.Module):
         self.res_blocks = nn.ModuleList()
         in_channels = initial_channels
         for out_channels in output_channels:
+            print(f"🥊 out_channels {out_channels} in_channels{in_channels}")
             self.res_blocks.append(ResBlock(in_channels,out_channels))
             in_channels = out_channels
 
@@ -112,7 +113,7 @@ class LatentTokenEncoder(nn.Module):
         self.final_linear = EqualLinear(output_channels[-1], dm)
 
     def forward(self, x):
-        debug_print(f"LatentTokenEncoder input shape: {x.shape}")
+        debug_print(f"🥊 LatentTokenEncoder input shape: {x.shape}")
 
         x = self.activation(self.conv1(x))
         debug_print(f"After initial conv and activation: {x.shape}")
@@ -444,6 +445,7 @@ class IMFModel(nn.Module):
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
+            print(f"🥊 layer {i}")
             align_layer = self.implicit_motion_alignment[i]
             m_c_i = m_c[i] 
             m_r_i = m_r[i]

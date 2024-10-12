@@ -2,9 +2,10 @@ import math
 import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
-
 def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
-    return tf.nn.leaky_relu(input + bias, alpha=negative_slope) * scale
+    out = tf.nn.leaky_relu(input + bias, alpha=negative_slope) * scale
+    print(f"fused_leaky_relu - input shape: {input.shape}, output shape: {out.shape}")
+    return out
 
 class FusedLeakyReLU(tf.keras.layers.Layer):
     def __init__(self, channel, negative_slope=0.2, scale=2 ** 0.5):
@@ -14,41 +15,37 @@ class FusedLeakyReLU(tf.keras.layers.Layer):
         self.scale = scale
 
     def call(self, input):
+        print(f"FusedLeakyReLU - input shape: {input.shape}")
         out = fused_leaky_relu(input, self.bias, self.negative_slope, self.scale)
+        print(f"FusedLeakyReLU - output shape: {out.shape}")
         return out
 
+
+@tf.function
 def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
-    # Assuming input shape: [batch, height, width, channels]
-    # Implement upfirdn2d using TensorFlow operations
-    batch, in_h, in_w, channels = tf.shape(input)
-    input = tf.transpose(input, [0, 3, 1, 2])  # [batch, channels, height, width]
-
-    # Upsampling
+    _, h, w, c = input.shape
+    
+    # Upsample
     if up > 1:
-        input = tf.reshape(input, [batch, channels, in_h, 1, in_w, 1])
-        input = tf.pad(input, [[0, 0], [0, 0], [0, 0], [0, up - 1], [0, 0], [0, up - 1]])
-        input = tf.reshape(input, [batch, channels, in_h * up, in_w * up])
+        out = tf.reshape(input, [-1, h, 1, w, 1, c])
+        out = tf.pad(out, [[0, 0], [0, 0], [0, up - 1], [0, 0], [0, up - 1], [0, 0]])
+        out = tf.reshape(out, [-1, h * up, w * up, c])
+    else:
+        out = input
 
-    # Padding
-    pad_x0, pad_x1 = pad
-    input = tf.pad(input, [[0, 0], [0, 0], [max(pad_x0, 0), max(pad_x1, 0)], [max(pad_x0, 0), max(pad_x1, 0)]])
-    if pad_x0 < 0 or pad_x1 < 0:
-        input = input[:, :, max(-pad_x0, 0):input.shape[2]-max(-pad_x1, 0), max(-pad_x0, 0):input.shape[3]-max(-pad_x1, 0)]
+    # Pad
+    if pad[0] > 0 or pad[1] > 0:
+        out = tf.pad(out, [[0, 0], [pad[0], pad[1]], [pad[0], pad[1]], [0, 0]])
 
-    # Convolution with kernel
-    kernel = tf.expand_dims(kernel, axis=-1)
-    kernel = tf.expand_dims(kernel, axis=-1)
-    kernel = tf.tile(kernel, [1, 1, channels, 1])
-    kernel = tf.transpose(kernel, [2, 3, 0, 1])  # [channels, 1, kh, kw]
+    # Prepare kernel
+    kernel = tf.reshape(kernel, [*kernel.shape, 1, 1])
+    kernel = tf.tile(kernel, [1, 1, c, 1])
 
-    input = tf.nn.depthwise_conv2d(input, kernel, strides=[1, 1, 1, 1], padding='VALID')
+    # Apply kernel
+    out = tf.nn.depthwise_conv2d(out, kernel, strides=[1, down, down, 1], padding='VALID')
 
-    # Downsampling
-    if down > 1:
-        input = input[:, :, ::down, ::down]
+    return out
 
-    input = tf.transpose(input, [0, 2, 3, 1])  # [batch, height, width, channels]
-    return input
 
 def make_kernel(k):
     k = np.array(k, dtype=np.float32)
@@ -56,6 +53,8 @@ def make_kernel(k):
         k = k[:, None] * k[None, :]
     k /= np.sum(k)
     return k
+
+
 
 class Blur(tf.keras.layers.Layer):
     def __init__(self, kernel, pad, upsample_factor=1):
@@ -67,7 +66,12 @@ class Blur(tf.keras.layers.Layer):
         self.pad = pad
 
     def call(self, input):
-        return upfirdn2d(input, self.kernel, pad=self.pad)
+        print(f"Blur - input shape: {input.shape}")
+        out = upfirdn2d(input, self.kernel, pad=self.pad)
+        print(f"Blur - output shape: {out.shape}")
+        return out
+    
+
 
 class ScaledLeakyReLU(tf.keras.layers.Layer):
     def __init__(self, negative_slope=0.2):
@@ -77,32 +81,51 @@ class ScaledLeakyReLU(tf.keras.layers.Layer):
     def call(self, input):
         return tf.nn.leaky_relu(input, alpha=self.negative_slope)
 
+
 class EqualConv2d(tf.keras.layers.Layer):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding='same', use_bias=True):
+    def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding='SAME', bias=True):
         super(EqualConv2d, self).__init__()
-        self.scale = 1 / math.sqrt(in_channels * kernel_size ** 2)
+        self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
-        self.use_bias = use_bias
-        self.conv = layers.Conv2D(
-            out_channels,
-            kernel_size,
-            strides=stride,
-            padding=padding,
-            use_bias=use_bias,
-            kernel_initializer='random_normal'
-        )
+        self.use_bias = bias
 
-    def build(self, input_shape):
-        super(EqualConv2d, self).build(input_shape)
-        self.conv.kernel.assign(self.conv.kernel * self.scale)
+        self.weight = self.add_weight(
+            name='weight',
+            shape=(kernel_size, kernel_size, in_channel, out_channel),
+            initializer=tf.random_normal_initializer(0, 1),
+            trainable=True
+        )
+        self.scale = 1 / math.sqrt(in_channel * kernel_size ** 2)
+        
+        if bias:
+            self.bias = self.add_weight(
+                name='bias', 
+                shape=(out_channel,), 
+                initializer='zeros', 
+                trainable=True
+            )
+        else:
+            self.bias = None
 
     def call(self, input):
-        out = self.conv(input)
+        print(f"EqualConv2d - input shape: {input.shape}")
+        weight = self.weight * self.scale
+        out = tf.nn.conv2d(input, weight, strides=[1, self.stride, self.stride, 1], padding=self.padding)
+        
+        if self.use_bias:
+            out = out + self.bias
+
+        print(f"EqualConv2d - output shape: {out.shape}")
         return out
 
-    def compute_output_shape(self, input_shape):
-        return self.conv.compute_output_shape(input_shape)
+    def __repr__(self):
+        return (
+            f'{self.__class__.__name__}({self.weight.shape[2]}, {self.weight.shape[3]},'
+            f' {self.kernel_size}, stride={self.stride}, padding={self.padding})'
+        )
+
+    
 
 class EqualLinear(tf.keras.layers.Layer):
     def __init__(self, in_dim, out_dim, use_bias=True, lr_mul=1, activation=None):
@@ -124,33 +147,45 @@ class EqualLinear(tf.keras.layers.Layer):
         return out
 
 class ConvLayer(tf.keras.layers.Layer):
-    def __init__(self, in_channels, out_channels, kernel_size, downsample=False, blur_kernel=[1, 3, 3, 1], use_bias=True, activate=True):
+    def __init__(self, in_channel, out_channel, kernel_size, downsample=False, blur_kernel=[1, 3, 3, 1], use_bias=True, activate=True):
         super(ConvLayer, self).__init__()
+        self.downsample = downsample
         self.activate = activate
         self.use_bias = use_bias
-        self.downsample = downsample
-        self.padding = kernel_size // 2
 
         if downsample:
-            self.blur = Blur(blur_kernel, pad=(self.padding, self.padding))
-            self.conv = EqualConv2d(in_channels, out_channels, kernel_size, stride=2, padding='valid', use_bias=use_bias and not activate)
+            factor = 2
+            p = (len(blur_kernel) - factor) + (kernel_size - 1)
+            pad0 = (p + 1) // 2
+            pad1 = p // 2
+            self.blur = Blur(blur_kernel, pad=(pad0, pad1))
+            stride = 2
+            padding = 'VALID'
         else:
-            self.conv = EqualConv2d(in_channels, out_channels, kernel_size, stride=1, padding='same', use_bias=use_bias and not activate)
+            stride = 1
+            padding = 'SAME'
 
+        self.conv = EqualConv2d(in_channel, out_channel, kernel_size, stride=stride, padding=padding, bias=use_bias and not activate)
+        
         if activate:
             if use_bias:
-                self.activation = FusedLeakyReLU(out_channels)
+                self.activation = FusedLeakyReLU(out_channel)
             else:
                 self.activation = ScaledLeakyReLU(0.2)
 
     def call(self, input):
+        print(f"ConvLayer - input shape: {input.shape}")
         if self.downsample:
             input = self.blur(input)
         out = self.conv(input)
         if self.activate:
             out = self.activation(out)
+        print(f"ConvLayer - output shape: {out.shape}")
         return out
+  
 
+
+    
 class ResBlock(tf.keras.layers.Layer):
     def __init__(self, in_channel, out_channel, blur_kernel=[1, 3, 3, 1]):
         super(ResBlock, self).__init__()
@@ -159,11 +194,14 @@ class ResBlock(tf.keras.layers.Layer):
         self.skip = ConvLayer(in_channel, out_channel, 1, downsample=True, activate=False, use_bias=False)
 
     def call(self, input):
+        print(f"ResBlock - input shape: {input.shape}")
         out = self.conv1(input)
         out = self.conv2(out)
         skip = self.skip(input)
         out = (out + skip) / math.sqrt(2)
+        print(f"ResBlock - output shape: {out.shape}")
         return out
+
 
 class PixelNorm(tf.keras.layers.Layer):
     def __init__(self):
@@ -189,11 +227,12 @@ class StyledConv(tf.keras.layers.Layer):
         self.activation = FusedLeakyReLU(out_channel)
 
     def call(self, input, style, noise=None):
+        print(f"StyledConv - input shape: {input.shape}, style shape: {style.shape}")
         out = self.conv(input, style)
         out = self.noise(out, noise=noise)
         out = self.activation(out)
+        print(f"StyledConv - output shape: {out.shape}")
         return out
-
 class ModulatedConv2d(tf.keras.layers.Layer):
     def __init__(self, in_channel, out_channel, kernel_size, style_dim, upsample=False, downsample=False, blur_kernel=[1, 3, 3, 1], demodulate=True):
         super(ModulatedConv2d, self).__init__()

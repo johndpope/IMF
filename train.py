@@ -9,7 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from lia_resblocks import LiaDiscriminator
+
 from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
@@ -122,6 +122,7 @@ class IMFTrainer:
             print("🔥 Skipping training step due to empty x_current")
             return None, None, None, None, None, None
 
+        print("🎸 train step")
         # Generate reconstructed frame
         x_reconstructed = self.model(x_current, x_reference)
 
