@@ -19,3 +19,6 @@ mediapipe
 
 onnx 
 onnxconverter_common
+
+
+git+https://github.com/alexlee-gk/lpips-tensorflow.git
