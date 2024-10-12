@@ -13,12 +13,12 @@ from tensorflow.keras import layers
 from tensorflow.keras import models
 import tensorflow.keras.backend as K
 import math
+from lia_resblocks import PyConv2D
 
 DEBUG = True
-def debugPrint(*args, **kwargs):
+def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
-
 
 
 def normalize(x):
@@ -73,7 +73,7 @@ class DenseFeatureEncoder(tf.keras.Model):
     def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64):
         super(DenseFeatureEncoder, self).__init__()
         self.initial_conv = tf.keras.Sequential([
-            layers.Conv2D(initial_channels, kernel_size=7, strides=1, padding='same'),
+            PyConv2D(initial_channels, kernel_size=7, strides=1, padding='same'),
             layers.BatchNormalization(),
             layers.ReLU()
         ])
@@ -90,18 +90,18 @@ class DenseFeatureEncoder(tf.keras.Model):
             current_channels = out_channels
 
     def call(self, x):
-        debugPrint(f"DenseFeatureEncoder input shape: {x.shape}")
+        debug_print(f"DenseFeatureEncoder input shape: {x.shape}")
         features = []
         x = self.initial_conv(x)
-        debugPrint(f"After initial conv: {x.shape}")
+        debug_print(f"After initial conv: {x.shape}")
         
         for i, block in enumerate(self.down_blocks):
             x = block(x)
-            debugPrint(f"After downBlock {i+1}: {x.shape}")
+            debug_print(f"After downBlock {i+1}: {x.shape}")
             if i >= 1:  # Start collecting features from the second block
                 features.append(x)
         
-        debugPrint(f"DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
+        debug_print(f"DenseFeatureEncoder output shapes: {[f.shape for f in features]}")
         return features
 
 '''
@@ -112,53 +112,49 @@ relu activations are applied both after adding the residual and at the end of th
 The FeatResBlock is now a subclass of ResBlock with downsample=False, as it doesn't change the spatial dimensions.
 '''
 class LatentTokenEncoder(tf.keras.Model):
-    def __init__(self, initial_channels=64, output_channels=[128, 256, 512, 512], dm=32):
+    def __init__(self, initial_channels=64, output_channels=[256, 256, 512, 512, 512, 512], dm=32):
         super(LatentTokenEncoder, self).__init__()
 
-        self.conv1 = layers.Conv2D(initial_channels, kernel_size=3, strides=1, padding='same')
-        self.activation = layers.LeakyReLU(alpha=0.2)
+        self.conv1 = PyConv2D(initial_channels, kernel_size=3, strides=1, padding='same', data_format='channels_first')
+        self.activation = layers.LeakyReLU(0.2)
 
-        # Dynamically create ResBlocks
         self.res_blocks = []
         in_channels = initial_channels
         for out_channels in output_channels:
             self.res_blocks.append(ResBlock(in_channels, out_channels))
             in_channels = out_channels
 
-        self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding='same')
+        self.equalconv = EqualConv2d(output_channels[-1], output_channels[-1], kernel_size=3, stride=1, padding=1)
 
-        # 4× EqualLinear layers
         self.linear_layers = [EqualLinear(output_channels[-1], output_channels[-1]) for _ in range(4)]
         
         self.final_linear = EqualLinear(output_channels[-1], dm)
 
     def call(self, x):
-        debugPrint(f"🥊 LatentTokenEncoder input shape: {x.shape}")
+        debug_print(f"🥊 LatentTokenEncoder input shape: {x.shape}")
 
         x = self.activation(self.conv1(x))
-        debugPrint(f"After initial conv and activation: {x.shape}")
+        debug_print(f"After initial conv and activation: {x.shape}")
         
         for i, res_block in enumerate(self.res_blocks):
             x = res_block(x)
-            debugPrint(f"After res_block {i+1}: {x.shape}")
+            debug_print(f"After res_block {i+1}: {x.shape}")
         
         x = self.equalconv(x)
-        debugPrint(f"After equalconv: {x.shape}")
+        debug_print(f"After equalconv: {x.shape}")
         
-        # Global average pooling over spatial dimensions
+        # Global average pooling
         x = tf.reduce_mean(x, axis=[1, 2])
-        debugPrint(f"After global average pooling: {x.shape}")
+        debug_print(f"After global average pooling: {x.shape}")
         
         for i, linear_layer in enumerate(self.linear_layers):
             x = self.activation(linear_layer(x))
-            debugPrint(f"After linear layer {i+1}: {x.shape}")
+            debug_print(f"After linear layer {i+1}: {x.shape}")
         
         x = self.final_linear(x)
-        debugPrint(f"Final output: {x.shape}")
+        debug_print(f"Final output: {x.shape}")
         
         return x
-
-
 
 '''
 LatentTokenDecoder
@@ -253,36 +249,36 @@ class FrameDecoder(tf.keras.Model):
         ]
         
         self.final_conv = tf.keras.Sequential([
-            layers.Conv2D(3, kernel_size=3, strides=1, padding='same'),
+            PyConv2D(3, kernel_size=3, strides=1, padding='same'),
             layers.Activation('sigmoid')
         ])
 
     def call(self, features):
-        debugPrint(f"FrameDecoder input shapes")
+        debug_print(f"FrameDecoder input shapes")
         for f in features:
-            debugPrint(f"f:{f.shape}")
+            debug_print(f"f:{f.shape}")
         x = features[-1]
-        debugPrint(f"Initial x shape: {x.shape}")
+        debug_print(f"Initial x shape: {x.shape}")
         
         for i in range(len(self.upconv_blocks)):
-            debugPrint(f"\nProcessing upconvBlock {i+1}")
+            debug_print(f"\nProcessing upconvBlock {i+1}")
             x = self.upconv_blocks[i](x)
-            debugPrint(f"After upconvBlock {i+1}: {x.shape}")
+            debug_print(f"After upconvBlock {i+1}: {x.shape}")
             
             if i < len(self.feat_blocks):
-                debugPrint(f"Processing featBlock {i+1}")
+                debug_print(f"Processing featBlock {i+1}")
                 feat_input = features[-(i+2)]
-                debugPrint(f"featBlock {i+1} input shape: {feat_input.shape}")
+                debug_print(f"featBlock {i+1} input shape: {feat_input.shape}")
                 feat = self.feat_blocks[i](feat_input)
-                debugPrint(f"featBlock {i+1} output shape: {feat.shape}")
+                debug_print(f"featBlock {i+1} output shape: {feat.shape}")
                 
-                debugPrint(f"Concatenating: x {x.shape} and feat {feat.shape}")
+                debug_print(f"Concatenating: x {x.shape} and feat {feat.shape}")
                 x = tf.concat([x, feat], axis=-1)
-                debugPrint(f"After concatenation: {x.shape}")
+                debug_print(f"After concatenation: {x.shape}")
         
-        debugPrint("\nApplying final convolution")
+        debug_print("\nApplying final convolution")
         x = self.final_conv(x)
-        debugPrint(f"FrameDecoder final output shape: {x.shape}")
+        debug_print(f"FrameDecoder final output shape: {x.shape}")
 
         return x
 
@@ -444,7 +440,7 @@ class IMFPatchDiscriminator(tf.keras.Model):
         
         def conv_block(filters, kernel_size=4, strides=2, use_instance_norm=True):
             block = [
-                SpectralNormalization(layers.Conv2D(filters, kernel_size, strides=strides, padding='same')),
+                SpectralNormalization(PyConv2D(filters, kernel_size, strides=strides, padding='same')),
                 layers.LeakyReLU(0.2)
             ]
             if use_instance_norm:
@@ -456,7 +452,7 @@ class IMFPatchDiscriminator(tf.keras.Model):
             *conv_block(ndf * 2),
             *conv_block(ndf * 4),
             *conv_block(ndf * 8),
-            SpectralNormalization(layers.Conv2D(1, kernel_size=1, strides=1))
+            SpectralNormalization(PyConv2D(1, kernel_size=1, strides=1))
         ])
         
         self.scale2 = tf.keras.Sequential([
@@ -464,7 +460,7 @@ class IMFPatchDiscriminator(tf.keras.Model):
             *conv_block(ndf * 2),
             *conv_block(ndf * 4),
             *conv_block(ndf * 8),
-            SpectralNormalization(layers.Conv2D(1, kernel_size=1, strides=1))
+            SpectralNormalization(PyConv2D(1, kernel_size=1, strides=1))
         ])
 
     def call(self, x):

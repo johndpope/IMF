@@ -7,42 +7,85 @@ def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
     print(f"fused_leaky_relu - input shape: {input.shape}, output shape: {out.shape}")
     return out
 
+# NCHW
+class PyConv2D(tf.keras.layers.Conv2D):
+    def __init__(self, 
+                 filters, 
+                 kernel_size, 
+                 strides=(1, 1), 
+                 padding='valid', 
+                 data_format='channels_first', 
+                 dilation_rate=(1, 1), 
+                 groups=1,
+                 activation=None, 
+                 use_bias=True, 
+                 kernel_initializer='glorot_uniform', 
+                 bias_initializer='zeros', 
+                 kernel_regularizer=None, 
+                 bias_regularizer=None, 
+                 activity_regularizer=None, 
+                 kernel_constraint=None, 
+                 bias_constraint=None, 
+                 **kwargs):
+        super().__init__(
+            filters=filters,
+            kernel_size=kernel_size,
+            strides=strides,
+            padding=padding,
+            data_format=data_format,
+            dilation_rate=dilation_rate,
+            groups=groups,
+            activation=activation,
+            use_bias=use_bias,
+            kernel_initializer=kernel_initializer,
+            bias_initializer=bias_initializer,
+            kernel_regularizer=kernel_regularizer,
+            bias_regularizer=bias_regularizer,
+            activity_regularizer=activity_regularizer,
+            kernel_constraint=kernel_constraint,
+            bias_constraint=bias_constraint,
+            **kwargs
+        )
+
 class FusedLeakyReLU(tf.keras.layers.Layer):
     def __init__(self, channel, negative_slope=0.2, scale=2 ** 0.5):
         super(FusedLeakyReLU, self).__init__()
         self.bias = self.add_weight(shape=(channel,), initializer='zeros', trainable=True, name='bias')
         self.negative_slope = negative_slope
         self.scale = scale
+        self.data_format = 'channels_first'
 
     def call(self, input):
         print(f"FusedLeakyReLU - input shape: {input.shape}")
-        out = fused_leaky_relu(input, self.bias, self.negative_slope, self.scale)
+        if self.data_format == 'channels_first':
+            bias = tf.reshape(self.bias, [1, -1, 1, 1])
+        else:
+            bias = tf.reshape(self.bias, [1, 1, 1, -1])
+        out = tf.nn.leaky_relu(input + bias, alpha=self.negative_slope) * self.scale
         print(f"FusedLeakyReLU - output shape: {out.shape}")
         return out
 
 
 @tf.function
 def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
-    _, h, w, c = input.shape
+    batch, channels, in_h, in_w = tf.unstack(tf.shape(input))
     
     # Upsample
     if up > 1:
-        out = tf.reshape(input, [-1, h, 1, w, 1, c])
-        out = tf.pad(out, [[0, 0], [0, 0], [0, up - 1], [0, 0], [0, up - 1], [0, 0]])
-        out = tf.reshape(out, [-1, h * up, w * up, c])
-    else:
-        out = input
+        input = tf.reshape(input, [batch, channels, in_h, 1, in_w, 1])
+        input = tf.pad(input, [[0,0], [0,0], [0,0], [0, up-1], [0,0], [0, up-1]])
+        input = tf.reshape(input, [batch, channels, in_h * up, in_w * up])
 
     # Pad
-    if pad[0] > 0 or pad[1] > 0:
-        out = tf.pad(out, [[0, 0], [pad[0], pad[1]], [pad[0], pad[1]], [0, 0]])
+    pad_y0, pad_y1 = pad
+    pad_x0, pad_x1 = pad
+    input = tf.pad(input, [[0,0], [0,0], [pad_y0, pad_y1], [pad_x0, pad_x1]])
 
-    # Prepare kernel
-    kernel = tf.reshape(kernel, [*kernel.shape, 1, 1])
-    kernel = tf.tile(kernel, [1, 1, c, 1])
-
-    # Apply kernel
-    out = tf.nn.depthwise_conv2d(out, kernel, strides=[1, down, down, 1], padding='VALID')
+    # Convolve with kernel
+    input = tf.reshape(input, [batch * channels, 1, in_h * up + pad_y0 + pad_y1, in_w * up + pad_x0 + pad_x1])
+    kernel = tf.reshape(kernel, [1, 1, kernel.shape[0], kernel.shape[1]])
+    out = tf.nn.conv2d(input, kernel, strides=[1, 1, down, down], padding='VALID', data_format='NCHW')
+    out = tf.reshape(out, [batch, channels, out.shape[2], out.shape[3]])
 
     return out
 
@@ -81,49 +124,86 @@ class ScaledLeakyReLU(tf.keras.layers.Layer):
     def call(self, input):
         return tf.nn.leaky_relu(input, alpha=self.negative_slope)
 
-
+import tensorflow as tf
+import math
 class EqualConv2d(tf.keras.layers.Layer):
-    def __init__(self, in_channel, out_channel, kernel_size, stride=1, padding='SAME', bias=True):
-        super(EqualConv2d, self).__init__()
-        self.kernel_size = kernel_size
-        self.stride = stride
-        self.padding = padding
-        self.use_bias = bias
+    def __init__(self, 
+                 filters, 
+                 kernel_size, 
+                 strides=(1, 1), 
+                 padding=0,  # Now padding is always an integer
+                 data_format='channels_first', 
+                 use_bias=True, 
+                 **kwargs):
+        super(EqualConv2d, self).__init__(**kwargs)
+        self.filters = filters
+        self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
+        self.strides = strides if isinstance(strides, tuple) else (strides, strides)
+        self.padding = padding  # Integer padding
+        self.data_format = data_format
+        self.use_bias = use_bias
 
-        self.weight = self.add_weight(
-            name='weight',
-            shape=(kernel_size, kernel_size, in_channel, out_channel),
-            initializer=tf.random_normal_initializer(0, 1),
-            trainable=True
+    def build(self, input_shape):
+        if self.data_format == 'channels_first':
+            in_channels = input_shape[1]
+        else:
+            in_channels = input_shape[-1]
+
+        # Initialize weights with normal distribution
+        kernel_shape = self.kernel_size + (in_channels, self.filters)
+        self.kernel = self.add_weight(
+            shape=kernel_shape,
+            initializer=tf.random_normal_initializer(),
+            trainable=True,
+            name='kernel'
         )
-        self.scale = 1 / math.sqrt(in_channel * kernel_size ** 2)
-        
-        if bias:
+
+        # Calculate the scaling factor
+        fan_in = in_channels * self.kernel_size[0] * self.kernel_size[1]
+        self.scale = 1 / math.sqrt(fan_in)
+
+        if self.use_bias:
             self.bias = self.add_weight(
-                name='bias', 
-                shape=(out_channel,), 
-                initializer='zeros', 
-                trainable=True
+                shape=(self.filters,),
+                initializer='zeros',
+                trainable=True,
+                name='bias'
             )
         else:
             self.bias = None
 
-    def call(self, input):
-        print(f"EqualConv2d - input shape: {input.shape}")
-        weight = self.weight * self.scale
-        out = tf.nn.conv2d(input, weight, strides=[1, self.stride, self.stride, 1], padding=self.padding)
+        super(EqualConv2d, self).build(input_shape)
+
+    def call(self, inputs):
+        # Scale the kernel
+        scaled_kernel = self.kernel * self.scale
+
+        # Manually pad the input if padding is greater than zero
+        if self.padding > 0:
+            if self.data_format == 'channels_first':
+                paddings = [[0, 0], [0, 0], [self.padding, self.padding], [self.padding, self.padding]]
+            else:
+                paddings = [[0, 0], [self.padding, self.padding], [self.padding, self.padding], [0, 0]]
+            inputs = tf.pad(inputs, paddings)
         
-        if self.use_bias:
-            out = out + self.bias
-
-        print(f"EqualConv2d - output shape: {out.shape}")
-        return out
-
-    def __repr__(self):
-        return (
-            f'{self.__class__.__name__}({self.weight.shape[2]}, {self.weight.shape[3]},'
-            f' {self.kernel_size}, stride={self.stride}, padding={self.padding})'
+        # Prepare strides
+        if self.data_format == 'channels_first':
+            strides = [1, 1] + list(self.strides)
+        else:
+            strides = [1] + list(self.strides) + [1]
+        
+        outputs = tf.nn.conv2d(
+            inputs,
+            scaled_kernel,
+            strides=strides,
+            padding='VALID',  # We handled padding manually
+            data_format='NCHW' if self.data_format == 'channels_first' else 'NHWC'
         )
+
+        if self.use_bias:
+            outputs = tf.nn.bias_add(outputs, self.bias, data_format='NCHW' if self.data_format == 'channels_first' else 'NHWC')
+
+        return outputs
 
     
 
@@ -146,12 +226,15 @@ class EqualLinear(tf.keras.layers.Layer):
             out = fused_leaky_relu(out, 0)
         return out
 
+import tensorflow as tf
+import math
+import numpy as np
 class ConvLayer(tf.keras.layers.Layer):
-    def __init__(self, in_channel, out_channel, kernel_size, downsample=False, blur_kernel=[1, 3, 3, 1], use_bias=True, activate=True):
+    def __init__(self, in_channel, out_channel, kernel_size, downsample=False, blur_kernel=[1, 3, 3, 1], bias=True, activate=True):
         super(ConvLayer, self).__init__()
         self.downsample = downsample
         self.activate = activate
-        self.use_bias = use_bias
+        self.use_bias = bias
 
         if downsample:
             factor = 2
@@ -160,29 +243,43 @@ class ConvLayer(tf.keras.layers.Layer):
             pad1 = p // 2
             self.blur = Blur(blur_kernel, pad=(pad0, pad1))
             stride = 2
-            padding = 'VALID'
+            self.padding = 0  # No padding for downsampling
         else:
+            self.blur = None
             stride = 1
-            padding = 'SAME'
+            self.padding = kernel_size // 2  # Integer padding
 
-        self.conv = EqualConv2d(in_channel, out_channel, kernel_size, stride=stride, padding=padding, bias=use_bias and not activate)
-        
+        self.conv = EqualConv2d(
+            filters=out_channel,
+            kernel_size=kernel_size,
+            strides=(stride, stride),
+            padding=self.padding,  # Pass the integer padding
+            use_bias=bias and not activate,
+            data_format='channels_first'
+        )
+
         if activate:
-            if use_bias:
+            if bias:
                 self.activation = FusedLeakyReLU(out_channel)
             else:
                 self.activation = ScaledLeakyReLU(0.2)
+        else:
+            self.activation = None
 
-    def call(self, input):
-        print(f"ConvLayer - input shape: {input.shape}")
-        if self.downsample:
-            input = self.blur(input)
-        out = self.conv(input)
-        if self.activate:
-            out = self.activation(out)
-        print(f"ConvLayer - output shape: {out.shape}")
-        return out
-  
+    def call(self, x):
+        if self.downsample and self.blur is not None:
+            print(f"ConvLayer - module: {type(self.blur).__name__}")
+            x = self.blur(x)
+
+        print(f"ConvLayer - module: {type(self.conv).__name__}")
+        x = self.conv(x)
+
+        if self.activate and self.activation is not None:
+            print(f"ConvLayer - module: {type(self.activation).__name__}")
+            x = self.activation(x)
+
+        return x
+
 
 
     
@@ -191,7 +288,7 @@ class ResBlock(tf.keras.layers.Layer):
         super(ResBlock, self).__init__()
         self.conv1 = ConvLayer(in_channel, in_channel, 3)
         self.conv2 = ConvLayer(in_channel, out_channel, 3, downsample=True)
-        self.skip = ConvLayer(in_channel, out_channel, 1, downsample=True, activate=False, use_bias=False)
+        self.skip = ConvLayer(in_channel, out_channel, 1, downsample=True, activate=False, bias=False)
 
     def call(self, input):
         print(f"ResBlock - input shape: {input.shape}")
@@ -278,10 +375,10 @@ class ModulatedConv2d(tf.keras.layers.Layer):
             out = self.blur(out)
         elif self.downsample:
             input = self.blur(input)
-            out = tf.nn.conv2d(input, weight, strides=[1, 2, 2, 1], padding='VALID')
+            out = PyConv2D(input, weight, strides=[1, 2, 2, 1], padding='VALID')
             out = tf.reshape(out, [batch, height // 2, width // 2, self.out_channel])
         else:
-            out = tf.nn.conv2d(input, weight, strides=[1, 1, 1, 1], padding='SAME')
+            out = PyConv2D(input, weight, strides=[1, 1, 1, 1], padding='SAME')
             out = tf.reshape(out, [batch, height, width, self.out_channel])
 
         return out

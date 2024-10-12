@@ -35,6 +35,7 @@ class VideoDataset(tf.keras.utils.Sequence):
             else:
                 img = img.resize((256, 256))  # Default resizing if no transform is provided
             img = np.array(img) / 255.0  # Normalize to [0, 1]
+            img = img.astype(np.float32)  # Ensure float32 data type
             return img
         except (OSError, IOError) as e:
             print(f"Error loading image {frame_path}: {str(e)}")
