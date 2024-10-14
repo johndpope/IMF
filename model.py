@@ -169,10 +169,16 @@ Unlike keypoint-based methods that use Gaussian heatmaps converted from keypoint
 Our latent tokens are directly learned by the encoder, rather than being restricted to coordinates with a limited value range.
 '''
 
+import torch
+import torch.nn as nn
+
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
+        print(f"Initializing LatentTokenDecoder with latent_dim={latent_dim}, const_dim={const_dim}")
+        
         self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
+        print(f"Constant input shape: {self.const.shape}")
         
         self.style_conv_layers = nn.ModuleList([
             StyledConv(const_dim, 512, 3, latent_dim),
@@ -189,21 +195,34 @@ class LatentTokenDecoder(nn.Module):
             StyledConv(256, 256, 3, latent_dim),
             StyledConv(256, 256, 3, latent_dim) 
         ])
+        print(f"Number of StyledConv layers: {len(self.style_conv_layers)}")
 
     def forward(self, t):
+        print(f"🍩 LatentTokenDecoder forward method input shape: {t.shape}")
+        
         x = self.const.repeat(t.shape[0], 1, 1, 1)
+        print(f"Repeated constant input shape: {x.shape}")
+        
         m1, m2, m3, m4 = None, None, None, None
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
+            print(f"Layer {i} output shape: {x.shape}")
+            
             if i == 3:
                 m1 = x
+                print(f"m1 shape: {m1.shape}")
             elif i == 6:
                 m2 = x
+                print(f"m2 shape: {m2.shape}")
             elif i == 9:
                 m3 = x
+                print(f"m3 shape: {m3.shape}")
             elif i == 12:
                 m4 = x
-        return m4, m3, m2, m1 
+                print(f"m4 shape: {m4.shape}")
+        
+        print("LatentTokenDecoder forward method completed")
+        return m4, m3, m2, m1
     
 '''
 FrameDecoder FeatResBlock

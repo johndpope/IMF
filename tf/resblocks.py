@@ -14,11 +14,11 @@ class NormLayer(tf.keras.layers.Layer):
     def __init__(self, num_features, norm_type='batch'):
         super(NormLayer, self).__init__()
         if norm_type == 'batch':
-            self.norm = layers.BatchNormalization()
+            self.norm = layers.BatchNormalization(axis=1)
         elif norm_type == 'instance':
-            self.norm = tfa.layers.InstanceNormalization(axis=-1)
+            self.norm = tfa.layers.InstanceNormalization(axis=1, center=True, scale=True)
         elif norm_type == 'layer':
-            self.norm = layers.LayerNormalization(axis=-1)
+            self.norm = layers.LayerNormalization(axis=[2, 3])
         else:
             raise ValueError(f"Unsupported normalization type: {norm_type}")
 
@@ -30,7 +30,8 @@ class ConvBlock(tf.keras.layers.Layer):
     def __init__(self, in_channels, out_channels, kernel_size=3, strides=1, padding='same', 
                  activation=tf.keras.activations.relu, norm_type='batch'):
         super(ConvBlock, self).__init__()
-        self.conv = layers.Conv2D(out_channels, kernel_size, strides=strides, padding=padding, use_bias=False)
+        self.conv = layers.Conv2D(out_channels, kernel_size, strides=strides, padding=padding, 
+                                  use_bias=False, data_format='channels_first')
         self.norm = NormLayer(out_channels, norm_type)
         self.activation = activation
 

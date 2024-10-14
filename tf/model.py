@@ -73,8 +73,8 @@ class DenseFeatureEncoder(tf.keras.Model):
     def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64):
         super(DenseFeatureEncoder, self).__init__()
         self.initial_conv = tf.keras.Sequential([
-            PyConv2D(initial_channels, kernel_size=7, strides=1, padding='same'),
-            layers.BatchNormalization(),
+            PyConv2D(initial_channels, kernel_size=7, strides=1, padding='same', data_format='channels_first'),
+            layers.BatchNormalization(axis=1),
             layers.ReLU()
         ])
         
@@ -90,14 +90,14 @@ class DenseFeatureEncoder(tf.keras.Model):
             current_channels = out_channels
 
     def call(self, x):
-        debug_print(f"DenseFeatureEncoder input shape: {x.shape}")
+        debug_print(f"⚾  DenseFeatureEncoder input shape: {x.shape}")
         features = []
         x = self.initial_conv(x)
         debug_print(f"After initial conv: {x.shape}")
         
         for i, block in enumerate(self.down_blocks):
             x = block(x)
-            debug_print(f"After downBlock {i+1}: {x.shape}")
+            debug_print(f"After down_block {i+1}: {x.shape}")
             if i >= 1:  # Start collecting features from the second block
                 features.append(x)
         
@@ -115,7 +115,8 @@ class LatentTokenEncoder(tf.keras.Model):
     def __init__(self, initial_channels=64, output_channels=[256, 256, 512, 512, 512, 512], dm=32):
         super(LatentTokenEncoder, self).__init__()
 
-        self.conv1 = PyConv2D(initial_channels, kernel_size=3, strides=1, padding='same', data_format='channels_first')
+        self.conv1 = PyConv2D(initial_channels, kernel_size=3, strides=1)
+        # self.conv1 = tf.conv(initial_channels, kernel_size=3, strides=1, padding='same', data_format='channels_first')
         self.activation = layers.LeakyReLU(0.2)
 
         self.res_blocks = []
@@ -187,11 +188,16 @@ Advantages Over Keypoint-Based Methods:
 Unlike keypoint-based methods that use Gaussian heatmaps converted from keypoints, our design scales better and has more capabilities.
 Our latent tokens are directly learned by the encoder, rather than being restricted to coordinates with a limited value range.
 '''
+import tensorflow as tf
+
 class LatentTokenDecoder(tf.keras.Model):
     def __init__(self, latent_dim=32, const_dim=32):
         super(LatentTokenDecoder, self).__init__()
+        print(f"Initializing LatentTokenDecoder with latent_dim={latent_dim}, const_dim={const_dim}")
+        
         # Initialize a constant input
         self.const = self.add_weight(shape=(1, 4, 4, const_dim), initializer='random_normal', trainable=True)
+        print(f"Constant input shape: {self.const.shape}")
 
         self.style_conv_layers = [
             StyledConv(const_dim, 512, 3, latent_dim),
@@ -208,21 +214,34 @@ class LatentTokenDecoder(tf.keras.Model):
             StyledConv(256, 256, 3, latent_dim),
             StyledConv(256, 256, 3, latent_dim)
         ]
+        print(f"Number of StyledConv layers: {len(self.style_conv_layers)}")
 
     def call(self, t):
+        print(f"🍩 LatentTokenDecoder call method input shape: {t.shape}")
+        
         batch_size = tf.shape(t)[0]
-        x = tf.tile(self.const, [batch_size, 1, 1, 1])  # Shape: [batch_size, 4, 4, const_dim]
+        x = tf.tile(self.const, [batch_size, 1, 1, 1])
+        print(f"Tiled constant input shape: {x.shape}")
+        
         m1, m2, m3, m4 = None, None, None, None
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
+            print(f"Layer {i} output shape: {x.shape}")
+            
             if i == 3:
                 m1 = x
+                print(f"m1 shape: {m1.shape}")
             elif i == 6:
                 m2 = x
+                print(f"m2 shape: {m2.shape}")
             elif i == 9:
                 m3 = x
+                print(f"m3 shape: {m3.shape}")
             elif i == 12:
                 m4 = x
+                print(f"m4 shape: {m4.shape}")
+        
+        print("LatentTokenDecoder call method completed")
         return m4, m3, m2, m1
 
     
@@ -355,23 +374,24 @@ class IMFModel(tf.keras.Model):
         self.style_mix_prob = style_mix_prob
 
     def call(self, x_current, x_reference):
+
         fR = self.dense_feature_encoder(x_reference)
         tR = self.latent_token_encoder(x_reference)
         tC = self.latent_token_encoder(x_current)
 
         # Style mixing
-        if tf.random.uniform([]) < self.style_mix_prob:
-            batch_size = tf.shape(tC)[0]
-            rand_indices = tf.random.shuffle(tf.range(batch_size))
-            rand_tC = tf.gather(tC, rand_indices)
-            rand_tR = tf.gather(tR, rand_indices)
-            mix_mask = tf.random.uniform([batch_size, 1]) < 0.5
-            mix_mask = tf.cast(mix_mask, tf.float32)
-            mix_tC = tC * mix_mask + rand_tC * (1 - mix_mask)
-            mix_tR = tR * mix_mask + rand_tR * (1 - mix_mask)
-        else:
-            mix_tC = tC
-            mix_tR = tR
+        # if tf.random.uniform([]) < self.style_mix_prob:
+        #     batch_size = tf.shape(tC)[0]
+        #     rand_indices = tf.random.shuffle(tf.range(batch_size))
+        #     rand_tC = tf.gather(tC, rand_indices)
+        #     rand_tR = tf.gather(tR, rand_indices)
+        #     mix_mask = tf.random.uniform([batch_size, 1]) < 0.5
+        #     mix_mask = tf.cast(mix_mask, tf.float32)
+        #     mix_tC = tC * mix_mask + rand_tC * (1 - mix_mask)
+        #     mix_tR = tR * mix_mask + rand_tR * (1 - mix_mask)
+        # else:
+        mix_tC = tC
+        mix_tR = tR
 
         mC = self.latent_token_decoder(mix_tC)
         mR = self.latent_token_decoder(mix_tR)
