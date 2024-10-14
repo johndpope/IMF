@@ -1,6 +1,6 @@
-from vit import ImplicitMotionAlignment
-from resblocks import  FeatResBlock,UpConvResBlock,DownConvResBlock
-from lia_resblocks import StyledConv,EqualConv2d,EqualLinear,ResBlock # these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
+from tf.vit import ImplicitMotionAlignment
+from tf.resblocks import  FeatResBlock,UpConvResBlock,DownConvResBlock
+from tf.lia_resblocks import StyledConv,EqualConv2d,EqualLinear,ResBlock ,PyConv2D# these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
 
 # from torchvision.models import efficientnetB0, EfficientNet_B0_Weights
 import math
@@ -13,7 +13,6 @@ from tensorflow.keras import layers
 from tensorflow.keras import models
 import tensorflow.keras.backend as K
 import math
-from lia_resblocks import PyConv2D
 
 DEBUG = True
 def debug_print(*args, **kwargs):
@@ -116,8 +115,6 @@ class LatentTokenEncoder(tf.keras.Model):
         super(LatentTokenEncoder, self).__init__()
 
         self.conv1 = PyConv2D(initial_channels, kernel_size=3, strides=1, padding='same', data_format='channels_first')
-
-        # self.conv1 = tf.conv(initial_channels, kernel_size=3, strides=1, padding='same', data_format='channels_first')
         self.activation = layers.LeakyReLU(0.2)
 
         self.res_blocks = []
@@ -134,8 +131,8 @@ class LatentTokenEncoder(tf.keras.Model):
         )
         self.linear_layers = [EqualLinear(output_channels[-1], output_channels[-1]) for _ in range(4)]
         
-        self.final_linear = EqualLinear(output_channels[-1], dm)
-
+        # self.final_linear = EqualLinear(output_channels[-1], dm)  # This should output dm (32) channels
+        self.final_linear = EqualLinear(dm)  
     def call(self, x):
         debug_print(f"🥊 LatentTokenEncoder input shape: {x.shape}")
 

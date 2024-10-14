@@ -2,6 +2,8 @@ import math
 import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
+
+
 def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
     out = tf.nn.leaky_relu(input + bias, alpha=negative_slope) * scale
     print(f"fused_leaky_relu - input shape: {input.shape}, output shape: {out.shape}")
@@ -439,7 +441,7 @@ class ModulatedConv2d(tf.keras.layers.Layer):
 
     def call(self, input, style):
         print(f"⛳ ModulatedConv2d Input shape: {input.shape}")
-        print(f"Style shape: {style.shape}")
+        print(f"ModulatedConv2d Style shape: {style.shape}")
 
         batch_size = tf.shape(input)[0]
         height = tf.shape(input)[2]
@@ -447,18 +449,18 @@ class ModulatedConv2d(tf.keras.layers.Layer):
 
         style = self.modulation(style)
         style = tf.reshape(style, [batch_size, 1, self.in_channel, 1, 1])
-        print(f"Style shape after modulation: {style.shape}")
+        print(f"ModulatedConv2d Style shape after modulation: {style.shape}")
 
         weight = self.scale * self.weight * style
-        print(f"Weight shape after style modulation: {weight.shape}")
+        print(f"ModulatedConv2d Weight shape after style modulation: {weight.shape}")
 
         if self.demodulate:
             demod = tf.math.rsqrt(tf.reduce_sum(tf.square(weight), axis=[2, 3, 4]) + self.eps)
             weight = weight * tf.reshape(demod, [batch_size, self.out_channel, 1, 1, 1])
-            print(f"Weight shape after demodulation: {weight.shape}")
+            print(f"ModulatedConv2d Weight shape after demodulation: {weight.shape}")
 
         weight = tf.reshape(weight, [batch_size * self.out_channel, self.in_channel, self.kernel_size, self.kernel_size])
-        print(f"Weight shape before convolution: {weight.shape}")
+        print(f"ModulatedConv2d Weight shape before convolution: {weight.shape}")
 
         if self.upsample:
             input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
@@ -466,29 +468,60 @@ class ModulatedConv2d(tf.keras.layers.Layer):
             weight = tf.transpose(weight, [0, 2, 1, 3, 4])
             weight = tf.reshape(weight, [batch_size * self.in_channel, self.out_channel, self.kernel_size, self.kernel_size])
             
-            self.conv.kernel = weight
-            out = self.conv(input)
+            # Implement grouped transposed convolution
+            out = []
+            for i in range(batch_size):
+                out.append(tf.nn.conv2d_transpose(
+                    input[:, i*self.in_channel:(i+1)*self.in_channel, :, :],
+                    weight[i*self.in_channel:(i+1)*self.in_channel, :, :, :],
+                    output_shape=[1, self.out_channel, height * 2, width * 2],
+                    strides=[1, 1, 2, 2],
+                    padding='SAME',
+                    data_format='NCHW'
+                ))
+            out = tf.concat(out, axis=0)
             out = tf.reshape(out, [batch_size, self.out_channel, height * 2, width * 2])
-            print(f"Output shape after upsampling: {out.shape}")
+            print(f"ModulatedConv2d Output shape after upsampling: {out.shape}")
             out = self.blur(out)
-            print(f"Output shape after blur: {out.shape}")
+            print(f"ModulatedConv2d Output shape after blur: {out.shape}")
+        
         elif self.downsample:
             input = self.blur(input)
-            print(f"Input shape after blur: {input.shape}")
+            print(f"ModulatedConv2d Input shape after blur: {input.shape}")
+            _, _, height, width = input.shape
             input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
             
-            self.conv.kernel = weight
-            out = self.conv(input)
+            # Implement grouped convolution
+            out = []
+            for i in range(batch_size):
+                out.append(tf.nn.conv2d(
+                    input[:, i*self.in_channel:(i+1)*self.in_channel, :, :],
+                    weight[i*self.out_channel:(i+1)*self.out_channel, :, :, :],
+                    strides=[1, 1, 2, 2],
+                    padding='VALID',
+                    data_format='NCHW'
+                ))
+            out = tf.concat(out, axis=1)
             out = tf.reshape(out, [batch_size, self.out_channel, height // 2, width // 2])
-            print(f"Output shape after downsampling: {out.shape}")
+            print(f"ModulatedConv2d Output shape after downsampling: {out.shape}")
+        
         else:
+            # Use the grouped convolution implementation from the previous answer
             input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
-            
             weight = tf.transpose(weight, [1, 0, 2, 3])
-            self.conv.kernel = weight
-            out = self.conv(input)
+            
+            out = []
+            for i in range(batch_size):
+                out.append(tf.nn.conv2d(
+                    input[:, i*self.in_channel:(i+1)*self.in_channel, :, :],
+                    weight[:, i*self.out_channel:(i+1)*self.out_channel, :, :],
+                    strides=[1, 1, 1, 1],
+                    padding='SAME',
+                    data_format='NCHW'
+                ))
+            out = tf.concat(out, axis=1)
             out = tf.reshape(out, [batch_size, self.out_channel, height, width])
-            print(f"Output shape after convolution: {out.shape}")
+            print(f"ModulatedConv2d Output shape after convolution: {out.shape}")
 
         return out
     
