@@ -150,7 +150,7 @@ class LatentTokenEncoder(tf.keras.Model):
         debug_print(f"After equalconv: {x.shape}")
         
         # Global average pooling
-        x = tf.reduce_mean(x, axis=[1, 2])
+        x = tf.reduce_mean(x, axis=[2, 3])
         debug_print(f"After global average pooling: {x.shape}")
         
         for i, linear_layer in enumerate(self.linear_layers):

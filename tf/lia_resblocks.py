@@ -253,10 +253,12 @@ class EqualLinear(tf.keras.layers.Layer):
         self.use_bias = use_bias
         self.lr_mul = lr_mul
         self.activation = activation
+        print(f"EqualLinear.__init__: out_dim={out_dim}, use_bias={use_bias}, lr_mul={lr_mul}, activation={activation}")
 
     def build(self, input_shape):
         in_dim = input_shape[-1]
         self.scale = (1 / math.sqrt(in_dim)) * self.lr_mul
+        print(f"EqualLinear.build: input_shape={input_shape}, in_dim={in_dim}, scale={self.scale}")
         
         self.weight = self.add_weight(
             name="weight",
@@ -264,6 +266,7 @@ class EqualLinear(tf.keras.layers.Layer):
             initializer="random_normal",
             trainable=True,
         )
+        print(f"Weight shape: {self.weight.shape}")
         
         if self.use_bias:
             self.bias = self.add_weight(
@@ -272,16 +275,37 @@ class EqualLinear(tf.keras.layers.Layer):
                 initializer="zeros",
                 trainable=True,
             )
+            print(f"Bias shape: {self.bias.shape}")
+        else:
+            print("No bias")
         
         super(EqualLinear, self).build(input_shape)
 
     def call(self, input):
+        print(f"🍟 EqualLinear.call: input shape = {input.shape}")
+        
         out = tf.matmul(input, self.weight * self.scale)
+        print(f"After matmul: shape = {out.shape}")
+        
         if self.use_bias:
             out = out + self.bias * self.lr_mul
+            print(f"After adding bias: shape = {out.shape}")
+        
         if self.activation == 'fused_lrelu':
             out = fused_leaky_relu(out, None)
+            print(f"After fused_leaky_relu: shape = {out.shape}")
+        
         return out
+
+    def get_config(self):
+        config = super(EqualLinear, self).get_config()
+        config.update({
+            "out_dim": self.out_dim,
+            "use_bias": self.use_bias,
+            "lr_mul": self.lr_mul,
+            "activation": self.activation
+        })
+        return config
 
 import tensorflow as tf
 import math

@@ -116,25 +116,37 @@ class EqualLinear(nn.Module):
     def __init__(self, in_dim, out_dim, bias=True, bias_init=0, lr_mul=1, activation=None):
         super().__init__()
 
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.lr_mul = lr_mul
+        self.activation = activation
+
+        print(f"EqualLinear.__init__: in_dim={in_dim}, out_dim={out_dim}, bias={bias}, lr_mul={lr_mul}, activation={activation}")
+
         self.weight = nn.Parameter(torch.randn(out_dim, in_dim).div_(lr_mul))
+        print(f"Weight shape: {self.weight.shape}")
 
         if bias:
             self.bias = nn.Parameter(torch.zeros(out_dim).fill_(bias_init))
+            print(f"Bias shape: {self.bias.shape}")
         else:
             self.bias = None
-
-        self.activation = activation
+            print("No bias")
 
         self.scale = (1 / math.sqrt(in_dim)) * lr_mul
-        self.lr_mul = lr_mul
+        print(f"Scale: {self.scale}")
 
     def forward(self, input):
+        print(f"🍟 EqualLinear.forward: input shape = {input.shape}")
 
         if self.activation:
             out = F.linear(input, self.weight * self.scale)
+            print(f"After linear (before activation): shape = {out.shape}")
             out = fused_leaky_relu(out, self.bias * self.lr_mul)
+            print(f"After fused_leaky_relu: shape = {out.shape}")
         else:
-            out = F.linear(input, self.weight * self.scale, bias=self.bias * self.lr_mul)
+            out = F.linear(input, self.weight * self.scale, bias=self.bias * self.lr_mul if self.bias is not None else None)
+            print(f"After linear (no activation): shape = {out.shape}")
 
         return out
 
