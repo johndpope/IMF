@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import numpy as np
 
-DEBUG = False
+DEBUG = True
 def debugPrint(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)

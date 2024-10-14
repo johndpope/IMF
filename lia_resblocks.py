@@ -6,7 +6,7 @@ import math
 
 def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
     out = F.leaky_relu(input + bias, negative_slope) * scale
-    #print(f"fused_leaky_relu - input shape: {input.shape}, output shape: {out.shape}")
+    print(f"fused_leaky_relu - input shape: {input.shape}, output shape: {out.shape}")
     return out
 
 class FusedLeakyReLU(nn.Module):
@@ -17,13 +17,13 @@ class FusedLeakyReLU(nn.Module):
         self.scale = scale
 
     def forward(self, input):
-        #print(f"FusedLeakyReLU - input shape: {input.shape}")
+        print(f"FusedLeakyReLU - input shape: {input.shape}")
         out = fused_leaky_relu(input, self.bias, self.negative_slope, self.scale)
-        #print(f"FusedLeakyReLU - output shape: {out.shape}")
+        print(f"FusedLeakyReLU - output shape: {out.shape}")
         return out
 
 def upfirdn2d_native(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, pad_y0, pad_y1):
-    #print(f"⛽ upfirdn2d_native - input shape: {input.shape}, kernel shape: {kernel.shape}")
+    print(f"⛽ upfirdn2d_native - input shape: {input.shape}, kernel shape: {kernel.shape}")
     _, minor, in_h, in_w = input.shape
     kernel_h, kernel_w = kernel.shape
 
@@ -42,13 +42,13 @@ def upfirdn2d_native(input, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, 
                       in_w * up_x + pad_x0 + pad_x1 - kernel_w + 1, )
 
     out = out[:, :, ::down_y, ::down_x]
-    #print(f"upfirdn2d_native - output shape: {out.shape}")
+    print(f"upfirdn2d_native - output shape: {out.shape}")
     return out
 
 def upfirdn2d(input, kernel, up=1, down=1, pad=(0, 0)):
-    #print(f"upfirdn2d - input shape: {input.shape}, kernel shape: {kernel.shape}")
+    print(f"upfirdn2d - input shape: {input.shape}, kernel shape: {kernel.shape}")
     out = upfirdn2d_native(input, kernel, up, up, down, down, pad[0], pad[1], pad[0], pad[1])
-    #print(f"upfirdn2d - output shape: {out.shape}")
+    print(f"upfirdn2d - output shape: {out.shape}")
     return out
 
 def make_kernel(k):
@@ -72,9 +72,9 @@ class Blur(nn.Module):
         self.pad = pad
 
     def forward(self, input):
-        #print(f"Blur - input shape: {input.shape}")
+        print(f"Blur - input shape: {input.shape}")
         out = upfirdn2d(input, self.kernel, pad=self.pad)
-        #print(f"Blur - output shape: {out.shape}")
+        print(f"Blur - output shape: {out.shape}")
         return out
 
 class ScaledLeakyReLU(nn.Module):
@@ -100,9 +100,9 @@ class EqualConv2d(nn.Module):
             self.bias = None
 
     def forward(self, input):
-        #print(f"EqualConv2d - input shape: {input.shape}")
+        print(f"EqualConv2d - input shape: {input.shape}")
         out = F.conv2d(input, self.weight * self.scale, bias=self.bias, stride=self.stride, padding=self.padding)
-        #print(f"EqualConv2d - output shape: {out.shape}")
+        print(f"EqualConv2d - output shape: {out.shape}")
         return out
     
     def __repr__(self):
@@ -168,7 +168,7 @@ class ConvLayer(nn.Sequential):
 
     def forward(self, x):
         for module in self:
-            #print(f"ConvLayer - module: {type(module).__name__}")
+            print(f"ConvLayer - module: {type(module).__name__}")
             x = module(x)
         return x
 
@@ -181,12 +181,12 @@ class ResBlock(nn.Module):
         self.skip = ConvLayer(in_channel, out_channel, 1, downsample=True, activate=False, bias=False)
 
     def forward(self, input):
-        #print(f"ResBlock - input shape: {input.shape}")
+        print(f"ResBlock - input shape: {input.shape}")
         out = self.conv1(input)
         out = self.conv2(out)
         skip = self.skip(input)
         out = (out + skip) / math.sqrt(2)
-        #print(f"ResBlock - output shape: {out.shape}")
+        print(f"ResBlock - output shape: {out.shape}")
         return out
 
 
@@ -247,11 +247,6 @@ class Downsample(nn.Module):
         return upfirdn2d(input, self.kernel, up=1, down=self.factor, pad=self.pad)
 
 
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
 
 class ModulatedConv2d(nn.Module):
     def __init__(self, in_channel, out_channel, kernel_size, style_dim, demodulate=True, upsample=False,

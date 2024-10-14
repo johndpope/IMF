@@ -115,7 +115,8 @@ class LatentTokenEncoder(tf.keras.Model):
     def __init__(self, initial_channels=64, output_channels=[256, 256, 512, 512, 512, 512], dm=32):
         super(LatentTokenEncoder, self).__init__()
 
-        self.conv1 = PyConv2D(initial_channels, kernel_size=3, strides=1)
+        self.conv1 = PyConv2D(initial_channels, kernel_size=3, strides=1, padding='same', data_format='channels_first')
+
         # self.conv1 = tf.conv(initial_channels, kernel_size=3, strides=1, padding='same', data_format='channels_first')
         self.activation = layers.LeakyReLU(0.2)
 

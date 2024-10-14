@@ -410,14 +410,16 @@ class ModulatedConv2d(tf.keras.layers.Layer):
 
         self.weight = self.add_weight(shape=(1, out_channel, in_channel, kernel_size, kernel_size), initializer='random_normal', trainable=True)
         self.modulation = EqualLinear(out_dim=in_channel, use_bias=True, activation=None)
+        
+        self.conv = PyConv2D(filters=out_channel, kernel_size=kernel_size, strides=1, padding='same', data_format='channels_first')
 
     def call(self, input, style):
         print(f"⛳ ModulatedConv2d Input shape: {input.shape}")
         print(f"Style shape: {style.shape}")
 
         batch_size = tf.shape(input)[0]
-        height = tf.shape(input)[1]
-        width = tf.shape(input)[2]
+        height = tf.shape(input)[2]
+        width = tf.shape(input)[3]
 
         style = self.modulation(style)
         style = tf.reshape(style, [batch_size, 1, self.in_channel, 1, 1])
@@ -439,8 +441,9 @@ class ModulatedConv2d(tf.keras.layers.Layer):
             weight = tf.reshape(weight, [batch_size, self.out_channel, self.in_channel, self.kernel_size, self.kernel_size])
             weight = tf.transpose(weight, [0, 2, 1, 3, 4])
             weight = tf.reshape(weight, [batch_size * self.in_channel, self.out_channel, self.kernel_size, self.kernel_size])
-            out = tf.nn.conv2d_transpose(input, weight, output_shape=[1, batch_size * self.out_channel, height * 2, width * 2],
-                                         strides=[1, 2, 2, 1], padding='SAME')
+            
+            self.conv.kernel = weight
+            out = self.conv(input)
             out = tf.reshape(out, [batch_size, self.out_channel, height * 2, width * 2])
             print(f"Output shape after upsampling: {out.shape}")
             out = self.blur(out)
@@ -449,14 +452,17 @@ class ModulatedConv2d(tf.keras.layers.Layer):
             input = self.blur(input)
             print(f"Input shape after blur: {input.shape}")
             input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
-            out = tf.nn.conv2d(input, weight, strides=[1, 2, 2, 1], padding='VALID')
+            
+            self.conv.kernel = weight
+            out = self.conv(input)
             out = tf.reshape(out, [batch_size, self.out_channel, height // 2, width // 2])
             print(f"Output shape after downsampling: {out.shape}")
         else:
             input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
             
             weight = tf.transpose(weight, [1, 0, 2, 3])
-            out = tf.nn.conv2d(input, weight, strides=[1, 1, 1, 1], padding='SAME')
+            self.conv.kernel = weight
+            out = self.conv(input)
             out = tf.reshape(out, [batch_size, self.out_channel, height, width])
             print(f"Output shape after convolution: {out.shape}")
 
