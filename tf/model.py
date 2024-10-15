@@ -1,6 +1,7 @@
 from tf.vit import ImplicitMotionAlignment
 from tf.resblocks import  FeatResBlock,UpConvResBlock,DownConvResBlock
-from tf.lia_resblocks import StyledConv,EqualConv2d,EqualLinear,ResBlock ,PyConv2D# these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
+from tf.cips_resblocks import StyledConv
+from tf.lia_resblocks import EqualConv2d,EqualLinear,ResBlock ,PyConv2D# these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
 
 # from torchvision.models import efficientnetB0, EfficientNet_B0_Weights
 import math
@@ -10,7 +11,7 @@ import random
 
 import tensorflow as tf
 from tensorflow.keras import layers
-from tensorflow.keras import models
+
 import tensorflow.keras.backend as K
 import math
 

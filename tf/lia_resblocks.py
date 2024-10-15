@@ -2,6 +2,8 @@ import math
 import tensorflow as tf
 from tensorflow.keras import layers
 import numpy as np
+from tf.grouped_conv import grouped_convolution2D
+from tensorflow.keras import layers
 
 
 def fused_leaky_relu(input, bias, negative_slope=0.2, scale=2 ** 0.5):
@@ -395,135 +397,136 @@ class StyledConv(tf.keras.layers.Layer):
         super(StyledConv, self).__init__()
         self.upsample = upsample
         self.conv = ModulatedConv2d(
-            in_channel,
-            out_channel,
-            kernel_size,
-            style_dim,
-            upsample=upsample,
-            blur_kernel=blur_kernel,
-            demodulate=demodulate,
+            filters=out_channel,
+            kernel_size=kernel_size,
+            demod=demodulate,
+            padding='same'
         )
         self.noise = NoiseInjection()
         self.activation = FusedLeakyReLU(out_channel)
 
     def call(self, input, style, noise=None):
-        print(f"StyledConv - input shape: {input.shape}, style shape: {style.shape}")
-        out = self.conv(input, style)
+        print(f"StyledConv call - input shape: {input.shape}, style shape: {style.shape}")
+        if self.upsample:
+            input = tf.image.resize(input, [tf.shape(input)[1]*2, tf.shape(input)[2]*2], method='nearest')
+            print(f"StyledConv call - after upsample, input shape: {input.shape}")
+        out = self.conv([input, style])
+        print(f"StyledConv call - after conv, output shape: {out.shape}")
         out = self.noise(out, noise=noise)
+        print(f"StyledConv call - after noise, output shape: {out.shape}")
         out = self.activation(out)
-        print(f"StyledConv - output shape: {out.shape}")
+        print(f"StyledConv call - final output shape: {out.shape}")
         return out
+    
 import tensorflow as tf
 import math
 
-class ModulatedConv2d(tf.keras.layers.Layer):
-    def __init__(self, in_channel, out_channel, kernel_size, style_dim, upsample=False, downsample=False, blur_kernel=[1, 3, 3, 1], demodulate=True):
-        super(ModulatedConv2d, self).__init__()
-        self.in_channel = in_channel
-        self.out_channel = out_channel
-        self.kernel_size = kernel_size
-        self.upsample = upsample
-        self.downsample = downsample
-        self.demodulate = demodulate
-        self.eps = 1e-8
-        self.scale = 1 / math.sqrt(in_channel * kernel_size ** 2)
-        self.padding = kernel_size // 2
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.python.keras.utils import conv_utils
+from tensorflow.keras import layers, initializers, regularizers, constraints
+import keras.backend as K
 
-        if upsample:
-            self.blur = Blur(blur_kernel, pad=(self.padding, self.padding))
-        if downsample:
-            self.blur = Blur(blur_kernel, pad=(self.padding, self.padding))
 
-        self.weight = self.add_weight(shape=(1, out_channel, in_channel, kernel_size, kernel_size), initializer='random_normal', trainable=True)
-        self.modulation = EqualLinear(out_dim=in_channel, use_bias=True, activation=None)
+# Custom mod-demod convolutional layer
+
+class ModulatedConv2d(layers.Layer):
+    def __init__(self, filters, kernel_size,
+                 strides=1, padding='same', dilation_rate=(1,1),
+                 kernel_initializer='glorot_uniform', kernel_regularizer=None,
+                 activity_regularizer=None, kernel_constraint=None,
+                 demod=True, **kwargs):
+        super(ModulatedConv2d, self).__init__(**kwargs)
+
+        self.filters = filters
+        self.kernel_size = conv_utils.normalize_tuple(kernel_size, 2, 'kernel_size')
+        self.strides = conv_utils.normalize_tuple(strides, 2, 'strides')
+        self.padding = 'same' if isinstance(padding, int) else conv_utils.normalize_padding(padding)
+        self.dilation_rate = conv_utils.normalize_tuple(dilation_rate, 2, 'dilation_rate')
+        self.kernel_initializer = tf.keras.initializers.get(kernel_initializer)
+        self.kernel_regularizer = tf.keras.regularizers.get(kernel_regularizer)
+        self.kernel_constraint = tf.keras.constraints.get(kernel_constraint)
+        self.demod = demod
+        self.epsilon = 1e-8
+
+    def build(self, input_shape):
+        input_shape, style_shape = input_shape
+        channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
+        if input_shape[channel_axis] is None:
+            raise ValueError('The channel dimension of the inputs should be defined. Found `None`.')
+        input_dim = int(input_shape[channel_axis])
+        self.kernel_shape = self.kernel_size + (input_dim, self.filters)
+
+        self.kernel = self.add_weight(
+            shape=self.kernel_shape,
+            initializer=self.kernel_initializer,
+            name='kernel',
+            regularizer=self.kernel_regularizer,
+            constraint=self.kernel_constraint
+        )
         
-        self.conv = PyConv2D(filters=out_channel, kernel_size=kernel_size, strides=1, padding='same', data_format='channels_first')
+        self.style_scale = self.add_weight(
+            shape=(style_shape[-1], self.filters),
+            initializer='ones',
+            name='style_scale',
+            trainable=True
+        )
 
-    def call(self, input, style):
-        print(f"⛳ ModulatedConv2d Input shape: {input.shape}")
-        print(f"ModulatedConv2d Style shape: {style.shape}")
+        print(f"ModulatedConv2D build - kernel shape: {self.kernel.shape}, style_scale shape: {self.style_scale.shape}")
+        self.built = True
 
-        batch_size = tf.shape(input)[0]
-        height = tf.shape(input)[2]
-        width = tf.shape(input)[3]
+    def call(self, inputs):
+        x, style = inputs
+        print(f"⛳ ModulatedConv2D call - input x shape: {x.shape}, style shape: {style.shape}")
+        batch_size = tf.shape(x)[0]
 
-        style = self.modulation(style)
-        style = tf.reshape(style, [batch_size, 1, self.in_channel, 1, 1])
-        print(f"ModulatedConv2d Style shape after modulation: {style.shape}")
-
-        weight = self.scale * self.weight * style
-        print(f"ModulatedConv2d Weight shape after style modulation: {weight.shape}")
-
-        if self.demodulate:
-            demod = tf.math.rsqrt(tf.reduce_sum(tf.square(weight), axis=[2, 3, 4]) + self.eps)
-            weight = weight * tf.reshape(demod, [batch_size, self.out_channel, 1, 1, 1])
-            print(f"ModulatedConv2d Weight shape after demodulation: {weight.shape}")
-
-        weight = tf.reshape(weight, [batch_size * self.out_channel, self.in_channel, self.kernel_size, self.kernel_size])
-        print(f"ModulatedConv2d Weight shape before convolution: {weight.shape}")
-
-        if self.upsample:
-            input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
-            weight = tf.reshape(weight, [batch_size, self.out_channel, self.in_channel, self.kernel_size, self.kernel_size])
-            weight = tf.transpose(weight, [0, 2, 1, 3, 4])
-            weight = tf.reshape(weight, [batch_size * self.in_channel, self.out_channel, self.kernel_size, self.kernel_size])
-            
-            # Implement grouped transposed convolution
-            out = []
-            for i in range(batch_size):
-                out.append(tf.nn.conv2d_transpose(
-                    input[:, i*self.in_channel:(i+1)*self.in_channel, :, :],
-                    weight[i*self.in_channel:(i+1)*self.in_channel, :, :, :],
-                    output_shape=[1, self.out_channel, height * 2, width * 2],
-                    strides=[1, 1, 2, 2],
-                    padding='SAME',
-                    data_format='NCHW'
-                ))
-            out = tf.concat(out, axis=0)
-            out = tf.reshape(out, [batch_size, self.out_channel, height * 2, width * 2])
-            print(f"ModulatedConv2d Output shape after upsampling: {out.shape}")
-            out = self.blur(out)
-            print(f"ModulatedConv2d Output shape after blur: {out.shape}")
+        # Apply style scaling
+        style = tf.matmul(style, self.style_scale)
+        style = tf.reshape(style, [batch_size, 1, 1, self.filters])
+        print(f"🍟 Style shape after scaling: {style.shape}")
         
-        elif self.downsample:
-            input = self.blur(input)
-            print(f"ModulatedConv2d Input shape after blur: {input.shape}")
-            _, _, height, width = input.shape
-            input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
-            
-            # Implement grouped convolution
-            out = []
-            for i in range(batch_size):
-                out.append(tf.nn.conv2d(
-                    input[:, i*self.in_channel:(i+1)*self.in_channel, :, :],
-                    weight[i*self.out_channel:(i+1)*self.out_channel, :, :, :],
-                    strides=[1, 1, 2, 2],
-                    padding='VALID',
-                    data_format='NCHW'
-                ))
-            out = tf.concat(out, axis=1)
-            out = tf.reshape(out, [batch_size, self.out_channel, height // 2, width // 2])
-            print(f"ModulatedConv2d Output shape after downsampling: {out.shape}")
-        
-        else:
-            # Use the grouped convolution implementation from the previous answer
-            input = tf.reshape(input, [1, batch_size * self.in_channel, height, width])
-            weight = tf.transpose(weight, [1, 0, 2, 3])
-            
-            out = []
-            for i in range(batch_size):
-                out.append(tf.nn.conv2d(
-                    input[:, i*self.in_channel:(i+1)*self.in_channel, :, :],
-                    weight[:, i*self.out_channel:(i+1)*self.out_channel, :, :],
-                    strides=[1, 1, 1, 1],
-                    padding='SAME',
-                    data_format='NCHW'
-                ))
-            out = tf.concat(out, axis=1)
-            out = tf.reshape(out, [batch_size, self.out_channel, height, width])
-            print(f"ModulatedConv2d Output shape after convolution: {out.shape}")
+        # Modulate
+        w = self.kernel
+        w = w[tf.newaxis, :, :, :, :]  # [1, kh, kw, in_ch, out_ch]
+        w = w * (style[:, tf.newaxis, tf.newaxis, tf.newaxis, :] + 1)
+        print(f"Weight shape after style modulation: {w.shape}")
 
-        return out
+        # Demodulate
+        if self.demod:
+            d = tf.math.rsqrt(tf.reduce_sum(tf.square(w), axis=[1,2,3]) + self.epsilon)
+            w = w * d[:, tf.newaxis, tf.newaxis, tf.newaxis, :]
+        print(f"Weight shape after demodulation: {w.shape}")
+
+        # Reshape for convolution
+        w = tf.transpose(tf.reshape(w, [batch_size * self.kernel_shape[0], self.kernel_shape[1], self.kernel_shape[2], self.filters]), [1, 2, 3, 0])
+        print(f"Weight shape before convolution: {w.shape}")
+        
+        # Convolution
+        x = tf.transpose(x, [0, 2, 3, 1])  # NHWC
+        x = tf.reshape(x, [1, -1, tf.shape(x)[2], tf.shape(x)[3]])  # [1, b*in_ch, h, w]
+        print(f"Input shape before convolution: {x.shape}")
+        x = tf.nn.conv2d(x, w, strides=self.strides, padding=self.padding.upper(), data_format="NHWC")
+        print(f"Output shape after convolution: {x.shape}")
+        x = tf.reshape(x, [batch_size, tf.shape(x)[1], tf.shape(x)[2], self.filters])
+        x = tf.transpose(x, [0, 3, 1, 2])  # NCHW
+        
+        print(f"ModulatedConv2D call - output x shape: {x.shape}")
+        return x
+
+    def compute_output_shape(self, input_shape):
+        input_shape = input_shape[0]
+        space = input_shape[1:-1]
+        new_space = []
+        for i in range(len(space)):
+            new_dim = conv_utils.conv_output_length(
+                space[i],
+                self.kernel_size[i],
+                padding=self.padding,
+                stride=self.strides[i],
+                dilation=self.dilation_rate[i])
+            new_space.append(new_dim)
+        return (input_shape[0],) + tuple(new_space) + (self.filters,)
     
 class NoiseInjection(tf.keras.layers.Layer):
     def __init__(self):

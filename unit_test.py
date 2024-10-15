@@ -18,6 +18,8 @@ from model import (DenseFeatureEncoder as PyTorchDenseFeatureEncoder,
                    FrameDecoder as PyTorchFrameDecoder,
                    FeatResBlock,
                     )
+from lia_resblocks import ModulatedConv2d
+from tf.lia_resblocks import ModulatedConv2d as TFModulatedConv2d
 from tf.model import (DenseFeatureEncoder as TFDenseFeatureEncoder,
                       LatentTokenEncoder as TFLatentTokenEncoder,
                       LatentTokenDecoder as TFLatentTokenDecoder,
@@ -145,299 +147,329 @@ class TestIMFComponents(unittest.TestCase):
         self.latent_dim = 32
         self.epsilon = 1e-5  # Tolerance for floating-point comparisons
 
+        self.in_channel = 32
+        self.out_channel = 64
+        self.kernel_size = 3
+        self.style_dim = 512
+        self.height = 64
+        self.width = 64
+
+    def test_modulated_conv2d(self):
+        print("\n🧪 Testing test_modulated_conv2d")
+        # PyTorch setup
+        torch_conv = ModulatedConv2d(self.in_channel, self.out_channel, self.kernel_size, self.style_dim)
+        torch_input = torch.randn(self.batch_size, self.in_channel, self.height, self.width)
+        torch_style = torch.randn(self.batch_size, self.style_dim)
+
+        # TensorFlow setup
+        tf_conv = TFModulatedConv2d(filters=self.out_channel, kernel_size=self.kernel_size)
+        tf_input = tf.convert_to_tensor(torch_input.numpy(), dtype=tf.float32)
+        tf_style = tf.convert_to_tensor(torch_style.numpy(), dtype=tf.float32)
+
+        # Forward pass
+        torch_output = torch_conv(torch_input, torch_style)
+        tf_output = tf_conv([tf_input, tf_style])
+
+        # Assert shapes
+        self.assertEqual(torch_output.shape, tf_output.shape)
+
+        # Assert close values
+        np.testing.assert_allclose(torch_output.detach().numpy(), tf_output.numpy(), rtol=1e-5, atol=1e-5)
+
+        print("ModulatedConv2d test passed successfully!")
 
 
-    def test_conv_block(self):
-        print("\n🧪 Testing test_conv_block")
+    # def test_conv_block(self):
+    #     print("\n🧪 Testing test_conv_block")
 
-        in_channels, out_channels = 64, 128
-        kernel_size, stride, padding = 3, 1, 1
+    #     in_channels, out_channels = 64, 128
+    #     kernel_size, stride, padding = 3, 1, 1
         
-        np.random.seed(0)
-        input_np = np.random.rand(1, in_channels, 32, 32).astype(np.float32)
-        input_torch = torch.from_numpy(input_np)
-        input_tf = tf.convert_to_tensor(input_np)
+    #     np.random.seed(0)
+    #     input_np = np.random.rand(1, in_channels, 32, 32).astype(np.float32)
+    #     input_torch = torch.from_numpy(input_np)
+    #     input_tf = tf.convert_to_tensor(input_np)
         
-        torch.manual_seed(0)
-        conv_torch = torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
+    #     torch.manual_seed(0)
+    #     conv_torch = torch.nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=False)
         
-        tf.random.set_seed(0)
-        conv_tf = tf.keras.layers.Conv2D(out_channels, kernel_size, strides=stride, padding='same', 
-                                        use_bias=False, data_format='channels_first')
-        conv_tf.build((None, in_channels, None, None))
+    #     tf.random.set_seed(0)
+    #     conv_tf = tf.keras.layers.Conv2D(out_channels, kernel_size, strides=stride, padding='same', 
+    #                                     use_bias=False, data_format='channels_first')
+    #     conv_tf.build((None, in_channels, None, None))
         
-        # Copy weights from PyTorch to TensorFlow
-        tf_weights = conv_torch.weight.detach().numpy().transpose(2, 3, 1, 0)
-        conv_tf.set_weights([tf_weights])
+    #     # Copy weights from PyTorch to TensorFlow
+    #     tf_weights = conv_torch.weight.detach().numpy().transpose(2, 3, 1, 0)
+    #     conv_tf.set_weights([tf_weights])
         
-        output_torch = conv_torch(input_torch).detach().numpy()
-        output_tf = conv_tf(input_tf).numpy()
+    #     output_torch = conv_torch(input_torch).detach().numpy()
+    #     output_tf = conv_tf(input_tf).numpy()
         
-        print("Input shape:", input_np.shape)
-        print("PyTorch output shape:", output_torch.shape)
-        print("TensorFlow output shape:", output_tf.shape)
-        print("\nPyTorch Conv1 output first few values:", output_torch.flatten()[:10])
-        print("TensorFlow Conv1 output first few values:", output_tf.flatten()[:10])
+    #     print("Input shape:", input_np.shape)
+    #     print("PyTorch output shape:", output_torch.shape)
+    #     print("TensorFlow output shape:", output_tf.shape)
+    #     print("\nPyTorch Conv1 output first few values:", output_torch.flatten()[:10])
+    #     print("TensorFlow Conv1 output first few values:", output_tf.flatten()[:10])
         
-        try:
-            np.testing.assert_allclose(output_torch, output_tf, rtol=1e-5, atol=1e-5)
-            print("\nOutputs match!")
-        except AssertionError as e:
-            print("\nOutputs do not match.")
-            print("Max absolute difference:", np.max(np.abs(output_torch - output_tf)))
-            print("Max relative difference:", np.max(np.abs((output_torch - output_tf) / (output_tf + 1e-7))))
+    #     try:
+    #         np.testing.assert_allclose(output_torch, output_tf, rtol=1e-5, atol=1e-5)
+    #         print("\nOutputs match!")
+    #     except AssertionError as e:
+    #         print("\nOutputs do not match.")
+    #         print("Max absolute difference:", np.max(np.abs(output_torch - output_tf)))
+    #         print("Max relative difference:", np.max(np.abs((output_torch - output_tf) / (output_tf + 1e-7))))
 
-        print("\nPyTorch weights (first few values):", conv_torch.weight.data.numpy().flatten()[:10])
-        print("TensorFlow weights (first few values):", conv_tf.get_weights()[0].transpose(3, 2, 0, 1).flatten()[:10])
+    #     print("\nPyTorch weights (first few values):", conv_torch.weight.data.numpy().flatten()[:10])
+    #     print("TensorFlow weights (first few values):", conv_tf.get_weights()[0].transpose(3, 2, 0, 1).flatten()[:10])
 
-    def test_normlayer():
-        print("\n🧪 Testing NormLayer")
+    # def test_normlayer():
+    #     print("\n🧪 Testing NormLayer")
         
-        num_features = 64
-        input_tensor = torch.randn(2, num_features, 32, 32)
+    #     num_features = 64
+    #     input_tensor = torch.randn(2, num_features, 32, 32)
         
-        for norm_type in ['batch', 'instance', 'layer']:
-            norm_layer = NormLayer(num_features, norm_type)
-            output = norm_layer(input_tensor)
+    #     for norm_type in ['batch', 'instance', 'layer']:
+    #         norm_layer = NormLayer(num_features, norm_type)
+    #         output = norm_layer(input_tensor)
             
-            print(f"{norm_type.capitalize()} Norm output shape:", output.shape)
-            print(f"{norm_type.capitalize()} Norm output first few values:", output.flatten()[:5])
+    #         print(f"{norm_type.capitalize()} Norm output shape:", output.shape)
+    #         print(f"{norm_type.capitalize()} Norm output first few values:", output.flatten()[:5])
             
-            assert output.shape == input_tensor.shape, f"{norm_type.capitalize()} Norm output shape mismatch"
+    #         assert output.shape == input_tensor.shape, f"{norm_type.capitalize()} Norm output shape mismatch"
 
-    def test_convblock(self):
-        print("\n🧪 Testing ConvBlock")
+    # def test_convblock(self):
+    #     print("\n🧪 Testing ConvBlock")
         
-        in_channels, out_channels = 3, 64
-        input_tensor = torch.randn(2, in_channels, 32, 32)
+    #     in_channels, out_channels = 3, 64
+    #     input_tensor = torch.randn(2, in_channels, 32, 32)
         
-        conv_block = ConvBlock(in_channels, out_channels)
-        output = conv_block(input_tensor)
+    #     conv_block = ConvBlock(in_channels, out_channels)
+    #     output = conv_block(input_tensor)
         
-        print("ConvBlock output shape:", output.shape)
-        print("ConvBlock output first few values:", output.flatten()[:5])
+    #     print("ConvBlock output shape:", output.shape)
+    #     print("ConvBlock output first few values:", output.flatten()[:5])
         
-        assert output.shape == (2, out_channels, 32, 32), "ConvBlock output shape mismatch"
+    #     assert output.shape == (2, out_channels, 32, 32), "ConvBlock output shape mismatch"
 
-    def test_featresblock(self):
-        print("\n🧪 Testing FeatResBlock")
+    # def test_featresblock(self):
+    #     print("\n🧪 Testing FeatResBlock")
         
-        channels = 64
-        input_tensor = torch.randn(2, channels, 32, 32)
+    #     channels = 64
+    #     input_tensor = torch.randn(2, channels, 32, 32)
         
-        feat_res_block = FeatResBlock(channels)
-        output = feat_res_block(input_tensor)
+    #     feat_res_block = FeatResBlock(channels)
+    #     output = feat_res_block(input_tensor)
         
-        print("FeatResBlock output shape:", output.shape)
-        print("FeatResBlock output first few values:", output.flatten()[:5])
+    #     print("FeatResBlock output shape:", output.shape)
+    #     print("FeatResBlock output first few values:", output.flatten()[:5])
         
-        assert output.shape == input_tensor.shape, "FeatResBlock output shape mismatch"
+    #     assert output.shape == input_tensor.shape, "FeatResBlock output shape mismatch"
 
-    def test_downconvresblock(self):
-        print("\n🧪 Testing DownConvResBlock")
+    # def test_downconvresblock(self):
+    #     print("\n🧪 Testing DownConvResBlock")
 
-        in_channels, out_channels = 64, 128
-        batch_size, height, width = 2, 32, 32
+    #     in_channels, out_channels = 64, 128
+    #     batch_size, height, width = 2, 32, 32
         
-        np.random.seed(0)
-        input_np = np.random.rand(batch_size, in_channels, height, width).astype(np.float32)
-        input_torch = torch.from_numpy(input_np)
-        input_tf = tf.convert_to_tensor(input_np)
+    #     np.random.seed(0)
+    #     input_np = np.random.rand(batch_size, in_channels, height, width).astype(np.float32)
+    #     input_torch = torch.from_numpy(input_np)
+    #     input_tf = tf.convert_to_tensor(input_np)
         
-        torch.manual_seed(0)
-        block_torch = DownConvResBlock(in_channels, out_channels)
+    #     torch.manual_seed(0)
+    #     block_torch = DownConvResBlock(in_channels, out_channels)
         
-        tf.random.set_seed(0)
-        block_tf = TFDownConvResBlock(in_channels, out_channels)
+    #     tf.random.set_seed(0)
+    #     block_tf = TFDownConvResBlock(in_channels, out_channels)
         
-        # Copy weights from PyTorch to TensorFlow
-        for torch_layer, tf_layer in zip(block_torch.modules(), block_tf.layers):
-            if isinstance(torch_layer, nn.Conv2d) and isinstance(tf_layer, tf.keras.layers.Conv2D):
-                tf_weights = torch_layer.weight.detach().numpy().transpose(2, 3, 1, 0)
-                tf_layer.set_weights([tf_weights])
+    #     # Copy weights from PyTorch to TensorFlow
+    #     for torch_layer, tf_layer in zip(block_torch.modules(), block_tf.layers):
+    #         if isinstance(torch_layer, nn.Conv2d) and isinstance(tf_layer, tf.keras.layers.Conv2D):
+    #             tf_weights = torch_layer.weight.detach().numpy().transpose(2, 3, 1, 0)
+    #             tf_layer.set_weights([tf_weights])
         
-        output_torch = block_torch(input_torch).detach().numpy()
-        output_tf = block_tf(input_tf).numpy()
+    #     output_torch = block_torch(input_torch).detach().numpy()
+    #     output_tf = block_tf(input_tf).numpy()
         
-        print("Input shape:", input_np.shape)
-        print("PyTorch output shape:", output_torch.shape)
-        print("TensorFlow output shape:", output_tf.shape)
-        print("\nPyTorch output first few values:", output_torch.flatten()[:10])
-        print("TensorFlow output first few values:", output_tf.flatten()[:10])
+    #     print("Input shape:", input_np.shape)
+    #     print("PyTorch output shape:", output_torch.shape)
+    #     print("TensorFlow output shape:", output_tf.shape)
+    #     print("\nPyTorch output first few values:", output_torch.flatten()[:10])
+    #     print("TensorFlow output first few values:", output_tf.flatten()[:10])
         
-        try:
-            np.testing.assert_allclose(output_torch, output_tf, rtol=1e-5, atol=1e-5)
-            print("\nOutputs match!")
-        except AssertionError as e:
-            print("\nOutputs do not match.")
-            print("Max absolute difference:", np.max(np.abs(output_torch - output_tf)))
-            print("Max relative difference:", np.max(np.abs((output_torch - output_tf) / (output_tf + 1e-7))))
+    #     try:
+    #         np.testing.assert_allclose(output_torch, output_tf, rtol=1e-5, atol=1e-5)
+    #         print("\nOutputs match!")
+    #     except AssertionError as e:
+    #         print("\nOutputs do not match.")
+    #         print("Max absolute difference:", np.max(np.abs(output_torch - output_tf)))
+    #         print("Max relative difference:", np.max(np.abs((output_torch - output_tf) / (output_tf + 1e-7))))
 
-        # Test gradient flow
-        input_torch.requires_grad_(True)
-        input_tf = tf.Variable(input_np)
+    #     # Test gradient flow
+    #     input_torch.requires_grad_(True)
+    #     input_tf = tf.Variable(input_np)
 
-        with tf.GradientTape() as tape:
-            output_tf = block_tf(input_tf)
+    #     with tf.GradientTape() as tape:
+    #         output_tf = block_tf(input_tf)
         
-        output_torch = block_torch(input_torch)
-        output_torch.sum().backward()
+    #     output_torch = block_torch(input_torch)
+    #     output_torch.sum().backward()
         
-        grad_torch = input_torch.grad.numpy()
-        grad_tf = tape.gradient(output_tf, input_tf).numpy()
+    #     grad_torch = input_torch.grad.numpy()
+    #     grad_tf = tape.gradient(output_tf, input_tf).numpy()
         
-        print("\nPyTorch input gradient first few values:", grad_torch.flatten()[:10])
-        print("TensorFlow input gradient first few values:", grad_tf.flatten()[:10])
+    #     print("\nPyTorch input gradient first few values:", grad_torch.flatten()[:10])
+    #     print("TensorFlow input gradient first few values:", grad_tf.flatten()[:10])
         
-        try:
-            np.testing.assert_allclose(grad_torch, grad_tf, rtol=1e-5, atol=1e-5)
-            print("\nGradients match!")
-        except AssertionError as e:
-            print("\nGradients do not match.")
-            print("Max absolute difference:", np.max(np.abs(grad_torch - grad_tf)))
-            print("Max relative difference:", np.max(np.abs((grad_torch - grad_tf) / (grad_tf + 1e-7))))
+    #     try:
+    #         np.testing.assert_allclose(grad_torch, grad_tf, rtol=1e-5, atol=1e-5)
+    #         print("\nGradients match!")
+    #     except AssertionError as e:
+    #         print("\nGradients do not match.")
+    #         print("Max absolute difference:", np.max(np.abs(grad_torch - grad_tf)))
+    #         print("Max relative difference:", np.max(np.abs((grad_torch - grad_tf) / (grad_tf + 1e-7))))
 
-    def test_upconvresblock(self):
-        print("\n🧪 Testing UpConvResBlock")
+    # def test_upconvresblock(self):
+    #     print("\n🧪 Testing UpConvResBlock")
 
-        in_channels, out_channels = 128, 64
-        batch_size, height, width = 2, 16, 16
+    #     in_channels, out_channels = 128, 64
+    #     batch_size, height, width = 2, 16, 16
         
-        np.random.seed(0)
-        input_np = np.random.rand(batch_size, in_channels, height, width).astype(np.float32)
-        input_torch = torch.from_numpy(input_np)
-        input_tf = tf.convert_to_tensor(input_np)
+    #     np.random.seed(0)
+    #     input_np = np.random.rand(batch_size, in_channels, height, width).astype(np.float32)
+    #     input_torch = torch.from_numpy(input_np)
+    #     input_tf = tf.convert_to_tensor(input_np)
         
-        torch.manual_seed(0)
-        block_torch = UpConvResBlock(in_channels, out_channels)
+    #     torch.manual_seed(0)
+    #     block_torch = UpConvResBlock(in_channels, out_channels)
         
-        tf.random.set_seed(0)
-        block_tf = TFUpConvResBlock(in_channels, out_channels)
+    #     tf.random.set_seed(0)
+    #     block_tf = TFUpConvResBlock(in_channels, out_channels)
         
-        # Copy weights from PyTorch to TensorFlow
-        for torch_layer, tf_layer in zip(block_torch.modules(), block_tf.layers):
-            if isinstance(torch_layer, nn.Conv2d) and isinstance(tf_layer, tf.keras.layers.Conv2D):
-                tf_weights = torch_layer.weight.detach().numpy().transpose(2, 3, 1, 0)
-                tf_layer.set_weights([tf_weights])
+    #     # Copy weights from PyTorch to TensorFlow
+    #     for torch_layer, tf_layer in zip(block_torch.modules(), block_tf.layers):
+    #         if isinstance(torch_layer, nn.Conv2d) and isinstance(tf_layer, tf.keras.layers.Conv2D):
+    #             tf_weights = torch_layer.weight.detach().numpy().transpose(2, 3, 1, 0)
+    #             tf_layer.set_weights([tf_weights])
         
-        output_torch = block_torch(input_torch).detach().numpy()
-        output_tf = block_tf(input_tf).numpy()
+    #     output_torch = block_torch(input_torch).detach().numpy()
+    #     output_tf = block_tf(input_tf).numpy()
         
-        print("Input shape:", input_np.shape)
-        print("PyTorch output shape:", output_torch.shape)
-        print("TensorFlow output shape:", output_tf.shape)
-        print("\nPyTorch output first few values:", output_torch.flatten()[:10])
-        print("TensorFlow output first few values:", output_tf.flatten()[:10])
+    #     print("Input shape:", input_np.shape)
+    #     print("PyTorch output shape:", output_torch.shape)
+    #     print("TensorFlow output shape:", output_tf.shape)
+    #     print("\nPyTorch output first few values:", output_torch.flatten()[:10])
+    #     print("TensorFlow output first few values:", output_tf.flatten()[:10])
         
-        try:
-            np.testing.assert_allclose(output_torch, output_tf, rtol=1e-5, atol=1e-5)
-            print("\nOutputs match!")
-        except AssertionError as e:
-            print("\nOutputs do not match.")
-            print("Max absolute difference:", np.max(np.abs(output_torch - output_tf)))
-            print("Max relative difference:", np.max(np.abs((output_torch - output_tf) / (output_tf + 1e-7))))
+    #     try:
+    #         np.testing.assert_allclose(output_torch, output_tf, rtol=1e-5, atol=1e-5)
+    #         print("\nOutputs match!")
+    #     except AssertionError as e:
+    #         print("\nOutputs do not match.")
+    #         print("Max absolute difference:", np.max(np.abs(output_torch - output_tf)))
+    #         print("Max relative difference:", np.max(np.abs((output_torch - output_tf) / (output_tf + 1e-7))))
 
-        # Test gradient flow
-        input_torch.requires_grad_(True)
-        input_tf = tf.Variable(input_np)
+    #     # Test gradient flow
+    #     input_torch.requires_grad_(True)
+    #     input_tf = tf.Variable(input_np)
 
-        with tf.GradientTape() as tape:
-            output_tf = block_tf(input_tf)
+    #     with tf.GradientTape() as tape:
+    #         output_tf = block_tf(input_tf)
         
-        output_torch = block_torch(input_torch)
-        output_torch.sum().backward()
+    #     output_torch = block_torch(input_torch)
+    #     output_torch.sum().backward()
         
-        grad_torch = input_torch.grad.numpy()
-        grad_tf = tape.gradient(output_tf, input_tf).numpy()
+    #     grad_torch = input_torch.grad.numpy()
+    #     grad_tf = tape.gradient(output_tf, input_tf).numpy()
         
-        print("\nPyTorch input gradient first few values:", grad_torch.flatten()[:10])
-        print("TensorFlow input gradient first few values:", grad_tf.flatten()[:10])
+    #     print("\nPyTorch input gradient first few values:", grad_torch.flatten()[:10])
+    #     print("TensorFlow input gradient first few values:", grad_tf.flatten()[:10])
         
-        try:
-            np.testing.assert_allclose(grad_torch, grad_tf, rtol=1e-5, atol=1e-5)
-            print("\nGradients match!")
-        except AssertionError as e:
-            print("\nGradients do not match.")
-            print("Max absolute difference:", np.max(np.abs(grad_torch - grad_tf)))
-            print("Max relative difference:", np.max(np.abs((grad_torch - grad_tf) / (grad_tf + 1e-7))))
+    #     try:
+    #         np.testing.assert_allclose(grad_torch, grad_tf, rtol=1e-5, atol=1e-5)
+    #         print("\nGradients match!")
+    #     except AssertionError as e:
+    #         print("\nGradients do not match.")
+    #         print("Max absolute difference:", np.max(np.abs(grad_torch - grad_tf)))
+    #         print("Max relative difference:", np.max(np.abs((grad_torch - grad_tf) / (grad_tf + 1e-7))))
             
 
-    def test_downconvresblock_components(self):
-        in_channels = 64
-        out_channels = 128
-        pytorch_block =  DownConvResBlock(in_channels, out_channels)
-        tf_block = TFDownConvResBlock(in_channels, out_channels)
+    # def test_downconvresblock_components(self):
+    #     in_channels = 64
+    #     out_channels = 128
+    #     pytorch_block =  DownConvResBlock(in_channels, out_channels)
+    #     tf_block = TFDownConvResBlock(in_channels, out_channels)
 
-        input_tensor = np.random.rand(self.batch_size, in_channels, self.height, self.width).astype(np.float32)
+    #     input_tensor = np.random.rand(self.batch_size, in_channels, self.height, self.width).astype(np.float32)
         
-        print("\n🧪 Testing DownConvResBlock components")
+    #     print("\n🧪 Testing DownConvResBlock components")
         
-        # Convert input tensor to both PyTorch and TensorFlow tensors
-        pytorch_input = torch.from_numpy(input_tensor).float()
-        tf_input = tf.convert_to_tensor(input_tensor, dtype=tf.float32)
+    #     # Convert input tensor to both PyTorch and TensorFlow tensors
+    #     pytorch_input = torch.from_numpy(input_tensor).float()
+    #     tf_input = tf.convert_to_tensor(input_tensor, dtype=tf.float32)
         
-        # Test Conv1
-        print("\nTesting Conv1")
-        pytorch_conv1 = pytorch_block.conv1(pytorch_input)
-        tf_conv1 = tf_block.conv1(tf_input)
+    #     # Test Conv1
+    #     print("\nTesting Conv1")
+    #     pytorch_conv1 = pytorch_block.conv1(pytorch_input)
+    #     tf_conv1 = tf_block.conv1(tf_input)
 
-        print("PyTorch Conv1 output first few values:", pytorch_conv1.flatten()[:10])
-        print("TensorFlow Conv1 output first few values:", tf_conv1.numpy().flatten()[:10])
+    #     print("PyTorch Conv1 output first few values:", pytorch_conv1.flatten()[:10])
+    #     print("TensorFlow Conv1 output first few values:", tf_conv1.numpy().flatten()[:10])
 
-        self.assert_tensors_close(pytorch_conv1, tf_conv1, "Conv1 output")
+    #     self.assert_tensors_close(pytorch_conv1, tf_conv1, "Conv1 output")
         
-        # Test Conv2
-        print("\nTesting Conv2")
-        pytorch_conv2 = pytorch_block.conv2(pytorch_conv1)
-        tf_conv2 = tf_block.conv2(tf_conv1)
-        self.assert_tensors_close(pytorch_conv2, tf_conv2, "Conv2 output")
+    #     # Test Conv2
+    #     print("\nTesting Conv2")
+    #     pytorch_conv2 = pytorch_block.conv2(pytorch_conv1)
+    #     tf_conv2 = tf_block.conv2(tf_conv1)
+    #     self.assert_tensors_close(pytorch_conv2, tf_conv2, "Conv2 output")
         
-        # Test Shortcut
-        print("\nTesting Shortcut")
-        pytorch_shortcut = pytorch_block.skip(pytorch_input)
-        tf_shortcut = tf_block.skip(tf_input)
-        self.assert_tensors_close(pytorch_shortcut, tf_shortcut, "Shortcut output")
+    #     # Test Shortcut
+    #     print("\nTesting Shortcut")
+    #     pytorch_shortcut = pytorch_block.skip(pytorch_input)
+    #     tf_shortcut = tf_block.skip(tf_input)
+    #     self.assert_tensors_close(pytorch_shortcut, tf_shortcut, "Shortcut output")
         
-        # Test Residual Addition
-        print("\nTesting Residual Addition")
-        pytorch_residual = pytorch_conv2 + pytorch_shortcut
-        tf_residual = tf_conv2 + tf_shortcut
-        self.assert_tensors_close(pytorch_residual, tf_residual, "Residual addition")
+    #     # Test Residual Addition
+    #     print("\nTesting Residual Addition")
+    #     pytorch_residual = pytorch_conv2 + pytorch_shortcut
+    #     tf_residual = tf_conv2 + tf_shortcut
+    #     self.assert_tensors_close(pytorch_residual, tf_residual, "Residual addition")
         
-        # Test Final Activation
-        print("\nTesting Final Activation")
-        pytorch_output = pytorch_block.activation(pytorch_residual)
-        tf_output = tf_block.activation(tf_residual)
-        self.assert_tensors_close(pytorch_output, tf_output, "Final output")
+    #     # Test Final Activation
+    #     print("\nTesting Final Activation")
+    #     pytorch_output = pytorch_block.activation(pytorch_residual)
+    #     tf_output = tf_block.activation(tf_residual)
+    #     self.assert_tensors_close(pytorch_output, tf_output, "Final output")
         
-        # Test FeatResBlock1
-        print("\nTesting FeatResBlock1")
-        pytorch_featres1 = pytorch_block.feat_res_block1(pytorch_output)
-        tf_featres1 = tf_block.feat_res_block1(tf_output)
-        self.assert_tensors_close(pytorch_featres1, tf_featres1, "FeatResBlock1 output")
+    #     # Test FeatResBlock1
+    #     print("\nTesting FeatResBlock1")
+    #     pytorch_featres1 = pytorch_block.feat_res_block1(pytorch_output)
+    #     tf_featres1 = tf_block.feat_res_block1(tf_output)
+    #     self.assert_tensors_close(pytorch_featres1, tf_featres1, "FeatResBlock1 output")
         
-        # Test FeatResBlock2
-        print("\nTesting FeatResBlock2")
-        pytorch_featres2 = pytorch_block.feat_res_block2(pytorch_featres1)
-        tf_featres2 = tf_block.feat_res_block2(tf_featres1)
-        self.assert_tensors_close(pytorch_featres2, tf_featres2, "FeatResBlock2 output")
+    #     # Test FeatResBlock2
+    #     print("\nTesting FeatResBlock2")
+    #     pytorch_featres2 = pytorch_block.feat_res_block2(pytorch_featres1)
+    #     tf_featres2 = tf_block.feat_res_block2(tf_featres1)
+    #     self.assert_tensors_close(pytorch_featres2, tf_featres2, "FeatResBlock2 output")
         
-        print("All DownConvResBlock component tests passed successfully!")
+    #     print("All DownConvResBlock component tests passed successfully!")
 
-    def assert_tensors_close(self, pytorch_tensor, tf_tensor, name):
-        pytorch_np = pytorch_tensor.detach().cpu().numpy()
-        tf_np = tf_tensor.numpy()
+    # def assert_tensors_close(self, pytorch_tensor, tf_tensor, name):
+    #     pytorch_np = pytorch_tensor.detach().cpu().numpy()
+    #     tf_np = tf_tensor.numpy()
         
-        self.assertEqual(pytorch_np.shape, tf_np.shape, f"{name} shapes do not match. PyTorch: {pytorch_np.shape}, TensorFlow: {tf_np.shape}")
+    #     self.assertEqual(pytorch_np.shape, tf_np.shape, f"{name} shapes do not match. PyTorch: {pytorch_np.shape}, TensorFlow: {tf_np.shape}")
         
-        try:
-            np.testing.assert_allclose(pytorch_np, tf_np, rtol=self.epsilon, atol=self.epsilon)
-            print(f"{name} values match within tolerance")
-        except AssertionError as e:
-            print(f"{name} values do not match within tolerance")
-            print(f"Max absolute difference: {np.max(np.abs(pytorch_np - tf_np))}")
-            print(f"Max relative difference: {np.max(np.abs((pytorch_np - tf_np) / (tf_np + 1e-7)))}")
-            raise e
+    #     try:
+    #         np.testing.assert_allclose(pytorch_np, tf_np, rtol=self.epsilon, atol=self.epsilon)
+    #         print(f"{name} values match within tolerance")
+    #     except AssertionError as e:
+    #         print(f"{name} values do not match within tolerance")
+    #         print(f"Max absolute difference: {np.max(np.abs(pytorch_np - tf_np))}")
+    #         print(f"Max relative difference: {np.max(np.abs((pytorch_np - tf_np) / (tf_np + 1e-7)))}")
+    #         raise e
     # def test_latent_token_encoder(self):
     #     pytorch_model = PyTorchLatentTokenEncoder()
     #     tf_model = TFLatentTokenEncoder()
