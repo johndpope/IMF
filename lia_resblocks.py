@@ -396,9 +396,11 @@ class StyledConv(nn.Module):
         self.activate = FusedLeakyReLU(out_channel)
 
     def forward(self, input, style, noise=None):
+        print(f"StyledConv - input shape: {input.shape}, style shape: {style.shape}")
+
         out = self.conv(input, style)
         out = self.noise(out, noise=noise)
         out = self.activate(out)
-
+        print(f"StyledConv - output shape: {out.shape}")
         return out
 
