@@ -68,15 +68,35 @@ It outputs multiple feature maps (f¹ᵣ, f²ᵣ, f³ᵣ, f⁴ᵣ) as shown in t
 
 Each DownConvResBlock performs downsampling using a strided convolution, maintains a residual connection, and applies BatchNorm and relu activations, which is consistent with typical ResNet architectures.'''
 
+class InitialConvBlock(tf.keras.layers.Layer):
+    def __init__(self, in_channels, initial_channels):
+        super(InitialConvBlock, self).__init__()
+        
+        self.conv = tf.keras.layers.Conv2D(
+            filters=initial_channels,
+            kernel_size=7,
+            strides=1,
+            padding='same',  # 'same' padding in TF is equivalent to padding=3 in PyTorch for a 7x7 kernel
+            data_format='channels_first',
+            use_bias=False  # typically, bias is not used when followed by BatchNorm
+        )
+        
+        self.bn = tf.keras.layers.BatchNormalization(axis=1)  # axis=1 for channels_first
+        
+        self.relu = tf.keras.layers.ReLU()
+
+    def call(self, x):
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        return x
+
+
 class DenseFeatureEncoder(tf.keras.Model):
     def __init__(self, in_channels=3, output_channels=[128, 256, 512, 512], initial_channels=64):
         super(DenseFeatureEncoder, self).__init__()
-        self.initial_conv = tf.keras.Sequential([
-            PyConv2D(initial_channels, kernel_size=7, strides=1, padding='same', data_format='channels_first'),
-            layers.BatchNormalization(axis=1),
-            layers.ReLU()
-        ])
-        
+        self.initial_conv = InitialConvBlock(in_channels, initial_channels)
+
         self.down_blocks = []
         current_channels = initial_channels
 
