@@ -213,9 +213,9 @@ class LatentTokenDecoder(tf.keras.Model):
         super(LatentTokenDecoder, self).__init__()
         print(f"Initializing LatentTokenDecoder with latent_dim={latent_dim}, const_dim={const_dim}")
         
-        # Initialize a constant input
-        self.const = self.add_weight(shape=(1, 4, 4, const_dim), initializer='random_normal', trainable=True)
-        print(f"Constant input shape: {self.const.shape}")
+        # Initialize a constant input with shape (1, const_dim, 4, 4)
+        self.constant = self.add_weight(shape=(1, const_dim, 4, 4), initializer='random_normal', trainable=True)
+        print(f"Constant input shape: {self.constant.shape}")
 
         self.style_conv_layers = [
             StyledConv(const_dim, 512, 3, latent_dim),
@@ -238,7 +238,7 @@ class LatentTokenDecoder(tf.keras.Model):
         print(f"🍩 LatentTokenDecoder call method input shape: {t.shape}")
         
         batch_size = tf.shape(t)[0]
-        x = tf.tile(self.const, [batch_size, 1, 1, 1])
+        x = tf.tile(self.constant, [batch_size, 1, 1, 1])
         print(f"Tiled constant input shape: {x.shape}")
         
         m1, m2, m3, m4 = None, None, None, None
