@@ -1,3 +1,4 @@
+
 git+https://github.com/johndpope/colored-traceback.py.git
 
 torch
@@ -22,3 +23,9 @@ onnxconverter_common
 
 
 git+https://github.com/alexlee-gk/lpips-tensorflow.git
+
+git+https://github.com/johndpope/onnx-tensorflow
+
+
+--extra-index-url https://pypi.ngc.nvidia.com
+onnx_graphsurgeon

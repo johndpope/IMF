@@ -45,8 +45,33 @@ activation_funcs = {
 }
 
 #----------------------------------------------------------------------------
+def fused_bias_act(x, b=None, axis=1, act='linear', alpha=None, gain=None):
+    if b is not None:
+        x = tf.nn.bias_add(x, b, data_format='NCHW' if axis == 1 else 'NHWC')
+    
+    if act == 'linear':
+        return x
+    elif act == 'relu':
+        return tf.nn.relu(x)
+    elif act == 'lrelu':
+        return tf.nn.leaky_relu(x, alpha=alpha if alpha is not None else 0.2)
+    elif act == 'tanh':
+        return tf.nn.tanh(x)
+    elif act == 'sigmoid':
+        return tf.nn.sigmoid(x)
+    elif act == 'elu':
+        return tf.nn.elu(x)
+    elif act == 'selu':
+        return tf.nn.selu(x)
+    elif act == 'softplus':
+        return tf.nn.softplus(x)
+    elif act == 'swish':
+        return x * tf.nn.sigmoid(x)
+    else:
+        raise ValueError(f"Unsupported activation function: {act}")
 
-def fused_bias_act(x, b=None, axis=1, act='linear', alpha=None, gain=None, impl='cuda'):
+
+def old_fused_bias_act(x, b=None, axis=1, act='linear', alpha=None, gain=None, impl='cuda'):
     r"""Fused bias and activation function.
 
     Adds bias `b` to activation tensor `x`, evaluates activation function `act`,
