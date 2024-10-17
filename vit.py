@@ -54,30 +54,6 @@ class TransformerBlock(nn.Module):
         return output
 
 
-class ImplicitMotionAlignmentWithSkip(nn.Module):
-    def __init__(self, feature_dim, motion_dim, depth, num_heads, window_size, mlp_ratio, use_mlgffn=False):
-        super().__init__()
-  
-        if use_mlgffn:
-            self.cross_attention = MLGFFNCrossAttention(feature_dim, motion_dim, num_heads)
-            self.blocks = nn.ModuleList([
-                HSCATB(feature_dim, num_heads, window_size, mlp_ratio) for _ in range(depth)
-            ])
-        else:
-            self.cross_attention = CrossAttentionModule(dim=feature_dim, heads=num_heads, dim_head=feature_dim // num_heads)
-            self.blocks = nn.ModuleList([
-                TransformerBlock(feature_dim, num_heads, feature_dim // num_heads, feature_dim * mlp_ratio)
-                for _ in range(depth)
-            ])
-        self.skip_connections = nn.ModuleList([
-            nn.Linear(motion_dim, motion_dim) for _ in range(depth)
-        ])
-
-    def forward(self, m_c, m_r, f_r):
-        x = self.cross_attention(m_c, m_r, f_r)
-        for block, skip in zip(self.blocks, self.skip_connections):
-            x = block(x) + skip(x)
-        return x
 
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim,spatial_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
@@ -203,7 +179,7 @@ if __name__ == "__main__":
     heads = 8
     dim_head = 64
     mlp_dim = 1024
-
+    spatial_dim = (64,64)
 
 
     # Create random input tensors and move to device
@@ -212,15 +188,15 @@ if __name__ == "__main__":
     fl_r = torch.randn(B, C_f, H, W).to(device)
 
     # Initialize the ImplicitMotionAlignment module and move to device
-    model = ImplicitMotionAlignment(feature_dim, motion_dim, depth, heads, dim_head, mlp_dim).to(device)
+    model = ImplicitMotionAlignment(feature_dim, motion_dim,spatial_dim, depth, heads, dim_head, mlp_dim).to(device)
 
     # Forward pass
     with torch.no_grad():
-        output, embeddings = model(ml_c, ml_r, fl_r)
+        output = model(ml_c, ml_r, fl_r)
 
-    #print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-    #print(f"Output shape: {output.shape}")
+    print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+    print(f"Output shape: {output.shape}")
 
     # Visualize embeddings
-    model.visualize_embeddings(embeddings, "embeddings_visualization.png")
+    # model.visualize_embeddings(embeddings, "embeddings_visualization.png")
     #print("Embedding visualization saved as 'embeddings_visualization.png'")
