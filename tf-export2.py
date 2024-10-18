@@ -2,6 +2,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import nobuco
+import inspect
 from nobuco import ChannelOrder, ChannelOrderingStrategy
 from nobuco.layers.weight import WeightLayer
 
@@ -22,8 +23,41 @@ from nobuco import converter, ChannelOrderingStrategy
 console = Console(width=3000)
 
 # Install Rich traceback handling
-install(show_locals=True)
+# install(show_locals=True)
 install()
+# import tensorflow as tf
+# from nobuco.commons import TF_TENSOR_CLASSES
+# import nobuco.trace.trace
+# import types
+
+# def tf_view(tensor, *shape):
+#     if isinstance(tensor, TF_TENSOR_CLASSES):
+#         # Convert -1 in shape to None for tf.reshape
+#         new_shape = [s if s != -1 else None for s in shape]
+#         return tf.reshape(tensor, new_shape)
+#     else:
+#         # For PyTorch tensors, use the original view method
+#         return tensor.view(*shape)
+
+# def patch_nobuco():
+#     # Add the tf_view function to the nobuco.trace.trace module
+#     nobuco.trace.trace.tf_view = tf_view
+    
+#     # Patch the Tracer class to use tf_view
+#     original_op_tracing_decorator = nobuco.trace.trace.Tracer.op_tracing_decorator
+    
+#     @classmethod
+#     def patched_op_tracing_decorator(cls, orig_method, op_cls, module_suffix=None, is_whitelist_op=False, need_trace_deeper=True):
+#         if orig_method.__name__ == 'view':
+#             def view_wrapper(*args, **kwargs):
+#                 return tf_view(*args, **kwargs)
+#             return view_wrapper
+#         return original_op_tracing_decorator(orig_method, op_cls, module_suffix, is_whitelist_op, need_trace_deeper)
+    
+#     nobuco.trace.trace.Tracer.op_tracing_decorator = patched_op_tracing_decorator
+
+# # Call this function to apply the patch
+# patch_nobuco()
 
 @converter(CrossAttentionModule, channel_ordering_strategy=ChannelOrderingStrategy.FORCE_PYTORCH_ORDER)
 def converter_CrossAttentionModule(self, queries, keys, values):
@@ -129,7 +163,7 @@ def converter_ImplicitMotionAlignment(self, ml_c, ml_r, fl_r):
     dummy_ml_c = tf.zeros_like(ml_c)
     dummy_ml_r = tf.zeros_like(ml_r)
     dummy_fl_r = tf.zeros_like(fl_r)
-    keras_model([dummy_ml_c, dummy_ml_r, dummy_fl_r])
+    keras_model(dummy_ml_c, dummy_ml_r, dummy_fl_r)
     
     # Transfer weights for CrossAttentionModule
     keras_model.cross_attention.set_weights([
@@ -138,22 +172,23 @@ def converter_ImplicitMotionAlignment(self, ml_c, ml_r, fl_r):
     ])
     
     # Transfer weights for TransformerBlocks
-    for i, (pytorch_block, keras_block) in enumerate(zip(self.transformer_blocks, keras_model.transformer_blocks)):
-        print(f"Converting TransformerBlock {i}")
+    # for i, (pytorch_block, keras_block) in enumerate(zip(self.transformer_blocks, keras_model.transformer_blocks)):
+    #     print(f"Converting TransformerBlock {i}")
             
-        print("pytorch_block:",pytorch_block)
-        print("keras_block:",keras_block)
+    #     print("pytorch_block:",pytorch_block)
+    #     print("keras_block:",keras_block)
         
-        # Use nobuco's conversion mechanism for TransformerBlock
-        converted_block = nobuco.pytorch_to_keras(
-            pytorch_block,
-            args=[tf.zeros_like(keras_block.inputs)],
-            inputs_channel_order=ChannelOrder.PYTORCH,
-            outputs_channel_order=ChannelOrder.PYTORCH
-        )
-        print("converted_block:",converted_block)
-        # Replace the keras_block with the converted_block
-        keras_model.transformer_blocks[i] = converted_block
+    #     # Use nobuco's conversion mechanism for TransformerBlock
+    #     converted_block = nobuco.pytorch_to_keras(
+    #         pytorch_block,
+    #         args=[tf.zeros_like(keras_block.inputs)],
+    #         inputs_channel_order=ChannelOrder.PYTORCH,
+    #         outputs_channel_order=ChannelOrder.PYTORCH,
+    #         enable_torch_tracing = True
+    #     )
+    #     print("converted_block:",converted_block)
+    #     # Replace the keras_block with the converted_block
+    #     keras_model.transformer_blocks[i] = converted_block
 
     return keras_model
 
@@ -202,16 +237,17 @@ if __name__ == "__main__":
     # Convert to Keras
     keras_model = convert_implicit_motion_alignment(pytorch_model)
 
+    print("keras_model:", keras_model)
     # Run Keras model
     keras_output = keras_model([
         ml_c.numpy(),
         ml_r.numpy(),
         fl_r.numpy()
     ])
-    print("Keras output shape:", keras_output.shape)
+    print("Keras output shape:", keras_output)
 
     # Compare outputs
-    np.testing.assert_allclose(pytorch_output.numpy(), keras_output.numpy(), rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(pytorch_output.detach().numpy(), keras_output.detach().numpy(), rtol=1e-5, atol=1e-5)
     print("PyTorch and Keras outputs match!")
 
     # Save the Keras model

@@ -5,6 +5,11 @@ import numpy as np
 class KerasCrossAttentionModule(keras.layers.Layer):
     def __init__(self, dim_spatial=4096, dim_qk=256, dim_v=256):
         super().__init__()
+        self.dim_spatial = dim_spatial
+        self.dim_qk = dim_qk
+        self.dim_v = dim_v
+
+
         self.dim_qk = dim_qk
         self.dim_v = dim_v
         self.scale = dim_qk ** -0.5
@@ -105,11 +110,19 @@ class KerasTransformerBlock(keras.layers.Layer):
 class KerasImplicitMotionAlignment(keras.Model):
     def __init__(self, feature_dim, motion_dim, spatial_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
+        self.feature_dim = feature_dim
+        self.motion_dim = motion_dim
+        self.spatial_dim = spatial_dim
+        self.depth = depth
+        self.heads = heads
+        self.dim_head = dim_head
+        self.mlp_dim = mlp_dim
+
         self.cross_attention = KerasCrossAttentionModule(dim_spatial=spatial_dim[0] * spatial_dim[1], dim_qk=motion_dim, dim_v=feature_dim)
         self.transformer_blocks = [KerasTransformerBlock(feature_dim, heads, dim_head, mlp_dim) for _ in range(depth)]
 
-    def call(self, inputs):
-        ml_c, ml_r, fl_r = inputs
+    def call(self, ml_c, ml_r, fl_r):
+
         print(f"KerasImplicitMotionAlignment input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         V_prime = self.cross_attention([ml_c, ml_r, fl_r])
         print(f"After cross-attention shape: {V_prime.shape}")

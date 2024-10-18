@@ -20,3 +20,4 @@ tf/wandb/*
 tf/checkpoints/*
 tf/__pycache__/*
 keras_imf_encoder.h5
+nobuco/*
