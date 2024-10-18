@@ -45,6 +45,19 @@ class KerasCrossAttentionModule(keras.layers.Layer):
         return out
 
 
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "dim_spatial": self.dim_spatial,
+            "dim_qk": self.dim_qk,
+            "dim_v": self.dim_v,
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+    
     def __repr__(self):
         return (f"KerasCrossAttentionModule(dim_spatial={self.dim_spatial}, dim_qk={self.dim_qk}, "
                 f"dim_v={self.dim_v}, scale={self.scale})\n"
@@ -55,11 +68,27 @@ class KerasCrossAttentionModule(keras.layers.Layer):
 class KerasMultiHeadAttention(keras.layers.Layer):
     def __init__(self, d_model, num_heads):
         super().__init__()
+        self.d_model = d_model
+        self.num_heads = num_heads
         self.mha = keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=d_model // num_heads)
-                
+
+
     def call(self, x):
         return self.mha(x, x)
 
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "d_model": self.d_model,
+            "num_heads": self.num_heads,
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+    
 class KerasTransformerBlock(keras.layers.Layer):
     def __init__(self, dim, heads, dim_head, mlp_dim):
         super().__init__()
@@ -107,6 +136,20 @@ class KerasTransformerBlock(keras.layers.Layer):
                     f"Last Input Shape: {self.inputs.shape if self.inputs is not None else 'None'}")
 
 
+    def get_config(self):
+            config = super().get_config()
+            config.update({
+                "dim": self.dim,
+                "heads": self.heads,
+                "dim_head": self.dim_head,
+                "mlp_dim": self.mlp_dim,
+            })
+            return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
 class KerasImplicitMotionAlignment(keras.Model):
     def __init__(self, feature_dim, motion_dim, spatial_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
         super().__init__()
@@ -138,7 +181,22 @@ class KerasImplicitMotionAlignment(keras.Model):
                 f"Cross Attention: {self.cross_attention}\n"
                 f"Transformer Blocks: {[block for block in self.transformer_blocks]}")
 
+    def get_config(self):
+            config = super().get_config()
+            config.update({
+                "feature_dim": self.feature_dim,
+                "motion_dim": self.motion_dim,
+                "spatial_dim": self.spatial_dim,
+                "depth": self.depth,
+                "heads": self.heads,
+                "dim_head": self.dim_head,
+                "mlp_dim": self.mlp_dim,
+            })
+            return config
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 if __name__ == "__main__":
     # Set random seed for reproducibility

@@ -21,3 +21,15 @@ tf/checkpoints/*
 tf/__pycache__/*
 keras_imf_encoder.h5
 nobuco/*
+implicit_motion_alignment/fingerprint.pb
+implicit_motion_alignment/keras_metadata.pb
+implicit_motion_alignment/saved_model.pb
+implicit_motion_alignment/variables/variables.data-00000-of-00001
+implicit_motion_alignment/variables/variables.index
+test/group1-shard1of6.bin
+test/group1-shard2of6.bin
+test/group1-shard3of6.bin
+test/group1-shard4of6.bin
+test/group1-shard5of6.bin
+test/group1-shard6of6.bin
+test/model.json

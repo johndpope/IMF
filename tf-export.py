@@ -234,7 +234,7 @@ if __name__ == "__main__":
     )
 
     # tfjs.converters.save_keras_model(keras_model, 'keras')
-    keras_model.save("imf/imf.keras")
+    keras_model.save("imf",save_format="tf")
 
     # Test the models
     with torch.no_grad():
