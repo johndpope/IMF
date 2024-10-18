@@ -36,21 +36,21 @@ class TransformerBlock(nn.Module):
 
 
     def forward(self, x):
-        #print(f"TransformerBlock input shape: {x.shape}")
+        print(f"TransformerBlock input shape: {x.shape}")
         B, C, H, W = x.shape
         x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
         
         x_norm = self.norm1(x_reshaped)
         att_output, _ = self.attention(x_norm, x_norm, x_norm)
         x_reshaped = x_reshaped + att_output
-        #print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
+        print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
 
         ff_output = self.mlp(self.norm2(x_reshaped))
         x_reshaped = x_reshaped + ff_output
-        #print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
+        print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
 
         output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
-        #print(f"TransformerBlock output shape: {output.shape}")
+        print(f"TransformerBlock output shape: {output.shape}")
         return output
 
 
@@ -66,24 +66,15 @@ class ImplicitMotionAlignment(nn.Module):
         self.feature_dim = feature_dim
         self.motion_dim = motion_dim
         
-
     def forward(self, ml_c, ml_r, fl_r):
-        # embeddings = []
-        #print(f"self.spatial_dim:{self.spatial_dim}")
-        #print(f"self.feature_dim:{self.feature_dim}")
-        #print(f"self.motion_dim:{self.motion_dim}")
-        # Cross-attention module
+        print(f"ImplicitMotionAlignment input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
-        # embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
-        #print(f"ImplicitMotionAlignment: After cross-attention, V_prime.shape = {V_prime.shape}")
-
-        # Transformer blocks
+        print(f"After cross-attention shape: {V_prime.shape}")
         for i, block in enumerate(self.transformer_blocks):
             V_prime = block(V_prime)
-            # embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
-            #print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
-
+            print(f"After transformer block {i} shape: {V_prime.shape}")
         return V_prime
+        
 
 
     @staticmethod
@@ -139,6 +130,8 @@ class CrossAttentionModule(nn.Module):
         self.k_pos_embedding = nn.Parameter(torch.randn(1, dim_spatial, dim_qk))
         self.attend = nn.Softmax(dim=-1)
     def forward(self, queries, keys, values):
+        print(f"CrossAttentionModule input shapes: queries: {queries.shape}, keys: {keys.shape}, values: {values.shape}")
+
         # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
         q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
         q = q + self.q_pos_embedding  # (b, dim_spatial, dim_qk)
@@ -161,12 +154,13 @@ class CrossAttentionModule(nn.Module):
         # Or the torch version fast attention
         # out = F.scaled_dot_product_attention(q, k, v)
         out = torch.reshape(out.transpose(-1, -2), values.shape)  # (b, dim_spatial, dim_v) -> (b, dim_v, h, w)
+        print(f"CrossAttentionModule output shape: {out.shape}")
 
         return out
 
 
 # Example usage
-if __name__ == "__main__":
+if __name__ == "test":
     # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     #print(f"Using device: {device}")
@@ -200,3 +194,22 @@ if __name__ == "__main__":
     # Visualize embeddings
     # model.visualize_embeddings(embeddings, "embeddings_visualization.png")
     #print("Embedding visualization saved as 'embeddings_visualization.png'")
+
+if __name__ == "__main__":
+
+    B, C_f, C_m, H, W = 1, 256, 256, 64, 64
+    feature_dim = C_f
+    motion_dim = C_m
+    depth = 4
+    heads = 8
+    dim_head = 64
+    mlp_dim = 1024
+    spatial_dim = (64,64)
+
+    ml_c = torch.randn(B, C_m, H, W)
+    ml_r = torch.randn(B, C_m, H, W)
+    fl_r = torch.randn(B, C_f, H, W)
+
+    pytorch_model = ImplicitMotionAlignment(feature_dim, motion_dim, spatial_dim)
+    pytorch_output = pytorch_model(ml_c, ml_r, fl_r)    
+    print("output:",pytorch_output.shape)
