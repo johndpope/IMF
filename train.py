@@ -9,7 +9,7 @@ import wandb
 import yaml
 import os
 import torch.nn.functional as F
-from lia_resblocks import LiaDiscriminator
+# from lia_resblocks import LiaDiscriminator
 from model import IMFModel, debug_print,IMFPatchDiscriminator,MultiScalePatchDiscriminator
 from VideoDataset import VideoDataset,gpu_padded_collate
 from torchvision.utils import save_image
@@ -123,6 +123,8 @@ class IMFTrainer:
             return None, None, None, None, None, None
 
         # Generate reconstructed frame
+        x_current = x_current.requires_grad_()
+        x_reference = x_reference.requires_grad_()
         x_reconstructed = self.model(x_current, x_reference)
 
         if self.config.training.use_subsampling:

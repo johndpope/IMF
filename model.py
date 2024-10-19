@@ -7,7 +7,7 @@ import torch.nn.utils.spectral_norm as spectral_norm
 # from vit_scaled import ImplicitMotionAlignment #- SLOW but reduces memory 2x/3x
 # from vit_mlgffn import ImplicitMotionAlignment
 # from vit_xformers import ImplicitMotionAlignment
-from vit import ImplicitMotionAlignment
+from vit_moh import ImplicitMotionAlignment
 from resblocks import  FeatResBlock,UpConvResBlock,DownConvResBlock
 from lia_resblocks import StyledConv,EqualConv2d,EqualLinear,ResBlock # these are correct https://github.com/hologerry/IMF/issues/4  "You can refer to this repo https://github.com/wyhsirius/LIA/ for StyleGAN2 related code, such as Encoder, Decoder."
 from helper import normalize
@@ -346,7 +346,17 @@ class IMFModel(nn.Module):
             feature_dim = self.feature_dims[i]
             motion_dim = self.motion_dims[i]
             spatial_dim = self.spatial_dims[i]
-            alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,spatial_dim=spatial_dim, )
+            # alignment_module = ImplicitMotionAlignment(feature_dim=feature_dim, motion_dim=motion_dim,spatial_dim=spatial_dim, )
+            alignment_module = ImplicitMotionAlignment(
+                feature_dim=feature_dim, 
+                motion_dim=motion_dim,
+                spatial_dim=spatial_dim,
+                depth=4,  # You can adjust this
+                heads=8,  # You can adjust this
+                mlp_dim=feature_dim * 4,  # Typically 4x the feature_dim
+                shared_heads=2,  # You can adjust this
+                routed_heads=6   # You can adjust this
+            )
             self.implicit_motion_alignment.append(alignment_module)
        
 
@@ -414,8 +424,7 @@ class IMFModel(nn.Module):
         return x_reconstructed
 
     def forward(self, x_current, x_reference):
-        # x_current = x_current.requires_grad_()
-        # x_reference = x_reference.requires_grad_()
+
   # Forward Pass
         f_r = self.dense_feature_encoder(x_reference)
         t_r = self.latent_token_encoder(x_reference)

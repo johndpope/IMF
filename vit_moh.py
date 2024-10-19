@@ -21,11 +21,81 @@ class PositionalEncoding(nn.Module):
         return self.pe[:x.size(0), :]
 
 
+class MoHAttention(nn.Module):
+    def __init__(self, dim, num_heads, shared_heads=1, routed_heads=3):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.shared_heads = shared_heads
+        self.routed_heads = routed_heads
+        self.head_dim = dim // num_heads
+
+        self.q = nn.Linear(dim, dim)
+        self.k = nn.Linear(dim, dim)
+        self.v = nn.Linear(dim, dim)
+        self.proj = nn.Linear(dim, dim)
+
+        self.router = nn.Linear(dim, num_heads - shared_heads)
+        self.shared_router = nn.Linear(dim, 2)
+        self.temperature = nn.Parameter(torch.log((torch.ones(num_heads, 1, 1) / 0.24).exp() - 1))
+        self.query_embedding = nn.Parameter(nn.init.trunc_normal_(torch.empty(self.num_heads, 1, self.head_dim), mean=0, std=0.02))
+
+    def forward(self, x):
+        B, N, C = x.shape
+        print(f"Input shape: {x.shape}")
+
+        q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        print(f"q, k, v shape: {q.shape}")
+
+        q_norm = F.normalize(q, dim=-1)
+        q_norm_scaled = (q_norm + self.query_embedding) * F.softplus(self.temperature)
+
+        attn = (q_norm_scaled @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        attn = attn.softmax(dim=-1)
+        print(f"Attention shape: {attn.shape}")
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        print(f"After attention shape: {x.shape}")
+
+        logits = self.router(x)
+        gates = F.softmax(logits, dim=-1)
+        print(f"Gates shape: {gates.shape}")
+
+        _, indices = torch.topk(gates, k=self.routed_heads, dim=-1)
+        mask = F.one_hot(indices, num_classes=self.num_heads-self.shared_heads).sum(dim=-2)
+        print(f"Mask shape: {mask.shape}")
+
+        routed_head_gates = gates * mask
+        routed_head_gates = routed_head_gates * self.routed_heads
+        print(f"Routed head gates shape: {routed_head_gates.shape}")
+
+        shared_head_weight = self.shared_router(x)
+        shared_head_gates = F.softmax(shared_head_weight, dim=-1) * self.shared_heads
+        print(f"Shared head gates shape: {shared_head_gates.shape}")
+
+        weight_0 = self.shared_router(x)
+        weight_0 = F.softmax(weight_0, dim=-1) * 2
+        print(f"Weight_0 shape: {weight_0.shape}")
+
+        shared_head_gates = torch.einsum("bn,bnc->bnc", weight_0[..., 0], shared_head_gates)
+        routed_head_gates = torch.einsum("bn,bnc->bnc", weight_0[..., 1], routed_head_gates)
+
+        masked_gates = torch.cat([shared_head_gates, routed_head_gates], dim=-1)
+        print(f"Masked gates shape: {masked_gates.shape}")
+        print(f"x shape before einsum: {x.shape}")
+
+        x = torch.einsum("bnc,bnd->bnd", masked_gates, x)
+        print(f"x shape after einsum: {x.shape}")
+
+        return self.proj(x)
+
 
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, heads, dim_head, mlp_dim):
+    def __init__(self, dim, num_heads, mlp_dim, shared_heads=1, routed_heads=3):
         super().__init__()
-        self.attention = nn.MultiheadAttention(dim, heads)
+        self.attention = MoHAttention(dim, num_heads, shared_heads, routed_heads)
         self.mlp = nn.Sequential(
             nn.Linear(dim, mlp_dim),
             nn.GELU(),
@@ -34,54 +104,36 @@ class TransformerBlock(nn.Module):
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
 
-
     def forward(self, x):
-        #print(f"TransformerBlock input shape: {x.shape}")
         B, C, H, W = x.shape
-        x_reshaped = x.view(B, C, H*W).permute(2, 0, 1)
+        x_flat = x.view(B, C, -1).permute(0, 2, 1)  # B, H*W, C
         
-        x_norm = self.norm1(x_reshaped)
-        att_output, _ = self.attention(x_norm, x_norm, x_norm)
-        x_reshaped = x_reshaped + att_output
-        #print(f"TransformerBlock: After attention, x_reshaped.shape = {x_reshaped.shape}")
+        x_norm = self.norm1(x_flat)
+        att_output = self.attention(x_norm)
+        x_flat = x_flat + att_output
 
-        ff_output = self.mlp(self.norm2(x_reshaped))
-        x_reshaped = x_reshaped + ff_output
-        #print(f"TransformerBlock: After feedforward, x_reshaped.shape = {x_reshaped.shape}")
+        ff_output = self.mlp(self.norm2(x_flat))
+        x_flat = x_flat + ff_output
 
-        output = x_reshaped.permute(1, 2, 0).view(B, C, H, W)
-        #print(f"TransformerBlock output shape: {output.shape}")
+        output = x_flat.permute(0, 2, 1).view(B, C, H, W)
         return output
 
-
-
 class ImplicitMotionAlignment(nn.Module):
-    def __init__(self, feature_dim, motion_dim,spatial_dim, depth=4, heads=8, dim_head=64, mlp_dim=1024):
+    def __init__(self, feature_dim, motion_dim, spatial_dim, depth=4, heads=8, mlp_dim=1024, shared_heads=1, routed_heads=3):
         super().__init__()
-        self.cross_attention = CrossAttentionModule(dim_spatial=spatial_dim[0] * spatial_dim[0], dim_qk=motion_dim, dim_v=feature_dim)
+        self.cross_attention = CrossAttentionModule(dim_spatial=spatial_dim[0] * spatial_dim[1], dim_qk=motion_dim, dim_v=feature_dim)
         self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(feature_dim, heads, dim_head, mlp_dim) for _ in range(depth)
+            TransformerBlock(feature_dim, heads, mlp_dim, shared_heads, routed_heads) for _ in range(depth)
         ])
         self.spatial_dim = spatial_dim
         self.feature_dim = feature_dim
         self.motion_dim = motion_dim
-        
 
     def forward(self, ml_c, ml_r, fl_r):
-        # embeddings = []
-        #print(f"self.spatial_dim:{self.spatial_dim}")
-        #print(f"self.feature_dim:{self.feature_dim}")
-        #print(f"self.motion_dim:{self.motion_dim}")
-        # Cross-attention module
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
-        # embeddings.append(("After Cross-Attention", V_prime.detach().cpu()))
-        #print(f"ImplicitMotionAlignment: After cross-attention, V_prime.shape = {V_prime.shape}")
-
-        # Transformer blocks
-        for i, block in enumerate(self.transformer_blocks):
+        
+        for block in self.transformer_blocks:
             V_prime = block(V_prime)
-            # embeddings.append((f"After Transformer Block {i}", V_prime.detach().cpu()))
-            #print(f"ImplicitMotionAlignment: After transformer block {i}, V_prime.shape = {V_prime.shape}")
 
         return V_prime
 
@@ -167,36 +219,25 @@ class CrossAttentionModule(nn.Module):
 
 # Example usage
 if __name__ == "__main__":
-    # Check if CUDA is available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #print(f"Using device: {device}")
 
-    # Example dimensions
     B, C_f, C_m, H, W = 1, 256, 256, 64, 64
     feature_dim = C_f
     motion_dim = C_m
     depth = 4
     heads = 8
-    dim_head = 64
     mlp_dim = 1024
-    spatial_dim = (64,64)
+    shared_heads = 1
+    routed_heads = 3
 
-
-    # Create random input tensors and move to device
     ml_c = torch.randn(B, C_m, H, W).to(device)
     ml_r = torch.randn(B, C_m, H, W).to(device)
     fl_r = torch.randn(B, C_f, H, W).to(device)
 
-    # Initialize the ImplicitMotionAlignment module and move to device
-    model = ImplicitMotionAlignment(feature_dim, motion_dim, spatial_dim,depth, heads, dim_head, mlp_dim).to(device)
+    model = ImplicitMotionAlignment(feature_dim, motion_dim, (H, W), depth, heads, mlp_dim, shared_heads, routed_heads).to(device)
 
-    # Forward pass
     with torch.no_grad():
         output = model(ml_c, ml_r, fl_r)
 
     print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
     print(f"Output shape: {output.shape}")
-
-    # Visualize embeddings
-    # model.visualize_embeddings(embeddings, "embeddings_visualization.png")
-    #print("Embedding visualization saved as 'embeddings_visualization.png'")
