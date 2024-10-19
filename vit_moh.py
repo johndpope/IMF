@@ -42,52 +42,52 @@ class MoHAttention(nn.Module):
 
     def forward(self, x):
         B, N, C = x.shape
-        print(f"Input shape: {x.shape}")
+        #print(f"Input shape: {x.shape}")
 
         q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
-        print(f"q, k, v shape: {q.shape}")
+        #print(f"q, k, v shape: {q.shape}")
 
         q_norm = F.normalize(q, dim=-1)
         q_norm_scaled = (q_norm + self.query_embedding) * F.softplus(self.temperature)
 
         attn = (q_norm_scaled @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         attn = attn.softmax(dim=-1)
-        print(f"Attention shape: {attn.shape}")
+        #print(f"Attention shape: {attn.shape}")
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        print(f"After attention shape: {x.shape}")
+        #print(f"After attention shape: {x.shape}")
 
         logits = self.router(x)
         gates = F.softmax(logits, dim=-1)
-        print(f"Gates shape: {gates.shape}")
+        #print(f"Gates shape: {gates.shape}")
 
         _, indices = torch.topk(gates, k=self.routed_heads, dim=-1)
         mask = F.one_hot(indices, num_classes=self.num_heads-self.shared_heads).sum(dim=-2)
-        print(f"Mask shape: {mask.shape}")
+        #print(f"Mask shape: {mask.shape}")
 
         routed_head_gates = gates * mask
         routed_head_gates = routed_head_gates * self.routed_heads
-        print(f"Routed head gates shape: {routed_head_gates.shape}")
+        #print(f"Routed head gates shape: {routed_head_gates.shape}")
 
         shared_head_weight = self.shared_router(x)
         shared_head_gates = F.softmax(shared_head_weight, dim=-1) * self.shared_heads
-        print(f"Shared head gates shape: {shared_head_gates.shape}")
+        #print(f"Shared head gates shape: {shared_head_gates.shape}")
 
         weight_0 = self.shared_router(x)
         weight_0 = F.softmax(weight_0, dim=-1) * 2
-        print(f"Weight_0 shape: {weight_0.shape}")
+        #print(f"Weight_0 shape: {weight_0.shape}")
 
         shared_head_gates = torch.einsum("bn,bnc->bnc", weight_0[..., 0], shared_head_gates)
         routed_head_gates = torch.einsum("bn,bnc->bnc", weight_0[..., 1], routed_head_gates)
 
         masked_gates = torch.cat([shared_head_gates, routed_head_gates], dim=-1)
-        print(f"Masked gates shape: {masked_gates.shape}")
-        print(f"x shape before einsum: {x.shape}")
+        #print(f"Masked gates shape: {masked_gates.shape}")
+        #print(f"x shape before einsum: {x.shape}")
 
         x = torch.einsum("bnc,bnd->bnd", masked_gates, x)
-        print(f"x shape after einsum: {x.shape}")
+        #print(f"x shape after einsum: {x.shape}")
 
         return self.proj(x)
 
@@ -239,5 +239,5 @@ if __name__ == "__main__":
     with torch.no_grad():
         output = model(ml_c, ml_r, fl_r)
 
-    print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
-    print(f"Output shape: {output.shape}")
+    #print(f"Input shapes: ml_c: {ml_c.shape}, ml_r: {ml_r.shape}, fl_r: {fl_r.shape}")
+    #print(f"Output shape: {output.shape}")
