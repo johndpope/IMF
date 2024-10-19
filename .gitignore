@@ -33,3 +33,4 @@ test/group1-shard4of6.bin
 test/group1-shard5of6.bin
 test/group1-shard6of6.bin
 test/model.json
+ai-edge-torch

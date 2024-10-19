@@ -5,29 +5,29 @@ from model import IMFModel
 import os 
 os.environ['PJRT_DEVICE'] = 'CPU'
 
-# Assuming you have your PyTorch model defined as 'pytorch_model'
+# Load and prepare the PyTorch model
 pytorch_model = IMFModel()
 pytorch_model.eval()
-# Load the checkpoint
 checkpoint = torch.load("./checkpoints/checkpoint.pth", map_location='cpu')
 pytorch_model.load_state_dict(checkpoint['model_state_dict'])
-
-# Set the model to evaluation mode
 pytorch_model.eval()
 
+# Prepare sample inputs
 x_current = torch.randn(1, 3, 256, 256)
 x_reference = torch.randn(1, 3, 256, 256)
+sample_inputs = (x_current, x_reference)
 
-sample_inputs = (x_current,x_reference)
-# Convert PyTorch model to TensorFlow model
-tf_model = ai_edge_torch.convert(pytorch_model,sample_inputs)
-tf_model.export("imf.tflite")
-# Convert TensorFlow model to TFLite
-# converter = tf.lite.TFLiteConverter.from_keras_model(tf_model)
-# tflite_model = converter.convert()
+# Convert PyTorch model to TensorFlow model with additional flags
+tfl_converter_flags = {
+    'experimental_enable_resource_variables': True,
+    # Add any other necessary flags here
+}
 
-# Save the TFLite model
-# with open('model.tflite', 'wb') as f:
-#     f.write(tflite_model)
-
-print("TFLite model saved as 'model.tflite'")
+try:
+    tf_model = ai_edge_torch.convert(pytorch_model, sample_inputs, _ai_edge_converter_flags=tfl_converter_flags)
+    tf_model.export("imf.tflite")
+    print("TFLite model saved as 'imf.tflite'")
+except Exception as e:
+    print(f"Error during conversion: {e}")
+    # If AI Edge Torch conversion fails, you might need to use a different approach
+    # such as ONNX or reimplementing the model in TensorFlow
