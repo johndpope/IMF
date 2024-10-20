@@ -5,6 +5,14 @@ from model import IMFModel
 import os 
 os.environ['PJRT_DEVICE'] = 'CPU'
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.traceback import Traceback
+
+import inspect
+console = Console()
+
 # Load and prepare the PyTorch model
 pytorch_model = IMFModel()
 pytorch_model.eval()
@@ -24,10 +32,11 @@ tfl_converter_flags = {
 }
 
 try:
+    # ai_edge_torch.experimental_enable_resource_variables = True
     tf_model = ai_edge_torch.convert(pytorch_model, sample_inputs, _ai_edge_converter_flags=tfl_converter_flags)
     tf_model.export("imf.tflite")
-    print("TFLite model saved as 'imf.tflite'")
+    console.print("TFLite model saved as 'imf.tflite'")
 except Exception as e:
-    print(f"Error during conversion: {e}")
+    console.print(f"Error during conversion: {e}")
     # If AI Edge Torch conversion fails, you might need to use a different approach
     # such as ONNX or reimplementing the model in TensorFlow
