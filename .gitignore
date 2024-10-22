@@ -39,3 +39,4 @@ imf/saved_model.pb
 imf/variables/variables.data-00000-of-00001
 imf/variables/variables.index
 ai-edge-torch/
+*.bin
