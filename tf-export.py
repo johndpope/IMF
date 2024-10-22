@@ -245,7 +245,7 @@ if __name__ == "__main__":
     print("Output difference:", np.abs(pytorch_output.numpy() - keras_output).max())
     print("Relative difference:", np.abs((pytorch_output.numpy() - keras_output) / pytorch_output.numpy()).max())
 
-    
+    #  tensorflowjs_converter --input_format=tf_saved_model --quantize_float16="*"   --output_format=tfjs_graph_model --signature_name=serving_default --saved_model_tags=serve     imf graphmodel
     os.system(f'''
     tensorflowjs_converter \
     --input_format=tf_saved_model \
@@ -253,6 +253,6 @@ if __name__ == "__main__":
     --signature_name=serving_default \
     --saved_model_tags=serve \
     --quantize_float16="*" \
-    {os.path.join(output_dir, checkpoint_name)} \
-    {os.path.join(output_dir, checkpoint_name) + '.js'}
+    {output_dir} \
+    'graph_model'
     ''')
