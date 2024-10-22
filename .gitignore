@@ -33,3 +33,9 @@ test/group1-shard4of6.bin
 test/group1-shard5of6.bin
 test/group1-shard6of6.bin
 test/model.json
+imf/fingerprint.pb
+imf/keras_metadata.pb
+imf/saved_model.pb
+imf/variables/variables.data-00000-of-00001
+imf/variables/variables.index
+ai-edge-torch/
