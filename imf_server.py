@@ -10,6 +10,9 @@ import io
 import json
 from model import IMFModel
 import base64
+import ssl
+import uvicorn
+
 
 class IMFServer:
     def __init__(self, checkpoint_path: str = "./checkpoints/checkpoint.pth"):
@@ -133,10 +136,33 @@ class IMFServer:
             "features": features_data
         }
 
-    def run(self, host: str = "0.0.0.0", port: int = 8000):
-        import uvicorn
-        uvicorn.run(self.app, host=host, port=port)
+    def run(self, 
+            host: str = "0.0.0.0", 
+            port: int = 8000,
+            ssl_certfile: str = "192.168.1.108.pem",
+            ssl_keyfile: str = "192.168.1.108-key.pem"):
+        
+        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_context.load_cert_chain(ssl_certfile, ssl_keyfile)
+        
+        config = uvicorn.Config(
+            app=self.app,
+            host=host,
+            port=port,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+            ssl_version=ssl.PROTOCOL_TLS,
+            ssl_cert_reqs=ssl.CERT_NONE
+        )
+        
+        server = uvicorn.Server(config)
+        server.run()
 
 if __name__ == "__main__":
     server = IMFServer()
-    server.run()
+
+    # Use the same certificates as your Next.js server
+    server.run(
+        ssl_certfile="192.168.1.108.pem",
+        ssl_keyfile="192.168.1.108-key.pem"
+    )
