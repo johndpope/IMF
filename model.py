@@ -17,7 +17,7 @@ from helper import normalize
 # from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
 import math
 # from common import DownConvResBlock,UpConvResBlock
-import colored_traceback.auto # makes terminal show color coded output when crash
+# import colored_traceback.auto # makes terminal show color coded output when crash
 import random
 
 DEBUG = False

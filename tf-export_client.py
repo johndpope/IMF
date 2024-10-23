@@ -16,15 +16,199 @@ from torch import Tensor
 import torch.nn as nn
 from nobuco.commons import ChannelOrderingStrategy
 from nobuco.converters.node_converter import converter
-from vit import TransformerBlock
-from vit import CrossAttentionModule, ImplicitMotionAlignment, TransformerBlock
-from vit_keras import KerasCrossAttentionModule, KerasImplicitMotionAlignment, KerasTransformerBlock
+
+from vit_moh import CrossAttentionModule, ImplicitMotionAlignment, TransformerBlock
+from vit_keras_moh import KerasCrossAttentionModule, KerasImplicitMotionAlignment, KerasTransformerBlock
 from rich.console import Console
 from rich.traceback import install
 import os
 from typing import Dict
 from typing import List, Tuple
 from model import LatentTokenDecoder,FrameDecoder
+
+
+console = Console(width=3000)
+
+# Install Rich traceback handling
+# install(show_locals=True)
+install()
+
+console.print("using keras MoH !!")
+
+
+@converter(ImplicitMotionAlignment, channel_ordering_strategy=ChannelOrderingStrategy.FORCE_PYTORCH_ORDER)
+def converter_ImplicitMotionAlignment(self, ml_c, ml_r, fl_r):
+    feature_dim = self.feature_dim
+    motion_dim = self.motion_dim
+    spatial_dim = self.spatial_dim
+    depth = len(self.transformer_blocks)
+    
+    # Get head configuration from first transformer block
+    num_heads = self.transformer_blocks[0].attention.num_heads
+    shared_heads = self.transformer_blocks[0].attention.shared_heads
+    routed_heads = self.transformer_blocks[0].attention.routed_heads
+    mlp_dim = self.transformer_blocks[0].mlp[0].out_features
+
+    print(f"ImplicitMotionAlignment parameters:")
+    print(f"feature_dim: {feature_dim}, motion_dim: {motion_dim}, spatial_dim: {spatial_dim}")
+    print(f"depth: {depth}, heads: {num_heads}, shared_heads: {shared_heads}, routed_heads: {routed_heads}, mlp_dim: {mlp_dim}")
+
+    keras_model = KerasImplicitMotionAlignment(
+        feature_dim=feature_dim, 
+        motion_dim=motion_dim, 
+        spatial_dim=spatial_dim,
+        depth=depth,
+        heads=num_heads,
+        shared_heads=shared_heads,
+        routed_heads=routed_heads,
+        mlp_dim=mlp_dim
+    )
+    
+    # Build the Keras model by calling it with dummy inputs
+    dummy_ml_c = tf.zeros_like(ml_c)
+    dummy_ml_r = tf.zeros_like(ml_r)
+    dummy_fl_r = tf.zeros_like(fl_r)
+    keras_model([dummy_ml_c, dummy_ml_r, dummy_fl_r])
+    
+    # Transfer weights for CrossAttentionModule
+    keras_model.cross_attention.set_weights([
+        self.cross_attention.q_pos_embedding.detach().numpy(),
+        self.cross_attention.k_pos_embedding.detach().numpy()
+    ])
+    
+    # Transfer weights for each transformer block
+    for i, (pytorch_block, keras_block) in enumerate(zip(self.transformer_blocks, keras_model.transformer_blocks)):
+        # Transfer MoHAttention weights
+        pytorch_mha = pytorch_block.attention
+        keras_mha = keras_block.attention
+
+        # Transfer linear layer weights
+        keras_mha.q.set_weights([
+            pytorch_mha.q.weight.detach().numpy().T,
+            pytorch_mha.q.bias.detach().numpy()
+        ])
+        keras_mha.k.set_weights([
+            pytorch_mha.k.weight.detach().numpy().T,
+            pytorch_mha.k.bias.detach().numpy()
+        ])
+        keras_mha.v.set_weights([
+            pytorch_mha.v.weight.detach().numpy().T,
+            pytorch_mha.v.bias.detach().numpy()
+        ])
+        keras_mha.proj.set_weights([
+            pytorch_mha.proj.weight.detach().numpy().T,
+            pytorch_mha.proj.bias.detach().numpy()
+        ])
+
+        # Transfer router weights
+        keras_mha.router.set_weights([
+            pytorch_mha.router.weight.detach().numpy().T,
+            pytorch_mha.router.bias.detach().numpy()
+        ])
+        keras_mha.shared_router.set_weights([
+            pytorch_mha.shared_router.weight.detach().numpy().T,
+            pytorch_mha.shared_router.bias.detach().numpy()
+        ])
+
+        # Transfer temperature and query embedding
+        keras_mha.temperature.assign(pytorch_mha.temperature.detach().numpy())
+        keras_mha.query_embedding.assign(pytorch_mha.query_embedding.detach().numpy())
+
+        # Transfer LayerNorm weights
+        keras_block.norm1.set_weights([
+            pytorch_block.norm1.weight.detach().numpy(),
+            pytorch_block.norm1.bias.detach().numpy()
+        ])
+        keras_block.norm2.set_weights([
+            pytorch_block.norm2.weight.detach().numpy(),
+            pytorch_block.norm2.bias.detach().numpy()
+        ])
+
+        # Transfer MLP weights
+        keras_block.mlp.layers[0].set_weights([
+            pytorch_block.mlp[0].weight.detach().numpy().T,
+            pytorch_block.mlp[0].bias.detach().numpy()
+        ])
+        keras_block.mlp.layers[1].set_weights([
+            pytorch_block.mlp[2].weight.detach().numpy().T,
+            pytorch_block.mlp[2].bias.detach().numpy()
+        ])
+
+    return keras_model
+
+
+@converter(TransformerBlock, channel_ordering_strategy=ChannelOrderingStrategy.FORCE_PYTORCH_ORDER)
+def converter_TransformerBlock(self, x):
+    # Create Keras block with MoHAttention parameters
+    keras_block = KerasTransformerBlock(
+        dim=self.attention.dim,
+        num_heads=self.attention.num_heads,
+        shared_heads=self.attention.shared_heads,
+        routed_heads=self.attention.routed_heads,
+        mlp_dim=self.mlp[0].out_features
+    )
+    
+    # Build the Keras block by calling it with dummy input
+    dummy_input = tf.zeros_like(x)
+    keras_block(dummy_input)
+    
+    # Transfer MoHAttention weights
+    pytorch_mha = self.attention
+    keras_mha = keras_block.attention
+
+    # Transfer linear layer weights
+    keras_mha.q.set_weights([
+        pytorch_mha.q.weight.detach().numpy().T,
+        pytorch_mha.q.bias.detach().numpy()
+    ])
+    keras_mha.k.set_weights([
+        pytorch_mha.k.weight.detach().numpy().T,
+        pytorch_mha.k.bias.detach().numpy()
+    ])
+    keras_mha.v.set_weights([
+        pytorch_mha.v.weight.detach().numpy().T,
+        pytorch_mha.v.bias.detach().numpy()
+    ])
+    keras_mha.proj.set_weights([
+        pytorch_mha.proj.weight.detach().numpy().T,
+        pytorch_mha.proj.bias.detach().numpy()
+    ])
+    
+    # Transfer router weights
+    keras_mha.router.set_weights([
+        pytorch_mha.router.weight.detach().numpy().T,
+        pytorch_mha.router.bias.detach().numpy()
+    ])
+    keras_mha.shared_router.set_weights([
+        pytorch_mha.shared_router.weight.detach().numpy().T,
+        pytorch_mha.shared_router.bias.detach().numpy()
+    ])
+    
+    # Transfer learnable parameters
+    keras_mha.temperature.assign(pytorch_mha.temperature.detach().numpy())
+    keras_mha.query_embedding.assign(pytorch_mha.query_embedding.detach().numpy())
+
+    # Transfer LayerNorm weights
+    keras_block.norm1.set_weights([
+        self.norm1.weight.detach().numpy(),
+        self.norm1.bias.detach().numpy()
+    ])
+    keras_block.norm2.set_weights([
+        self.norm2.weight.detach().numpy(),
+        self.norm2.bias.detach().numpy()
+    ])
+
+    # Transfer MLP weights
+    keras_block.mlp.layers[0].set_weights([
+        self.mlp[0].weight.detach().numpy().T,
+        self.mlp[0].bias.detach().numpy()
+    ])
+    keras_block.mlp.layers[2].set_weights([
+        self.mlp[2].weight.detach().numpy().T,
+        self.mlp[2].bias.detach().numpy()
+    ])
+    
+    return keras_block
 
 
 
@@ -65,151 +249,8 @@ def converter_CrossAttentionModule(self, queries, keys, values):
     ])
     
     return keras_module
-@converter(TransformerBlock, channel_ordering_strategy=ChannelOrderingStrategy.FORCE_PYTORCH_ORDER)
-def converter_TransformerBlock(self, x):
-    keras_block = KerasTransformerBlock(
-        dim=self.attention.embed_dim,
-        heads=self.attention.num_heads,
-        dim_head=self.attention.head_dim,
-        mlp_dim=self.mlp[0].out_features
-    )
-    
-    # Build the Keras block by calling it with dummy input
-    dummy_input = tf.zeros_like(x)
-    keras_block(dummy_input)
-    
-    # Transfer weights for MultiheadAttention
-    pytorch_mha = self.attention
-    keras_mha = keras_block.attention.mha
-    
-    d_model = pytorch_mha.embed_dim
-    num_heads = pytorch_mha.num_heads
-    head_dim = d_model // num_heads
-    
-    in_proj_weight = pytorch_mha.in_proj_weight.detach().numpy()
-    in_proj_bias = pytorch_mha.in_proj_bias.detach().numpy()
-    out_proj_weight = pytorch_mha.out_proj.weight.detach().numpy()
-    out_proj_bias = pytorch_mha.out_proj.bias.detach().numpy()
-    
-    q_weight, k_weight, v_weight = np.split(in_proj_weight, 3, axis=0)
-    q_bias, k_bias, v_bias = np.split(in_proj_bias, 3)
-    
-    q_weight = q_weight.T.reshape(d_model, num_heads, head_dim)
-    k_weight = k_weight.T.reshape(d_model, num_heads, head_dim)
-    v_weight = v_weight.T.reshape(d_model, num_heads, head_dim)
-    out_proj_weight = out_proj_weight.T
-    
-    keras_mha.set_weights([
-        q_weight, k_weight, v_weight,
-        out_proj_weight,
-        q_bias, k_bias, v_bias,
-        out_proj_bias
-    ])
 
-    # Transfer LayerNorm weights
-    keras_block.norm1.set_weights([
-        self.norm1.weight.detach().numpy(),
-        self.norm1.bias.detach().numpy()
-    ])
-    keras_block.norm2.set_weights([
-        self.norm2.weight.detach().numpy(),
-        self.norm2.bias.detach().numpy()
-    ])
 
-    # Transfer MLP weights
-    keras_block.mlp.layers[0].set_weights([
-        self.mlp[0].weight.detach().numpy().T,
-        self.mlp[0].bias.detach().numpy()
-    ])
-    keras_block.mlp.layers[2].set_weights([
-        self.mlp[2].weight.detach().numpy().T,
-        self.mlp[2].bias.detach().numpy()
-    ])
-    
-    return keras_block
-
-@converter(ImplicitMotionAlignment, channel_ordering_strategy=ChannelOrderingStrategy.FORCE_PYTORCH_ORDER)
-def converter_ImplicitMotionAlignment(self, ml_c, ml_r, fl_r):
-    feature_dim = self.feature_dim
-    motion_dim = self.motion_dim
-    spatial_dim = self.spatial_dim
-    depth = len(self.transformer_blocks)
-    heads = self.transformer_blocks[0].attention.num_heads
-    dim_head = self.transformer_blocks[0].attention.head_dim
-    mlp_dim = self.transformer_blocks[0].mlp[0].out_features
-
-    print(f"ImplicitMotionAlignment parameters:")
-    print(f"feature_dim: {feature_dim}, motion_dim: {motion_dim}, spatial_dim: {spatial_dim}")
-    print(f"depth: {depth}, heads: {heads}, dim_head: {dim_head}, mlp_dim: {mlp_dim}")
-
-    keras_model = KerasImplicitMotionAlignment(feature_dim, motion_dim, spatial_dim, depth, heads, dim_head, mlp_dim)
-    
-    # Build the Keras model by calling it with dummy inputs
-    dummy_ml_c = tf.zeros_like(ml_c)
-    dummy_ml_r = tf.zeros_like(ml_r)
-    dummy_fl_r = tf.zeros_like(fl_r)
-    keras_model(dummy_ml_c, dummy_ml_r, dummy_fl_r)
-    
-    # Transfer weights for CrossAttentionModule
-    keras_model.cross_attention.set_weights([
-        self.cross_attention.q_pos_embedding.detach().numpy(),
-        self.cross_attention.k_pos_embedding.detach().numpy()
-    ])
-    
-    # Transfer weights for TransformerBlocks
-    # for i, (pytorch_block, keras_block) in enumerate(zip(self.transformer_blocks, keras_model.transformer_blocks)):
-    #     print(f"Transferring weights for TransformerBlock {i}")
-
-    #     # Transfer weights for MultiheadAttention
-    #     pytorch_mha = pytorch_block.attention
-    #     keras_mha = keras_block.attention.mha
-
-    #     d_model = pytorch_mha.embed_dim
-    #     num_heads = pytorch_mha.num_heads
-    #     head_dim = d_model // num_heads
-
-    #     in_proj_weight = pytorch_mha.in_proj_weight.detach().numpy()
-    #     in_proj_bias = pytorch_mha.in_proj_bias.detach().numpy()
-    #     out_proj_weight = pytorch_mha.out_proj.weight.detach().numpy()
-    #     out_proj_bias = pytorch_mha.out_proj.bias.detach().numpy()
-
-    #     # Split and reshape weights
-    #     q_weight, k_weight, v_weight = np.split(in_proj_weight, 3, axis=0)
-    #     q_bias, k_bias, v_bias = np.split(in_proj_bias, 3)
-        
-    #     q_weight = q_weight.T.reshape(d_model, num_heads, head_dim)
-    #     k_weight = k_weight.T.reshape(d_model, num_heads, head_dim)
-    #     v_weight = v_weight.T.reshape(d_model, num_heads, head_dim)
-    #     out_proj_weight = out_proj_weight.T
-
-    #     keras_mha.set_weights([
-    #         q_weight, k_weight, v_weight,
-    #         out_proj_weight,
-    #         q_bias, k_bias, v_bias,
-    #         out_proj_bias
-    #     ])
-
-    #     # Transfer LayerNorm weights
-    #     keras_block.norm1.set_weights([
-    #         pytorch_block.norm1.weight.detach().numpy(),
-    #         pytorch_block.norm1.bias.detach().numpy()
-    #     ])
-    #     keras_block.norm2.set_weights([
-    #         pytorch_block.norm2.weight.detach().numpy(),
-    #         pytorch_block.norm2.bias.detach().numpy()
-    #     ])
-
-    #     # Transfer MLP weights
-    #     keras_block.mlp.layers[0].set_weights([
-    #         pytorch_block.mlp[0].weight.detach().numpy().T,
-    #         pytorch_block.mlp[0].bias.detach().numpy()
-    #     ])
-    #     keras_block.mlp.layers[2].set_weights([
-    #         pytorch_block.mlp[2].weight.detach().numpy().T,
-    #         pytorch_block.mlp[2].bias.detach().numpy()
-    #     ])
-
-    return keras_model
 
 
 class IMFClientModel(nn.Module):
@@ -236,7 +277,12 @@ class IMFClientModel(nn.Module):
             alignment_module = ImplicitMotionAlignment(
                 feature_dim=feature_dim, 
                 motion_dim=motion_dim,
-                spatial_dim=spatial_dim
+                spatial_dim=spatial_dim,
+                depth=4,  # You can adjust this
+                heads=8,  # You can adjust this
+                mlp_dim=feature_dim * 4,  # Typically 4x the feature_dim
+                shared_heads=2,  # You can adjust this
+                routed_heads=6   # You can adjust this
             )
             self.implicit_motion_alignment.append(alignment_module)
         
