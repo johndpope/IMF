@@ -18,7 +18,7 @@ import math
 import colored_traceback.auto # makes terminal show color coded output when crash
 import random
 
-DEBUG = True
+DEBUG = False
 def debug_print(*args, **kwargs):
     if DEBUG:
         print(*args, **kwargs)
@@ -101,7 +101,7 @@ class LatentTokenEncoder(nn.Module):
         self.res_blocks = nn.ModuleList()
         in_channels = initial_channels
         for out_channels in output_channels:
-            print(f"🥊 out_channels {out_channels} in_channels{in_channels}")
+            debug_print(f"🥊 out_channels {out_channels} in_channels{in_channels}")
             self.res_blocks.append(ResBlock(in_channels,out_channels))
             in_channels = out_channels
 
@@ -175,10 +175,10 @@ import torch.nn as nn
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
-        print(f"Initializing LatentTokenDecoder with latent_dim={latent_dim}, const_dim={const_dim}")
+        debug_print(f"Initializing LatentTokenDecoder with latent_dim={latent_dim}, const_dim={const_dim}")
         
         self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
-        print(f"Constant input shape: {self.const.shape}")
+        debug_print(f"Constant input shape: {self.const.shape}")
         
         self.style_conv_layers = nn.ModuleList([
             StyledConv(const_dim, 512, 3, latent_dim),
@@ -195,33 +195,33 @@ class LatentTokenDecoder(nn.Module):
             StyledConv(256, 256, 3, latent_dim),
             StyledConv(256, 256, 3, latent_dim) 
         ])
-        print(f"Number of StyledConv layers: {len(self.style_conv_layers)}")
+        debug_print(f"Number of StyledConv layers: {len(self.style_conv_layers)}")
 
     def forward(self, t):
-        print(f"🍩 LatentTokenDecoder forward method input shape: {t.shape}")
+        debug_print(f"🍩 LatentTokenDecoder forward method input shape: {t.shape}")
         
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        print(f"Repeated constant input shape: {x.shape}")
+        debug_print(f"Repeated constant input shape: {x.shape}")
         
         m1, m2, m3, m4 = None, None, None, None
         for i, layer in enumerate(self.style_conv_layers):
             x = layer(x, t)
-            print(f"Layer {i} output shape: {x.shape}")
+            debug_print(f"Layer {i} output shape: {x.shape}")
             
             if i == 3:
                 m1 = x
-                print(f"m1 shape: {m1.shape}")
+                debug_print(f"m1 shape: {m1.shape}")
             elif i == 6:
                 m2 = x
-                print(f"m2 shape: {m2.shape}")
+                debug_print(f"m2 shape: {m2.shape}")
             elif i == 9:
                 m3 = x
-                print(f"m3 shape: {m3.shape}")
+                debug_print(f"m3 shape: {m3.shape}")
             elif i == 12:
                 m4 = x
-                print(f"m4 shape: {m4.shape}")
+                debug_print(f"m4 shape: {m4.shape}")
         
-        print("LatentTokenDecoder forward method completed")
+        debug_print("LatentTokenDecoder forward method completed")
         return m4, m3, m2, m1
     
 '''
@@ -464,7 +464,7 @@ class IMFModel(nn.Module):
         aligned_features = []
         for i in range(len(self.implicit_motion_alignment)):
             f_r_i = f_r[i]
-            print(f"🥊 layer {i}")
+            debug_print(f"🥊 layer {i}")
             align_layer = self.implicit_motion_alignment[i]
             m_c_i = m_c[i] 
             m_r_i = m_r[i]

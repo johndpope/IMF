@@ -189,13 +189,11 @@ class IMFServer:
 
     @torch.no_grad()
     def extract_features(self, current_frame: np.ndarray, reference_frame: np.ndarray):
-        # Preprocess frames
+        logger.info("Extracting features from frames")
+        
         def preprocess_frame(frame):
-            # Convert BGR to RGB
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # Resize to 256x256
             frame = cv2.resize(frame, (256, 256))
-            # Convert to torch tensor and normalize
             frame = torch.from_numpy(frame).float().permute(2, 0, 1) / 255.0
             frame = frame.unsqueeze(0)
             return frame
@@ -203,36 +201,79 @@ class IMFServer:
         x_current = preprocess_frame(current_frame)
         x_reference = preprocess_frame(reference_frame)
 
-        # Extract features and tokens using the encoder parts of the model
+        # Extract features and tokens
         f_r, t_r, t_c = self.model.tokens(x_current, x_reference)
 
-        # Convert to serializable format
+        # Log shapes for debugging
+        logger.info(f"Current token shape: {t_c.shape}")
+        logger.info(f"Reference token shape: {t_r.shape}")
+        for i, f in enumerate(f_r):
+            logger.info(f"Reference feature {i} shape: {f.shape}")
+
+        # Convert to serializable format ensuring correct dimensions
         features_data = {
-            "reference_features": [f.cpu().numpy().tolist() for f in f_r],
-            "reference_token": t_r.cpu().numpy().tolist(),
-            "current_token": t_c.cpu().numpy().tolist()
+            "reference_features": [
+                f.cpu().numpy().reshape(1, *f.shape[1:]).tolist() 
+                for f in f_r
+            ],
+            "reference_token": t_r.cpu().numpy().reshape(1, -1).tolist(),
+            "current_token": t_c.cpu().numpy().reshape(1, -1).tolist()
         }
 
+        # Log the processed shapes
+        logger.info("Processed shapes:")
+        logger.info(f"Current token: {np.array(features_data['current_token']).shape}")
+        logger.info(f"Reference token: {np.array(features_data['reference_token']).shape}")
+        for i, f in enumerate(features_data['reference_features']):
+            logger.info(f"Reference feature {i}: {np.array(f).shape}")
+
+        logger.info("Features extracted successfully")
         return features_data
 
     async def process_frame_request(self, data: Dict[str, Any]):
+        logger.info(f"Processing frame request: {data}")
         frame_idx = data["frame_index"]
         ref_frame_idx = data.get("reference_frame_index", 0)
 
-        # Get frames
-        current_frame = self.stored_frames[frame_idx]
-        reference_frame = self.stored_frames[ref_frame_idx]
+        try:
+            # Get frames
+            current_frame = self.stored_frames[frame_idx]
+            reference_frame = self.stored_frames[ref_frame_idx]
 
-        # Extract features
-        features_data = self.extract_features(current_frame, reference_frame)
+            # Extract features
+            features_data = self.extract_features(current_frame, reference_frame)
 
-        return {
-            "type": "frame_features",
-            "frame_index": frame_idx,
-            "reference_frame_index": ref_frame_idx,
-            "features": features_data
-        }
+            # Validate feature shapes
+            reference_features = features_data["reference_features"]
+            expected_shapes = [
+                (1, 128, 64, 64),
+                (1, 256, 32, 32),
+                (1, 512, 16, 16),
+                (1, 512, 8, 8)
+            ]
 
+            logger.info("Validating feature shapes:")
+            for i, (feat, expected) in enumerate(zip(reference_features, expected_shapes)):
+                feat_shape = np.array(feat).shape
+                logger.info(f"Feature {i}: Got {feat_shape}, Expected {expected}")
+                if feat_shape != expected:
+                    raise ValueError(f"Feature {i} has wrong shape: {feat_shape} vs {expected}")
+
+            logger.info(f"Reference token shape: {np.array(features_data['reference_token']).shape}")
+            logger.info(f"Current token shape: {np.array(features_data['current_token']).shape}")
+
+            return {
+                "type": "frame_features",
+                "frame_index": frame_idx,
+                "reference_frame_index": ref_frame_idx,
+                "features": features_data
+            }
+        except Exception as e:
+            logger.error(f"Error processing frame request: {str(e)}")
+            return {
+                "type": "error",
+                "message": str(e)
+            }
     def run(self, 
             host: str = "0.0.0.0", 
             port: int = 8000,

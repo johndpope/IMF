@@ -92,7 +92,7 @@ class IMFTrainer:
         self.optimizer_d = AdamW(discriminator.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
         # Learning rate schedulers
-        total_steps = config.training.num_epochs * len(train_dataloader)
+        total_steps = 100000000# config.training.num_epochs * len(train_dataloader)
         self.scheduler_g = OneCycleLR(self.optimizer_g, max_lr=2e-4, total_steps=total_steps)
         self.scheduler_d = OneCycleLR(self.optimizer_d, max_lr=2e-4, total_steps=total_steps)
 
@@ -122,7 +122,7 @@ class IMFTrainer:
             print("🔥 Skipping training step due to empty x_current")
             return None, None, None, None, None, None
 
-        print("🎸 train step")
+        # print("🎸 train step")
         # Generate reconstructed frame
         x_reconstructed = self.model(x_current, x_reference)
 
