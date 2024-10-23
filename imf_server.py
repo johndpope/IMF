@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, UploadFile, File
+from fastapi import FastAPI, WebSocket, UploadFile, File, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import torch
 import numpy as np
@@ -12,7 +12,13 @@ from model import IMFModel
 import base64
 import ssl
 import uvicorn
+import logging
+import torchvision.transforms as transforms
+from VideoDataset import VideoDataset
+from pathlib import Path
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class IMFServer:
     def __init__(self, checkpoint_path: str = "./checkpoints/checkpoint.pth"):
@@ -21,6 +27,23 @@ class IMFServer:
         self.setup_routes()
         self.load_model(checkpoint_path)
         self.active_connections: List[WebSocket] = []
+
+
+
+  # Initialize dataset
+
+        videos_root = "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/"
+        self.transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+        ])
+        self.dataset = VideoDataset(
+            root_dir= videos_root ,
+            transform=self.transform
+        )
+        
+        self.videos_root = Path(videos_root)
+        logger.info(f"Loaded {len(self.dataset)} videos from {videos_root}")
 
     def setup_cors(self):
         self.app.add_middleware(
@@ -41,6 +64,40 @@ class IMFServer:
         self.model.load_state_dict(checkpoint['model_state_dict'])
 
     def setup_routes(self):
+        @self.app.get("/videos")
+        async def list_videos():
+            """List all available videos"""
+            videos = []
+            for idx in range(len(self.dataset)):
+                video_folder = self.dataset.video_folders[idx]
+                video_name = Path(video_folder).name
+                num_frames = self.dataset.video_frames[idx]
+                videos.append({
+                    "id": idx,
+                    "name": video_name,
+                    "frame_count": num_frames
+                })
+            return {"videos": videos}
+    
+        @self.app.get("/videos/{video_id}/frames/{frame_id}")
+        async def get_frame(video_id: int, frame_id: int):
+            """Get a specific frame from a video"""
+            try:
+                video_folder = self.dataset.video_folders[video_id]
+                frames = sorted([f for f in Path(video_folder).glob("*.png")])
+                if frame_id >= len(frames):
+                    raise HTTPException(status_code=404, message="Frame not found")
+                
+                frame_path = frames[frame_id]
+                img = Image.open(frame_path)
+                img_bytes = io.BytesIO()
+                img.save(img_bytes, format='PNG')
+                return {
+                    "frame": base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+                }
+            except IndexError:
+                raise HTTPException(status_code=404, detail="Video not found")
+            
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             await self.handle_websocket_connection(websocket)
@@ -50,22 +107,62 @@ class IMFServer:
             return await self.handle_video_upload(file)
 
     async def handle_websocket_connection(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
+            logger.info("New WebSocket connection attempt...")
+            try:
+                await websocket.accept()
+                logger.info("WebSocket connection accepted")
+                self.active_connections.append(websocket)
+                
+                try:
+                    while True:
+                        data = await websocket.receive_json()
+                        logger.info(f"Received message: {data}")
+                        
+                        if data["type"] == "process_frames":
+                            response = await self.process_video_frames(
+                                video_id=data["video_id"],
+                                current_frame=data["current_frame"],
+                                reference_frame=data["reference_frame"]
+                            )
+                            await websocket.send_json(response)
+                        
+                except WebSocketDisconnect:
+                    logger.info("WebSocket disconnected")
+                    self.active_connections.remove(websocket)
+                except Exception as e:
+                    logger.error(f"Error in WebSocket connection: {str(e)}")
+                    if websocket in self.active_connections:
+                        self.active_connections.remove(websocket)
+            except Exception as e:
+                logger.error(f"Failed to establish WebSocket connection: {str(e)}")
+
+    async def process_video_frames(self, video_id: int, current_frame: int, reference_frame: int) -> Dict:
+        """Process a pair of frames from a video"""
         try:
-            while True:
-                # Receive message
-                data = await websocket.receive_json()
-                
-                if data["type"] == "request_frame":
-                    frame_data = await self.process_frame_request(data)
-                    await websocket.send_json(frame_data)
-                
+            video_folder = self.dataset.video_folders[video_id]
+            frames = sorted([f for f in Path(video_folder).glob("*.png")])
+            
+            # Load frames
+            current = cv2.imread(str(frames[current_frame]))
+            reference = cv2.imread(str(frames[reference_frame]))
+            
+            # Extract features
+            features_data = self.extract_features(current, reference)
+            
+            return {
+                "type": "frame_features",
+                "video_id": video_id,
+                "current_frame": current_frame,
+                "reference_frame": reference_frame,
+                "features": features_data
+            }
         except Exception as e:
-            print(f"WebSocket error: {e}")
-        finally:
-            self.active_connections.remove(websocket)
-            await websocket.close()
+            logger.error(f"Error processing frames: {str(e)}")
+            return {
+                "type": "error",
+                "message": str(e)
+            }
+
 
     async def handle_video_upload(self, file: UploadFile):
         # Save video temporarily
@@ -142,21 +239,29 @@ class IMFServer:
             ssl_certfile: str = "192.168.1.108.pem",
             ssl_keyfile: str = "192.168.1.108-key.pem"):
         
-        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        ssl_context.load_cert_chain(ssl_certfile, ssl_keyfile)
+        logger.info(f"Starting server on {host}:{port} with SSL")
         
-        config = uvicorn.Config(
-            app=self.app,
-            host=host,
-            port=port,
-            ssl_certfile=ssl_certfile,
-            ssl_keyfile=ssl_keyfile,
-            ssl_version=ssl.PROTOCOL_TLS,
-            ssl_cert_reqs=ssl.CERT_NONE
-        )
-        
-        server = uvicorn.Server(config)
-        server.run()
+        try:
+            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_context.load_cert_chain(ssl_certfile, ssl_keyfile)
+            
+            config = uvicorn.Config(
+                app=self.app,
+                host=host,
+                port=port,
+                ssl_certfile=ssl_certfile,
+                ssl_keyfile=ssl_keyfile,
+                log_level="debug",  # Enable debug logging
+                ws_ping_interval=30.0,  # Send ping every 30 seconds
+                ws_ping_timeout=10.0,   # Wait 10 seconds for pong
+                timeout_keep_alive=30,   # Keep-alive timeout
+            )
+            
+            server = uvicorn.Server(config)
+            server.run()
+        except Exception as e:
+            logger.error(f"Failed to start server: {str(e)}")
+            raise
 
 if __name__ == "__main__":
     server = IMFServer()
