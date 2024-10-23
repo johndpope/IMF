@@ -16,6 +16,8 @@ import logging
 import torchvision.transforms as transforms
 from VideoDataset import VideoDataset
 from pathlib import Path
+from starlette.websockets import WebSocketState
+from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -48,10 +50,11 @@ class IMFServer:
     def setup_cors(self):
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # Configure appropriately for production
+            allow_origins=["https://192.168.1.108:3001"],  # Specific origin instead of wildcard
             allow_credentials=True,
-            allow_methods=["*"],
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["*"],
+            expose_headers=["*"]
         )
 
     def load_model(self, checkpoint_path: str):
@@ -67,37 +70,110 @@ class IMFServer:
         @self.app.get("/videos")
         async def list_videos():
             """List all available videos"""
-            videos = []
-            for idx in range(len(self.dataset)):
-                video_folder = self.dataset.video_folders[idx]
-                video_name = Path(video_folder).name
-                num_frames = self.dataset.video_frames[idx]
-                videos.append({
-                    "id": idx,
-                    "name": video_name,
-                    "frame_count": num_frames
-                })
-            return {"videos": videos}
-    
+            try:
+                videos = []
+                for idx in range(len(self.dataset)):
+                    video_folder = self.dataset.video_folders[idx]
+                    video_name = Path(video_folder).name
+                    num_frames = self.dataset.video_frames[idx]
+                    videos.append({
+                        "id": idx,
+                        "name": video_name,
+                        "frame_count": num_frames
+                    })
+                return {"videos": videos}
+            except Exception as e:
+                logger.error(f"Error listing videos: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e))
+
         @self.app.get("/videos/{video_id}/frames/{frame_id}")
         async def get_frame(video_id: int, frame_id: int):
             """Get a specific frame from a video"""
             try:
+                # Validate video_id
+                if video_id < 0 or video_id >= len(self.dataset):
+                    logger.warning(f"Invalid video_id requested: {video_id}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Video {video_id} not found. Available videos: 0-{len(self.dataset)-1}"
+                    )
+
+                # Get frame count for this video
                 video_folder = self.dataset.video_folders[video_id]
                 frames = sorted([f for f in Path(video_folder).glob("*.png")])
-                if frame_id >= len(frames):
-                    raise HTTPException(status_code=404, message="Frame not found")
+                frame_count = len(frames)
+                
+                # Validate frame_id
+                if frame_id < 0 or frame_id >= frame_count:
+                    logger.warning(f"Invalid frame_id requested: {frame_id} for video {video_id} with {frame_count} frames")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Frame {frame_id} not found in video {video_id}. Available frames: 0-{frame_count-1}"
+                    )
                 
                 frame_path = frames[frame_id]
-                img = Image.open(frame_path)
-                img_bytes = io.BytesIO()
-                img.save(img_bytes, format='PNG')
+                if not frame_path.exists():
+                    logger.error(f"Frame file missing: {frame_path}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Frame file not found: {frame_path}"
+                    )
+
+                # Load and convert frame
+                try:
+                    img = Image.open(frame_path)
+                    img_bytes = io.BytesIO()
+                    img.save(img_bytes, format='PNG')
+                    return JSONResponse({
+                        "frame": base64.b64encode(img_bytes.getvalue()).decode('utf-8'),
+                        "metadata": {
+                            "frame_number": frame_id,
+                            "total_frames": frame_count,
+                            "video_id": video_id
+                        }
+                    })
+                except Exception as e:
+                    logger.error(f"Error processing frame: {str(e)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Error processing frame: {str(e)}"
+                    )
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error in get_frame: {str(e)}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Internal server error: {str(e)}"
+                )
+
+        # Add an endpoint to get video metadata
+        @self.app.get("/videos/{video_id}/metadata")
+        async def get_video_metadata(video_id: int):
+            """Get metadata for a specific video"""
+            try:
+                if video_id < 0 or video_id >= len(self.dataset):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Video {video_id} not found"
+                    )
+
+                video_folder = self.dataset.video_folders[video_id]
+                frames = sorted([f for f in Path(video_folder).glob("*.png")])
+                
                 return {
-                    "frame": base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+                    "video_id": video_id,
+                    "frame_count": len(frames),
+                    "name": Path(video_folder).name
                 }
-            except IndexError:
-                raise HTTPException(status_code=404, detail="Video not found")
-            
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=str(e)
+                )
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             await self.handle_websocket_connection(websocket)
@@ -107,57 +183,150 @@ class IMFServer:
             return await self.handle_video_upload(file)
 
     async def handle_websocket_connection(self, websocket: WebSocket):
-            logger.info("New WebSocket connection attempt...")
+        logger.info("New WebSocket connection attempt...")
+        try:
+            await websocket.accept()
+            logger.info("WebSocket connection accepted")
+            self.active_connections.append(websocket)
+            
             try:
-                await websocket.accept()
-                logger.info("WebSocket connection accepted")
-                self.active_connections.append(websocket)
-                
-                try:
-                    while True:
-                        data = await websocket.receive_json()
-                        logger.info(f"Received message: {data}")
-                        
-                        if data["type"] == "process_frames":
+                while True:
+                    if websocket.client_state == WebSocketState.DISCONNECTED:
+                        break
+
+                    data = await websocket.receive_json()
+                    logger.info(f"Received message: {data}")
+                    
+                    message_type = data.get("type")
+                    if message_type == "init":
+                        try:
+                            # Handle initialization
+                            payload = data.get("payload", {})
+                            buffer_size = payload.get("bufferSize", 30)
+                            fps = payload.get("fps", 30)
+                            
+                            # Send acknowledgment
+                            await websocket.send_json({
+                                "type": "init_response",
+                                "status": "success",
+                                "config": {
+                                    "bufferSize": buffer_size,
+                                    "fps": fps,
+                                    "maxFrames": 300  # Or any server-side limit
+                                }
+                            })
+                            logger.info(f"Client initialized with buffer_size={buffer_size}, fps={fps}")
+                            
+                        except Exception as e:
+                            logger.error(f"Error during initialization: {str(e)}")
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"Initialization failed: {str(e)}"
+                            })
+
+                    elif message_type == "process_frames":
+                        try:
+                            # Extract fields from payload
+                            payload = data.get("payload", {})
+                            video_id = payload.get("video_id")
+                            current_frame = payload.get("current_frame")
+                            reference_frame = payload.get("reference_frame")
+
+                            # Validate required fields
+                            if any(x is None for x in [video_id, current_frame, reference_frame]):
+                                raise ValueError("Missing required fields in payload")
+
+                            # Process frames
                             response = await self.process_video_frames(
-                                video_id=data["video_id"],
-                                current_frame=data["current_frame"],
-                                reference_frame=data["reference_frame"]
+                                video_id=video_id,
+                                current_frame=current_frame,
+                                reference_frame=reference_frame
                             )
-                            await websocket.send_json(response)
-                        
-                except WebSocketDisconnect:
-                    logger.info("WebSocket disconnected")
-                    self.active_connections.remove(websocket)
-                except Exception as e:
-                    logger.error(f"Error in WebSocket connection: {str(e)}")
-                    if websocket in self.active_connections:
-                        self.active_connections.remove(websocket)
+                            
+                            if websocket.client_state == WebSocketState.CONNECTED:
+                                await websocket.send_json(response)
+                                
+                        except ValueError as ve:
+                            logger.error(f"Invalid message payload: {str(ve)}")
+                            if websocket.client_state == WebSocketState.CONNECTED:
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": f"Invalid message payload: {str(ve)}"
+                                })
+                        except Exception as e:
+                            logger.error(f"Error processing frames: {str(e)}")
+                            if websocket.client_state == WebSocketState.CONNECTED:
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": str(e)
+                                })
+                    else:
+                        logger.warning(f"Unknown message type: {message_type}")
+                        if websocket.client_state == WebSocketState.CONNECTED:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": f"Unknown message type: {message_type}"
+                            })
+                    
+            except WebSocketDisconnect:
+                logger.info("WebSocket disconnected normally")
             except Exception as e:
-                logger.error(f"Failed to establish WebSocket connection: {str(e)}")
+                logger.error(f"Error in WebSocket connection: {str(e)}")
+            finally:
+                if websocket in self.active_connections:
+                    self.active_connections.remove(websocket)
+                    
+        except Exception as e:
+            logger.error(f"Failed to establish WebSocket connection: {str(e)}")
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
 
     async def process_video_frames(self, video_id: int, current_frame: int, reference_frame: int) -> Dict:
         """Process a pair of frames from a video"""
+        logger.info(f"Processing frames - video: {video_id}, current: {current_frame}, reference: {reference_frame}")
+        
         try:
+            # Validate input parameters
+            if video_id < 0 or video_id >= len(self.dataset):
+                raise ValueError(f"Invalid video_id: {video_id}")
+
             video_folder = self.dataset.video_folders[video_id]
             frames = sorted([f for f in Path(video_folder).glob("*.png")])
+            frame_count = len(frames)
+            
+            # Validate frame indices
+            if current_frame < 0 or current_frame >= frame_count:
+                raise ValueError(f"Invalid current_frame: {current_frame}. Valid range: 0-{frame_count-1}")
+            if reference_frame < 0 or reference_frame >= frame_count:
+                raise ValueError(f"Invalid reference_frame: {reference_frame}. Valid range: 0-{frame_count-1}")
             
             # Load frames
-            current = cv2.imread(str(frames[current_frame]))
-            reference = cv2.imread(str(frames[reference_frame]))
-            
-            # Extract features
-            features_data = self.extract_features(current, reference)
-            
-            return {
-                "type": "frame_features",
-                "video_id": video_id,
-                "current_frame": current_frame,
-                "reference_frame": reference_frame,
-                "features": features_data
-            }
+            try:
+                current = cv2.imread(str(frames[current_frame]))
+                reference = cv2.imread(str(frames[reference_frame]))
+                
+                if current is None or reference is None:
+                    raise ValueError("Failed to load frames")
+                
+                # Extract features
+                features_data = self.extract_features(current, reference)
+                
+                return {
+                    "type": "frame_features",
+                    "video_id": video_id,
+                    "current_frame": current_frame,
+                    "reference_frame": reference_frame,
+                    "features": features_data,
+                    "metadata": {
+                        "frame_count": frame_count
+                    }
+                }
+            except Exception as e:
+                logger.error(f"Error processing frames: {str(e)}")
+                raise ValueError(f"Frame processing error: {str(e)}")
+                
         except Exception as e:
-            logger.error(f"Error processing frames: {str(e)}")
+            logger.error(f"Error in process_video_frames: {str(e)}")
             return {
                 "type": "error",
                 "message": str(e)
