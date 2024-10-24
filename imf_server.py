@@ -34,9 +34,11 @@ from moviepy.editor import VideoFileClip
 import numpy as np
 import tempfile
 import asyncio
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack,RTCIceCandidate
 from av import AudioFrame
 import numpy as np
+
+
 
 class AudioStreamTrack(MediaStreamTrack):
     kind = "audio"
@@ -77,7 +79,10 @@ class MP4Handler:
         }
 
 
-
+ALLOWED_ORIGINS = [
+            "https://192.168.1.108:3001",  # Your frontend origin
+            "wss://192.168.1.108:8000"     # WebSocket server origin
+] 
 class IMFServer:
     def __init__(self, checkpoint_path: str = "./checkpoints/checkpoint.pth", cache_dir: str = "./token_cache"):
         self.app = FastAPI()
@@ -139,7 +144,7 @@ class IMFServer:
             return features
             
         except Exception as e:
-            logger.error(f"Error generating reference features for video {video_id}: {str(e)}")
+            logger.error(f"🔥 🔥 Error generating reference features for video {video_id}: {str(e)}")
             raise
 
     async def generate_frame_tokens(self, video_id: int, frame_idx: int, frame_path: str):
@@ -170,7 +175,7 @@ class IMFServer:
             logger.info(f"Generated tokens for frame {frame_idx} of video {video_id}")
 
         except Exception as e:
-            logger.error(f"Error generating tokens for frame {frame_idx} of video {video_id}: {str(e)}")
+            logger.error(f"🔥 🔥 Error generating tokens for frame {frame_idx} of video {video_id}: {str(e)}")
             raise
 
 
@@ -199,13 +204,13 @@ class IMFServer:
                     logger.info(f"Completed processing video {video_id}")
                     
                 except Exception as e:
-                    logger.error(f"Failed to process video {video_id}: {str(e)}")
+                    logger.error(f"🔥 🔥 Failed to process video {video_id}: {str(e)}")
                     continue
 
             logger.info("All videos prepared successfully")
             
         except Exception as e:
-            logger.error(f"Error during video preparation: {str(e)}")
+            logger.error(f"🔥 🔥 Error during video preparation: {str(e)}")
         finally:
             self.startup_complete.set()
 
@@ -321,7 +326,7 @@ class IMFServer:
             }
 
         except Exception as e:
-            logger.error(f"Error in process_video_frames: {str(e)}", exc_info=True)
+            logger.error(f"🔥 🔥 Error in process_video_frames: {str(e)}", exc_info=True)
             return {
                 "type": "error",
                 "message": str(e)
@@ -354,17 +359,15 @@ class IMFServer:
             }
             
         except Exception as e:
-            logger.error(f"Error getting media chunk: {e}")
+            logger.error(f"🔥 🔥 Error getting media chunk: {e}")
             raise
     
-    ALLOWED_ORIGINS = [
-                    "https://192.168.1.108:3001",  # Your frontend origin
-                    "wss://192.168.1.108:8000"     # WebSocket server origin
-    ]
+   
     def setup_cors(self):
+        
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=ALLOWED_ORIGINS,
+            allow_origins=ALLOWED_ORIGINS,  # Pass the list of allowed origins
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["*"],
@@ -383,17 +386,13 @@ class IMFServer:
     def setup_routes(self):
 
         @self.app.websocket("/rtc")
-        async def websocket_rtc(self, websocket: WebSocket):
-            """Handle WebRTC WebSocket connections"""
+        async def websocket_rtc(websocket: WebSocket):
             pc = None
             try:
                 await websocket.accept()
                 logger.info("WebRTC WebSocket connection accepted")
                 
-                # Store WebSocket connection
-                self.active_connections.append(websocket)
-                
-                # Create peer connection early
+                # Create peer connection
                 pc = RTCPeerConnection()
                 audio_queue = asyncio.Queue()
                 
@@ -401,16 +400,19 @@ class IMFServer:
                 @pc.on("icecandidate")
                 async def on_ice_candidate(event):
                     if event.candidate:
-                        await websocket.send_json({
-                            "type": "ice-candidate",
-                            "payload": {
-                                "candidate": {
-                                    "candidate": event.candidate.candidate,
-                                    "sdpMid": event.candidate.sdpMid,
-                                    "sdpMLineIndex": event.candidate.sdpMLineIndex,
+                        try:
+                            await websocket.send_json({
+                                "type": "ice-candidate",
+                                "payload": {
+                                    "candidate": {
+                                        "candidate": event.candidate.candidate,
+                                        "sdpMid": event.candidate.sdpMid,
+                                        "sdpMLineIndex": event.candidate.sdpMLineIndex,
+                                    }
                                 }
-                            }
-                        })
+                            })
+                        except Exception as e:
+                            logger.error(f"🔥 Error sending ICE candidate: {e}")
 
                 # Set up data channel handler
                 @pc.on("datachannel")
@@ -425,22 +427,19 @@ class IMFServer:
                                 video_id = data["videoId"]
                                 await self.start_video_stream(channel, video_id)
                         except Exception as e:
-                            logger.error(f"Error handling data channel message: {e}")
+                            logger.error(f"🔥 Error handling data channel message: {e}")
 
                 # Add audio track
                 pc.addTrack(AudioStreamTrack(audio_queue))
                 
                 # Main message handling loop
-                try:
-                    while True:
+                while True:
+                    try:
                         message = await websocket.receive_json()
                         logger.info(f"Received WebRTC message: {message}")
                         
                         if message["type"] == "init":
-                            # Handle initialization
-                            config = message.get("payload", {})
-                            fps = config.get("fps", 30)
-                            
+                            # Send init response with ICE servers
                             await websocket.send_json({
                                 "type": "init_response",
                                 "status": "success",
@@ -450,15 +449,13 @@ class IMFServer:
                                             {"urls": "stun:stun.l.google.com:19302"}
                                         ]
                                     },
-                                    "fps": fps,
+                                    "fps": message.get("payload", {}).get("fps", 24),
                                     "maxFrames": 300
                                 }
                             })
-                            logger.info("Sent init response")
                             
                         elif message["type"] == "offer":
                             # Handle offer
-                            logger.info("Received offer, creating answer")
                             offer = RTCSessionDescription(
                                 sdp=message["payload"]["sdp"]["sdp"],
                                 type=message["payload"]["sdp"]["type"]
@@ -477,129 +474,53 @@ class IMFServer:
                                     }
                                 }
                             })
-                            logger.info("Sent answer")
                             
                         elif message["type"] == "ice-candidate":
-                            # Handle ICE candidate
-                            candidate = message["payload"]["candidate"]
-                            if candidate:
-                                logger.info("Adding ICE candidate")
-                                await pc.addIceCandidate(RTCIceCandidate(
-                                    candidate["candidate"],
-                                    candidate["sdpMid"],
-                                    candidate["sdpMLineIndex"]
-                                ))
+                            try:
+                                candidate_data = message["payload"]["candidate"]
+                                # Extract the components from the candidate string
+                                if candidate_data and candidate_data.get("candidate"):
+                                    # Create ice candidate with the correct parameter names
+                                    ice_candidate = RTCIceCandidate(
+                                        component=1,  # Default component ID
+                                        foundation=None,  # Will be parsed from candidate string
+                                        ip=None,  # Will be parsed from candidate string
+                                        port=None,  # Will be parsed from candidate string
+                                        priority=None,  # Will be parsed from candidate string
+                                        protocol=None,  # Will be parsed from candidate string
+                                        type=None,  # Will be parsed from candidate string
+                                        sdpMid=candidate_data.get("sdpMid"),
+                                        sdpMLineIndex=candidate_data.get("sdpMLineIndex"),
+                                        tcpType=None  # Optional for TCP candidates
+                                    )
+                                    
+                                    # Set the raw candidate string
+                                    ice_candidate.candidate = candidate_data["candidate"]
+                                    
+                                    await pc.addIceCandidate(ice_candidate)
+                                    logger.info(f"Added ICE candidate: {candidate_data['candidate']}")
+                            except Exception as e:
+                                logger.error(f"🔥 Error handling ICE candidate: {e}")
                                 
-                except WebSocketDisconnect:
-                    logger.info("WebRTC WebSocket disconnected normally")
-                    
-                except Exception as e:
-                    logger.error(f"Error in WebRTC message loop: {e}")
-                    
+                    except WebSocketDisconnect:
+                        logger.info("WebRTC WebSocket disconnected normally")
+                        break
+                        
+                    except Exception as e:
+                        logger.error(f"🔥 Error handling message: {e}")
+                        break
+                        
             except Exception as e:
-                logger.error(f"Error in WebRTC connection: {e}")
+                logger.error(f"🔥 Error in WebRTC connection: {e}")
                 
             finally:
                 # Cleanup
                 if pc:
                     logger.info("Closing peer connection")
                     await pc.close()
-                if websocket in self.active_connections:
-                    self.active_connections.remove(websocket)
                 logger.info("WebRTC connection cleanup complete")
-            try:
-                await websocket.accept()
-                logger.info("WebRTC WebSocket connection accepted")
-                
-                # Store WebSocket connection
-                self.active_connections.append(websocket)
-                
-                try:
-                    while True:
-                        message = await websocket.receive_json()
-                        logger.info(f"Received WebRTC message: {message}")
-                        
-                        if message["type"] == "init":
-                            # Handle initialization
-                            config = message.get("payload", {})
-                            fps = config.get("fps", 30)
-                            rtc_config = config.get("rtcConfig", {})
-                            
-                            # Send acknowledgment with ICE servers and other config
-                            await websocket.send_json({
-                                "type": "init_response",
-                                "status": "success",
-                                "payload": {
-                                    "rtcConfig": {
-                                        "iceServers": [
-                                            {"urls": "stun:stun.l.google.com:19302"}
-                                        ]
-                                    },
-                                    "fps": fps,
-                                    "maxFrames": 300
-                                }
-                            })
-                            
-                        elif message["type"] == "offer":
-                            # Create new RTCPeerConnection for this client
-                            pc = RTCPeerConnection()
-                            
-                            # Set up data channel handler
-                            @pc.on("datachannel")
-                            def on_datachannel(channel):
-                                @channel.on("message")
-                                async def on_message(msg):
-                                    try:
-                                        data = json.loads(msg)
-                                        if data["type"] == "start_stream":
-                                            video_id = data["videoId"]
-                                            await self.start_video_stream(channel, video_id)
-                                    except Exception as e:
-                                        logger.error(f"Error handling data channel message: {e}")
-                            
-                            # Handle the offer
-                            offer = RTCSessionDescription(
-                                sdp=message["payload"]["sdp"]["sdp"],
-                                type=message["payload"]["sdp"]["type"],
-                            )
-                            await pc.setRemoteDescription(offer)
-                            
-                            # Create and send answer
-                            answer = await pc.createAnswer()
-                            await pc.setLocalDescription(answer)
-                            
-                            await websocket.send_json({
-                                "type": "answer",
-                                "payload": {
-                                    "sdp": {
-                                        "type": answer.type,
-                                        "sdp": answer.sdp
-                                    }
-                                }
-                            })
-                            
-                        elif message["type"] == "ice-candidate":
-                            # Handle ICE candidate
-                            candidate = message["payload"]["candidate"]
-                            if pc and candidate:
-                                await pc.addIceCandidate(RTCIceCandidate(**candidate))
-                                
-                except WebSocketDisconnect:
-                    logger.info("WebRTC WebSocket disconnected normally")
-                    if pc:
-                        await pc.close()
-                except Exception as e:
-                    logger.error(f"Error in WebRTC connection: {e}")
-                    if pc:
-                        await pc.close()
-                finally:
-                    if websocket in self.active_connections:
-                        self.active_connections.remove(websocket)
-                        
-            except Exception as e:
-                logger.error(f"Failed to establish WebRTC WebSocket connection: {e}")
 
-            
+
         @self.app.get("/videos/{video_id}/reference")
         async def get_reference_data(video_id: int):
             """Get reference features and token for a video"""
@@ -609,7 +530,7 @@ class IMFServer:
             except ValueError as ve:
                 raise HTTPException(status_code=404, detail=str(ve))
             except Exception as e:
-                logger.error(f"Error serving reference data: {str(e)}")
+                logger.error(f"🔥 🔥 Error serving reference data: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
                 
         @self.app.get("/videos/{video_id}/generation-status")
@@ -644,7 +565,7 @@ class IMFServer:
                     })
                 return {"videos": videos}
             except Exception as e:
-                logger.error(f"Error listing videos: {str(e)}")
+                logger.error(f"🔥 🔥 Error listing videos: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/videos/{video_id}/prepare")
@@ -694,7 +615,7 @@ class IMFServer:
                 
                 frame_path = frames[frame_id]
                 if not frame_path.exists():
-                    logger.error(f"Frame file missing: {frame_path}")
+                    logger.error(f"🔥 🔥 Frame file missing: {frame_path}")
                     raise HTTPException(
                         status_code=404,
                         detail=f"Frame file not found: {frame_path}"
@@ -714,7 +635,7 @@ class IMFServer:
                         }
                     })
                 except Exception as e:
-                    logger.error(f"Error processing frame: {str(e)}")
+                    logger.error(f"🔥 🔥 Error processing frame: {str(e)}")
                     raise HTTPException(
                         status_code=500,
                         detail=f"Error processing frame: {str(e)}"
@@ -723,7 +644,7 @@ class IMFServer:
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Unexpected error in get_frame: {str(e)}")
+                logger.error(f"🔥 🔥 Unexpected error in get_frame: {str(e)}")
                 raise HTTPException(
                     status_code=500,
                     detail=f"Internal server error: {str(e)}"
@@ -795,11 +716,11 @@ class IMFServer:
                     await asyncio.sleep(1/24)
                     
                 except Exception as e:
-                    logger.error(f"Error processing frame {frame_idx}: {e}")
+                    logger.error(f"🔥 🔥 Error processing frame {frame_idx}: {e}")
                     continue
                 
         except Exception as e:
-            logger.error(f"Error in video stream: {e}")
+            logger.error(f"🔥 🔥 Error in video stream: {e}")
         finally:
             logger.info(f"Video stream {video_id} complete")
 
@@ -883,7 +804,7 @@ class IMFServer:
             }
             
         except Exception as e:
-            logger.error(f"Error getting reference data for video {video_id}: {str(e)}")
+            logger.error(f"🔥 🔥 Error getting reference data for video {video_id}: {str(e)}")
             raise
         
     async def handle_websocket_connection(self, websocket: WebSocket):
@@ -922,7 +843,7 @@ class IMFServer:
                             logger.info(f"Client initialized with buffer_size={buffer_size}, fps={fps}")
                             
                         except Exception as e:
-                            logger.error(f"Error during initialization: {str(e)}")
+                            logger.error(f"🔥 🔥 Error during initialization: {str(e)}")
                             await websocket.send_json({
                                 "type": "error",
                                 "message": f"Initialization failed: {str(e)}"
@@ -951,14 +872,14 @@ class IMFServer:
                                 await websocket.send_json(response)
                                 
                         except ValueError as ve:
-                            logger.error(f"Invalid message payload: {str(ve)}")
+                            logger.error(f"🔥 🔥 Invalid message payload: {str(ve)}")
                             if websocket.client_state == WebSocketState.CONNECTED:
                                 await websocket.send_json({
                                     "type": "error",
                                     "message": f"Invalid message payload: {str(ve)}"
                                 })
                         except Exception as e:
-                            logger.error(f"Error processing frames: {str(e)}")
+                            logger.error(f"🔥 🔥 Error processing frames: {str(e)}")
                             if websocket.client_state == WebSocketState.CONNECTED:
                                 await websocket.send_json({
                                     "type": "error",
@@ -975,13 +896,13 @@ class IMFServer:
             except WebSocketDisconnect:
                 logger.info("WebSocket disconnected normally")
             except Exception as e:
-                logger.error(f"Error in WebSocket connection: {str(e)}")
+                logger.error(f"🔥 🔥 Error in WebSocket connection: {str(e)}")
             finally:
                 if websocket in self.active_connections:
                     self.active_connections.remove(websocket)
                     
         except Exception as e:
-            logger.error(f"Failed to establish WebSocket connection: {str(e)}")
+            logger.error(f"🔥 🔥 Failed to establish WebSocket connection: {str(e)}")
             if websocket in self.active_connections:
                 self.active_connections.remove(websocket)
 
@@ -1096,7 +1017,7 @@ class IMFServer:
             }
 
         except Exception as e:
-            logger.error(f"Error in process_video_frames: {str(e)}", exc_info=True)
+            logger.error(f"🔥 🔥 Error in process_video_frames: {str(e)}", exc_info=True)
             return {
                 "type": "error",
                 "message": str(e)
@@ -1208,7 +1129,7 @@ class IMFServer:
                 "features": features_data
             }
         except Exception as e:
-            logger.error(f"Error processing frame request: {str(e)}")
+            logger.error(f"🔥 🔥 Error processing frame request: {str(e)}")
             return {
                 "type": "error",
                 "message": str(e)
@@ -1243,7 +1164,7 @@ class IMFServer:
             server.run()
             
         except Exception as e:
-            logger.error(f"Failed to start server: {str(e)}")
+            logger.error(f"🔥 🔥 Failed to start server: {str(e)}")
             raise
 
 if __name__ == "__main__":
