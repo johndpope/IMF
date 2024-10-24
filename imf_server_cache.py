@@ -52,6 +52,29 @@ class TokenCache:
         """Check if tokens have been generated"""
         return self.generation_status.get(video_id, {}).get(frame_id, False)
     
+
+    def get_tokens(self, video_id: int, frame_id: int) -> Optional[Dict]:
+        """Get tokens from cache"""
+        if video_id in self.video_tokens:
+            return self.video_tokens[video_id].get(frame_id)
+        return None
+
+
+    def get_generation_progress(self, video_id: int) -> float:
+        """Get token generation progress for a video"""
+        if video_id not in self.generation_status:
+            return 0.0
+        
+        total_frames = len(self.generation_status[video_id])
+        if total_frames == 0:
+            return 0.0
+            
+        generated_frames = sum(
+            1 for is_generated in self.generation_status[video_id].values()
+            if is_generated
+        )
+        return generated_frames / total_frames
+    
     def set_tokens(self, video_id: int, frame_id: int, tokens: Dict):
         """Set tokens in cache with LRU eviction"""
         with self.lock:
