@@ -18,9 +18,89 @@ from VideoDataset import VideoDataset
 from pathlib import Path
 from starlette.websockets import WebSocketState
 from fastapi.responses import JSONResponse
+from collections import OrderedDict
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import asyncio
+from typing import Dict, Optional
+class TokenCache:
+    def __init__(self, max_size: int = 1000):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+        self.video_tokens: Dict[int, Dict[int, Dict]] = {}  # video_id -> {frame_id -> tokens}
+        self.generation_status: Dict[int, Dict[int, bool]] = {}  # video_id -> {frame_id -> is_generated}
+        self.lock = threading.Lock()
+
+    def get_tokens(self, video_id: int, frame_id: int) -> Optional[Dict]:
+        """Get tokens from cache"""
+        if video_id in self.video_tokens:
+            return self.video_tokens[video_id].get(frame_id)
+        return None
+
+    def set_tokens(self, video_id: int, frame_id: int, tokens: Dict):
+        """Set tokens in cache with LRU eviction"""
+        with self.lock:
+            if video_id not in self.video_tokens:
+                self.video_tokens[video_id] = {}
+            
+            self.video_tokens[video_id][frame_id] = tokens
+            
+            # LRU eviction if needed
+            total_tokens = sum(len(frames) for frames in self.video_tokens.values())
+            if total_tokens > self.max_size:
+                # Remove oldest entries
+                while total_tokens > self.max_size:
+                    oldest_video = next(iter(self.video_tokens))
+                    oldest_frames = self.video_tokens[oldest_video]
+                    if oldest_frames:
+                        oldest_frame = next(iter(oldest_frames))
+                        del oldest_frames[oldest_frame]
+                        total_tokens -= 1
+                    if not oldest_frames:
+                        del self.video_tokens[oldest_video]
+        
+    def is_generated(self, video_id: int, frame_id: int) -> bool:
+        """Check if tokens have been generated"""
+        return self.generation_status.get(video_id, {}).get(frame_id, False)
+
+    def clear_video(self, video_id: int):
+        """Clear cached tokens for a video"""
+        with self.lock:
+            if video_id in self.video_tokens:
+                del self.video_tokens[video_id]
+            if video_id in self.generation_status:
+                del self.generation_status[video_id]
+
+    def get_generation_progress(self, video_id: int) -> float:
+        """Get token generation progress for a video"""
+        if video_id not in self.generation_status:
+            return 0.0
+        
+        total_frames = len(self.generation_status[video_id])
+        if total_frames == 0:
+            return 0.0
+            
+        generated_frames = sum(
+            1 for is_generated in self.generation_status[video_id].values()
+            if is_generated
+        )
+        return generated_frames / total_frames
+
+# Decorator for caching frame loads
+@lru_cache(maxsize=128)
+def load_frame(frame_path: str):
+    """Load and preprocess a frame with caching"""
+    import cv2
+    frame = cv2.imread(str(frame_path))
+    if frame is None:
+        raise ValueError(f"Failed to load frame: {frame_path}")
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
 class IMFServer:
     def __init__(self, checkpoint_path: str = "./checkpoints/checkpoint.pth"):
@@ -29,6 +109,8 @@ class IMFServer:
         self.setup_routes()
         self.load_model(checkpoint_path)
         self.active_connections: List[WebSocket] = []
+        self.token_cache = TokenCache(max_size=1000)
+        self.background_tasks = set()
 
 
 
@@ -47,6 +129,72 @@ class IMFServer:
         self.videos_root = Path(videos_root)
         logger.info(f"Loaded {len(self.dataset)} videos from {videos_root}")
 
+
+
+
+    async def generate_tokens_for_video(self, video_id: int):
+        """Generate tokens for all frames in a video"""
+        try:
+            video_folder = self.dataset.video_folders[video_id]
+            frames = sorted([f for f in Path(video_folder).glob("*.png")])
+            
+            logger.info(f"Starting token generation for video {video_id} with {len(frames)} frames")
+            
+            # Initialize progress tracking
+            if video_id not in self.token_cache.generation_status:
+                self.token_cache.generation_status[video_id] = {}
+
+            # Process frames in chunks
+            chunk_size = 10
+            for i in range(0, len(frames), chunk_size):
+                chunk_frames = frames[i:i + chunk_size]
+                tasks = []
+                
+                for frame_idx, frame_path in enumerate(chunk_frames, start=i):
+                    if not self.token_cache.is_generated(video_id, frame_idx):
+                        tasks.append(self.generate_frame_tokens(video_id, frame_idx, frame_path))
+                
+                await asyncio.gather(*tasks)
+                logger.info(f"Generated tokens for frames {i} to {min(i + chunk_size, len(frames))}")
+
+            logger.info(f"Completed token generation for video {video_id}")
+
+        except Exception as e:
+            logger.error(f"Error generating tokens for video {video_id}: {str(e)}")
+            raise
+
+
+    
+    async def generate_frame_tokens(self, video_id: int, frame_idx: int, frame_path: str):
+        """Generate tokens for a single frame"""
+        try:
+            # Load and preprocess frame
+            frame = cv2.imread(str(frame_path))
+            if frame is None:
+                raise ValueError(f"Failed to load frame {frame_idx}")
+
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = cv2.resize(frame, (256, 256))
+            frame_tensor = torch.from_numpy(frame).float().permute(2, 0, 1) / 255.0
+            frame_tensor = frame_tensor.unsqueeze(0)
+
+            # Generate tokens
+            with torch.no_grad():
+                features = self.model.encoder(frame_tensor)
+                tokens = self.model.quantizer(features)
+
+            # Cache tokens
+            self.token_cache.set_tokens(video_id, frame_idx, {
+                'features': [f.cpu().numpy() for f in features],
+                'tokens': tokens.cpu().numpy()
+            })
+            
+            # Update generation status
+            self.token_cache.generation_status[video_id][frame_idx] = True
+
+        except Exception as e:
+            logger.error(f"Error generating tokens for frame {frame_idx} of video {video_id}: {str(e)}")
+            raise
     def setup_cors(self):
         self.app.add_middleware(
             CORSMiddleware,
@@ -67,6 +215,23 @@ class IMFServer:
         self.model.load_state_dict(checkpoint['model_state_dict'])
 
     def setup_routes(self):
+
+        @self.app.get("/videos/{video_id}/generation-status")
+        async def get_generation_status(self,video_id: int):
+            """Get token generation progress"""
+            try:
+                if video_id < 0 or video_id >= len(self.dataset):
+                    raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+
+                progress = self.token_cache.get_generation_progress(video_id)
+                return {
+                    "video_id": video_id,
+                    "progress": progress
+                }
+
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+        
         @self.app.get("/videos")
         async def list_videos():
             """List all available videos"""
@@ -86,6 +251,26 @@ class IMFServer:
                 logger.error(f"Error listing videos: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
 
+        @self.app.post("/videos/{video_id}/prepare")
+        async def prepare_video(video_id: int):
+            """Start token generation for a video"""
+            try:
+                if video_id < 0 or video_id >= len(self.dataset):
+                    raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+
+                # Start token generation in background
+                task = asyncio.create_task(self.generate_tokens_for_video(video_id))
+                self.background_tasks.add(task)
+                task.add_done_callback(self.background_tasks.discard)
+
+                return {
+                    "status": "started",
+                    "message": f"Token generation started for video {video_id}"
+                }
+
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+            
         @self.app.get("/videos/{video_id}/frames/{frame_id}")
         async def get_frame(video_id: int, frame_id: int):
             """Get a specific frame from a video"""
@@ -282,51 +467,81 @@ class IMFServer:
                 self.active_connections.remove(websocket)
 
     async def process_video_frames(self, video_id: int, current_frame: int, reference_frame: int) -> Dict:
-        """Process a pair of frames from a video"""
-        logger.info(f"Processing frames - video: {video_id}, current: {current_frame}, reference: {reference_frame}")
-        
+        """Process a pair of frames using cached tokens when available"""
         try:
-            # Validate input parameters
             if video_id < 0 or video_id >= len(self.dataset):
                 raise ValueError(f"Invalid video_id: {video_id}")
 
-            video_folder = self.dataset.video_folders[video_id]
-            frames = sorted([f for f in Path(video_folder).glob("*.png")])
-            frame_count = len(frames)
-            
             # Validate frame indices
-            if current_frame < 0 or current_frame >= frame_count:
-                raise ValueError(f"Invalid current_frame: {current_frame}. Valid range: 0-{frame_count-1}")
-            if reference_frame < 0 or reference_frame >= frame_count:
-                raise ValueError(f"Invalid reference_frame: {reference_frame}. Valid range: 0-{frame_count-1}")
-            
-            # Load frames
-            try:
-                current = cv2.imread(str(frames[current_frame]))
-                reference = cv2.imread(str(frames[reference_frame]))
-                
-                if current is None or reference is None:
-                    raise ValueError("Failed to load frames")
-                
-                # Extract features
-                features_data = self.extract_features(current, reference)
-                
-                return {
-                    "type": "frame_features",
-                    "video_id": video_id,
-                    "current_frame": current_frame,
-                    "reference_frame": reference_frame,
-                    "features": features_data,
-                    "metadata": {
-                        "frame_count": frame_count
-                    }
+            frame_count = self.dataset.video_frames[video_id]
+            if current_frame >= frame_count or reference_frame >= frame_count:
+                raise ValueError(f"Frame index out of range. Video {video_id} has {frame_count} frames")
+
+            # Check if tokens are cached
+            current_tokens = self.token_cache.get_tokens(video_id, current_frame)
+            reference_tokens = self.token_cache.get_tokens(video_id, reference_frame)
+
+            if current_tokens and reference_tokens:
+                # Use cached tokens
+                features_data = {
+                    'reference_features': reference_tokens['features'],
+                    'reference_token': reference_tokens['tokens'],
+                    'current_token': current_tokens['tokens']
                 }
-            except Exception as e:
-                logger.error(f"Error processing frames: {str(e)}")
-                raise ValueError(f"Frame processing error: {str(e)}")
+                logger.info("Using cached tokens")
+            else:
+                # Generate tokens on-the-fly
+                logger.info("Generating tokens on-the-fly")
                 
+                # Get frames from dataset
+                current_frame_tensor = self.dataset.get_frame(video_id, current_frame)
+                reference_frame_tensor = self.dataset.get_frame(video_id, reference_frame)
+
+                # Extract features and tokens
+                with torch.no_grad():
+                    f_r, t_r, t_c = self.model.tokens(
+                        current_frame_tensor.unsqueeze(0),  # Add batch dimension
+                        reference_frame_tensor.unsqueeze(0)
+                    )
+
+                # Convert to serializable format
+                features_data = {
+                    'reference_features': [
+                        f.cpu().numpy().reshape(1, *f.shape[1:]).tolist() 
+                        for f in f_r
+                    ],
+                    'reference_token': t_r.cpu().numpy().reshape(1, -1).tolist(),
+                    'current_token': t_c.cpu().numpy().reshape(1, -1).tolist()
+                }
+
+                # Cache the generated tokens
+                if not current_tokens:
+                    self.token_cache.set_tokens(video_id, current_frame, {
+                        'features': features_data['reference_features'],
+                        'tokens': features_data['current_token']
+                    })
+                if not reference_tokens:
+                    self.token_cache.set_tokens(video_id, reference_frame, {
+                        'features': features_data['reference_features'],
+                        'tokens': features_data['reference_token']
+                    })
+
+                logger.info(f"Generated and cached tokens for frames {current_frame} and {reference_frame}")
+
+            return {
+                "type": "frame_features",
+                "video_id": video_id,
+                "current_frame": current_frame,
+                "reference_frame": reference_frame,
+                "features": features_data,
+                "metadata": {
+                    "frame_count": frame_count,
+                    "cached": bool(current_tokens and reference_tokens)
+                }
+            }
+
         except Exception as e:
-            logger.error(f"Error in process_video_frames: {str(e)}")
+            logger.error(f"Error in process_video_frames: {str(e)}", exc_info=True)
             return {
                 "type": "error",
                 "message": str(e)
