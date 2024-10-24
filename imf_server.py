@@ -477,30 +477,15 @@ class IMFServer:
                             
                         elif message["type"] == "ice-candidate":
                             try:
-                                candidate_data = message["payload"]["candidate"]
-                                # Extract the components from the candidate string
-                                if candidate_data and candidate_data.get("candidate"):
-                                    # Create ice candidate with the correct parameter names
-                                    ice_candidate = RTCIceCandidate(
-                                        component=1,  # Default component ID
-                                        foundation=None,  # Will be parsed from candidate string
-                                        ip=None,  # Will be parsed from candidate string
-                                        port=None,  # Will be parsed from candidate string
-                                        priority=None,  # Will be parsed from candidate string
-                                        protocol=None,  # Will be parsed from candidate string
-                                        type=None,  # Will be parsed from candidate string
-                                        sdpMid=candidate_data.get("sdpMid"),
-                                        sdpMLineIndex=candidate_data.get("sdpMLineIndex"),
-                                        tcpType=None  # Optional for TCP candidates
-                                    )
-                                    
-                                    # Set the raw candidate string
-                                    ice_candidate.candidate = candidate_data["candidate"]
-                                    
-                                    await pc.addIceCandidate(ice_candidate)
-                                    logger.info(f"Added ICE candidate: {candidate_data['candidate']}")
+                                candidate_data = message.get("payload", {}).get("candidate", {})
+                                if candidate_data:
+                                    await self.handle_ice_candidate(pc, candidate_data)
+                                else:
+                                    logger.warning("Received ice-candidate message with no candidate data")
                             except Exception as e:
-                                logger.error(f"🔥 Error handling ICE candidate: {e}")
+                                logger.error(f"🔥 Error in ice candidate handling: {str(e)}")
+                                # Continue processing other messages even if one fails
+                                continue
                                 
                     except WebSocketDisconnect:
                         logger.info("WebRTC WebSocket disconnected normally")
@@ -684,6 +669,71 @@ class IMFServer:
         async def upload_video(file: UploadFile = File(...)):
             return await self.handle_video_upload(file)
 
+
+
+    async def handle_ice_candidate(self, pc: RTCPeerConnection, candidate_data: dict) -> None:
+        """
+        Handle incoming ICE candidates with proper validation and error handling.
+        
+        Args:
+            pc: RTCPeerConnection instance
+            candidate_data: Dictionary containing ICE candidate information
+        """
+        try:
+            # Log the incoming candidate data for debugging
+            logger.info(f"Processing ICE candidate data: {candidate_data}")
+
+            # Extract the candidate string
+            candidate_str = candidate_data.get('candidate', '')
+            if not candidate_str:
+                logger.warning("Empty candidate string received")
+                return
+
+            # Parse the candidate string
+            # Format: candidate:foundation component protocol priority ip port typ type [raddr rel-addr rport rel-port]
+            parts = candidate_str.split()
+            if len(parts) < 8:
+                logger.error(f"Invalid candidate string format: {candidate_str}")
+                return
+
+            # Extract required parameters
+            foundation = parts[0].split(':')[1]  # Remove 'candidate:' prefix
+            component = int(parts[1])
+            protocol = parts[2]
+            priority = int(parts[3])
+            ip = parts[4]
+            port = int(parts[5])
+            # parts[6] is 'typ'
+            candidate_type = parts[7]
+
+            # Create RTCIceCandidate with all required parameters
+            ice_candidate = RTCIceCandidate(
+                component=component,
+                foundation=foundation,
+                ip=ip,
+                port=port,
+                priority=priority,
+                protocol=protocol,
+                type=candidate_type,
+                sdpMid=candidate_data.get('sdpMid'),
+                sdpMLineIndex=candidate_data.get('sdpMLineIndex')
+            )
+
+            # Set the raw candidate string
+            ice_candidate.candidate = candidate_str
+            
+            logger.info(f"Created ICE candidate: {ice_candidate.candidate}")
+            
+            # Add the candidate to the peer connection
+            await pc.addIceCandidate(ice_candidate)
+            logger.info(f"Successfully added ICE candidate: {candidate_str}")
+
+        except Exception as e:
+            logger.error(f"🔥 Error handling ICE candidate: {str(e)}", exc_info=True)
+            logger.error(f"Problematic candidate string: {candidate_str}")
+
+
+                
     async def start_video_stream(self, channel, video_id: int):
         """Handle video streaming over data channel"""
         try:
