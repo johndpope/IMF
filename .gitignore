@@ -47,3 +47,5 @@ imf_client/variables/variables.data-00000-of-00001
 imf_client/variables/variables.index
 graphmodel/model.json
 graphmodel/model.json
+*.npz
+token_cache/cache_index.json
