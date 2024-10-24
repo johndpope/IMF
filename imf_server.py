@@ -140,80 +140,104 @@ class IMFServer:
             logger.info("Server initialization complete")
 
     async def prepare_all_videos(self):
-        """Prepare all videos on server startup"""
+        """Prepare all videos sequentially, one at a time"""
         try:
-            logger.info("Starting preparation of all videos...")
-            tasks = []
-            
-            # Create tasks for each video
+            logger.info("Starting sequential video preparation...")
             for video_id in range(len(self.dataset)):
-                if not self.token_cache.is_generated(video_id, 0):  # Check if video is already processed
-                    task = asyncio.create_task(self.generate_tokens_for_video(video_id))
-                    tasks.append(task)
-                    logger.info(f"Queued video {video_id} for processing")
-            
-            if tasks:
-                # Process videos in parallel with a limit
-                chunk_size = 1  # Process 3 videos at a time
-                for i in range(0, len(tasks), chunk_size):
-                    chunk = tasks[i:i + chunk_size]
-                    await asyncio.gather(*chunk)
-                    logger.info(f"Completed processing chunk {i//chunk_size + 1} of {(len(tasks) + chunk_size - 1)//chunk_size}")
-            
+                try:
+                    # Skip if video is already processed
+                    if self.token_cache.is_generated(video_id, 0):
+                        logger.info(f"Video {video_id} already processed, skipping...")
+                        continue
+
+                    logger.info(f"Processing video {video_id}")
+                    await self.generate_tokens_for_video(video_id)
+                    
+                    # Log completion of each video
+                    video_frames = self.dataset.video_frames[video_id]
+                    processed_frames = len(self.token_cache.video_tokens.get(video_id, {}))
+                    logger.info(f"Completed video {video_id}: {processed_frames}/{video_frames} frames processed")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process video {video_id}: {str(e)}")
+                    continue  # Continue with next video even if current fails
+
             logger.info("All videos prepared successfully")
-            
+                
         except Exception as e:
-            logger.error(f"Error preparing videos: {str(e)}")
+            logger.error(f"Error during video preparation: {str(e)}")
         finally:
-            # Signal that startup processing is complete
             self.startup_complete.set()
 
     async def generate_tokens_for_video(self, video_id: int):
-        """Generate tokens for all frames in a video"""
+        """Generate tokens for all frames in a video sequentially"""
         try:
             video_folder = self.dataset.video_folders[video_id]
             frames = sorted([f for f in Path(video_folder).glob("*.png")])
+            total_frames = len(frames)
             
-            logger.info(f"Starting token generation for video {video_id} with {len(frames)} frames")
+            logger.info(f"Starting token generation for video {video_id} with {total_frames} frames")
             
             # Initialize progress tracking
             if video_id not in self.token_cache.generation_status:
                 self.token_cache.generation_status[video_id] = {}
 
-            # Process frames in chunks with error handling for each frame
-            chunk_size = 10
-            for i in range(0, len(frames), chunk_size):
+            # Process frames sequentially in larger chunks
+            chunk_size = 30  # Increased chunk size
+            for i in range(0, total_frames, chunk_size):
                 chunk_frames = frames[i:i + chunk_size]
-                tasks = []
                 
+                # Process each frame in the chunk
                 for frame_idx, frame_path in enumerate(chunk_frames, start=i):
-                    if not self.token_cache.is_generated(video_id, frame_idx):
-                        task = asyncio.create_task(self.generate_frame_tokens(video_id, frame_idx, frame_path))
-                        tasks.append(task)
+                    try:
+                        if not self.token_cache.is_generated(video_id, frame_idx):
+                            await self.generate_frame_tokens(video_id, frame_idx, frame_path)
+                    except Exception as e:
+                        logger.error(f"Error processing frame {frame_idx}: {str(e)}")
+                        continue
                 
-                try:
-                    # Process chunk with individual error handling
-                    for task in tasks:
-                        try:
-                            await task
-                        except Exception as e:
-                            logger.error(f"Failed to process frame in video {video_id}: {str(e)}")
-                            continue
-                    
-                    processed_count = len([k for k in self.token_cache.video_tokens.get(video_id, {}).keys() if k < i + chunk_size])
-                    logger.info(f"Generated tokens for frames {i} to {min(i + chunk_size, len(frames))} ({processed_count} frames processed)")
-                
-                except Exception as chunk_error:
-                    logger.error(f"Error processing chunk in video {video_id}: {str(chunk_error)}")
-                    continue
+                # Log progress after each chunk
+                processed_frames = len(self.token_cache.video_tokens.get(video_id, {}))
+                progress = (processed_frames / total_frames) * 100
+                logger.info(f"Video {video_id} progress: {processed_frames}/{total_frames} frames ({progress:.1f}%)")
 
-            # Log completion status
-            total_processed = len(self.token_cache.video_tokens.get(video_id, {}))
-            total_frames = len(frames)
-            logger.info(f"Completed token generation for video {video_id}. Processed {total_processed}/{total_frames} frames.")
+            # Final completion log
+            final_processed = len(self.token_cache.video_tokens.get(video_id, {}))
+            logger.info(f"Completed video {video_id}: {final_processed}/{total_frames} frames processed")
 
         except Exception as e:
             logger.error(f"Error generating tokens for video {video_id}: {str(e)}")
+            raise
+
+    async def generate_frame_tokens(self, video_id: int, frame_idx: int, frame_path: str):
+        """Generate tokens for a single frame using the dataset's frame loading"""
+        try:
+            # Load frame using dataset's method
+            frame_data = self.dataset._load_and_transform_frame(frame_path)
+            if frame_data is None:
+                raise ValueError(f"Failed to load frame {frame_idx}")
+
+            # Add batch dimension if needed
+            frame_tensor = frame_data.unsqueeze(0) if frame_data.dim() == 3 else frame_data
+            
+            # Use the same frame as both current and reference for token generation
+            with torch.no_grad():
+                features, tokens_ref, tokens_current = self.model.tokens(
+                    frame_tensor,
+                    frame_tensor
+                )
+
+            # Cache tokens and features
+            self.token_cache.set_tokens(video_id, frame_idx, {
+                'features': [f.cpu().numpy() for f in features],
+                'tokens': tokens_current.cpu().numpy()
+            })
+                
+            # Update generation status
+            self.token_cache.generation_status[video_id][frame_idx] = True
+
+        except Exception as e:
+            logger.error(f"Error generating tokens for frame {frame_idx} of video {video_id}: {str(e)}")
             raise
 
     async def process_video_frames(self, video_id: int, current_frame: int, reference_frame: int) -> Dict:
@@ -299,38 +323,6 @@ class IMFServer:
                 "message": str(e)
             }
     
-    async def generate_frame_tokens(self, video_id: int, frame_idx: int, frame_path: str):
-        """Generate tokens for a single frame using the dataset's frame loading"""
-        try:
-            # Load frame using dataset's method
-            frame_data = self.dataset._load_and_transform_frame(frame_path)
-            if frame_data is None:
-                raise ValueError(f"Failed to load frame {frame_idx}")
-
-            # Add batch dimension if needed
-            frame_tensor = frame_data.unsqueeze(0) if frame_data.dim() == 3 else frame_data
-            
-            # Use the same frame as both current and reference for token generation
-            with torch.no_grad():
-                features, tokens_ref, tokens_current = self.model.tokens(
-                    frame_tensor,  # current frame
-                    frame_tensor   # use same frame as reference
-                )
-
-            # Cache tokens and features
-            self.token_cache.set_tokens(video_id, frame_idx, {
-                'features': [f.cpu().numpy() for f in features],
-                'tokens': tokens_current.cpu().numpy()
-            })
-                
-            # Update generation status
-            self.token_cache.generation_status[video_id][frame_idx] = True
-
-            logger.info(f"Successfully generated tokens for frame {frame_idx} of video {video_id}")
-
-        except Exception as e:
-            logger.error(f"Error generating tokens for frame {frame_idx} of video {video_id}: {str(e)}")
-            raise
 
         
     def setup_cors(self):
