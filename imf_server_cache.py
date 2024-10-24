@@ -28,7 +28,6 @@ import threading
 import asyncio
 from typing import Dict, Optional
 import time
-
 class TokenCache:
     def __init__(self, max_size: int = 1000, cache_dir: str = "./cache"):
         self.max_size = max_size
@@ -47,6 +46,42 @@ class TokenCache:
         # Set up periodic saving
         self.last_save_time = time.time()
         self.save_interval = 300  # Save every 5 minutes
+
+    def _maybe_save_cache(self):
+        """Check if it's time to save the cache and save if needed"""
+        current_time = time.time()
+        if (current_time - self.last_save_time) >= self.save_interval:
+            self.save_cache()
+
+    def set_tokens(self, video_id: int, frame_id: int, tokens: Dict):
+        """Set tokens in cache with LRU eviction"""
+        with self.lock:
+            if video_id not in self.video_tokens:
+                self.video_tokens[video_id] = {}
+            
+            self.video_tokens[video_id][frame_id] = tokens
+            
+            # Update generation status
+            if video_id not in self.generation_status:
+                self.generation_status[video_id] = {}
+            self.generation_status[video_id][frame_id] = True
+            
+            # LRU eviction if needed
+            total_tokens = sum(len(frames) for frames in self.video_tokens.values())
+            if total_tokens > self.max_size:
+                self._perform_lru_eviction()
+            
+            # Maybe save to disk
+            self._maybe_save_cache()
+
+    def set_reference_features(self, video_id: int, features: List[np.ndarray]):
+        """Set reference features for a video"""
+        with self.lock:
+            self.reference_features[video_id] = features
+            # Save reference features immediately as they're used frequently
+            self.save_reference_features(video_id)
+            self._maybe_save_cache()
+
 
     def is_generated(self, video_id: int, frame_id: int) -> bool:
         """Check if tokens have been generated"""
@@ -75,28 +110,7 @@ class TokenCache:
         )
         return generated_frames / total_frames
     
-    def set_tokens(self, video_id: int, frame_id: int, tokens: Dict):
-        """Set tokens in cache with LRU eviction"""
-        with self.lock:
-            if video_id not in self.video_tokens:
-                self.video_tokens[video_id] = {}
-            
-            self.video_tokens[video_id][frame_id] = tokens
-            
-            # LRU eviction if needed
-            total_tokens = sum(len(frames) for frames in self.video_tokens.values())
-            if total_tokens > self.max_size:
-                # Remove oldest entries
-                while total_tokens > self.max_size:
-                    oldest_video = next(iter(self.video_tokens))
-                    oldest_frames = self.video_tokens[oldest_video]
-                    if oldest_frames:
-                        oldest_frame = next(iter(oldest_frames))
-                        del oldest_frames[oldest_frame]
-                        total_tokens -= 1
-                    if not oldest_frames:
-                        del self.video_tokens[oldest_video]
-
+   
                         
     def get_cache_path(self, video_id: int, is_reference: bool = False) -> Path:
         """Get path for cache file"""
@@ -104,12 +118,7 @@ class TokenCache:
             return self.cache_dir / f"video_{video_id}_reference.npz"
         return self.cache_dir / f"video_{video_id}_tokens.npz"
 
-    def set_reference_features(self, video_id: int, features: List[np.ndarray]):
-        """Set reference features for a video"""
-        with self.lock:
-            self.reference_features[video_id] = features
-            # Save reference features immediately as they're used frequently
-            self.save_reference_features(video_id)
+ 
 
     def get_reference_features(self, video_id: int) -> Optional[List[np.ndarray]]:
         """Get reference features for a video"""

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, UploadFile, File, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, UploadFile, File, WebSocketDisconnect, HTTPException,Query
 from fastapi.middleware.cors import CORSMiddleware
 import torch
 import numpy as np
@@ -615,6 +615,99 @@ class IMFServer:
                 logger.error(f"Error during connection failure cleanup: {e}")
 
 
+
+        
+        @self.app.get("/videos/{video_id}/tokens")
+        async def get_bulk_tokens(
+            video_id: int,
+            start: int = Query(..., description="Start frame index"),
+            end: int = Query(..., description="End frame index")
+        ):
+            try:
+                if video_id < 0 or video_id >= len(self.dataset):
+                    raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
+
+                video_folder = self.dataset.video_folders[video_id]
+                frames = sorted([f for f in Path(video_folder).glob("*.png")])
+                frame_count = len(frames)
+
+                if start < 0 or end >= frame_count:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Invalid frame range. Video has {frame_count} frames"
+                    )
+
+                # Get cached tokens
+                tokens = {}
+                video_cached_tokens = self.token_cache.video_tokens.get(video_id, {})
+
+                # Process frames in batches for better performance
+                batch_size = 16  # Adjust based on memory constraints
+                for batch_start in range(start, end + 1, batch_size):
+                    batch_end = min(batch_start + batch_size, end + 1)
+                    batch_frames = []
+                    batch_indices = []
+
+                    # Collect frames that need processing
+                    for frame_idx in range(batch_start, batch_end):
+                        if frame_idx in video_cached_tokens:
+                            token_data = video_cached_tokens[frame_idx]
+                            if isinstance(token_data, dict) and 'tokens' in token_data:
+                                tokens[frame_idx] = token_data['tokens'].tolist() if isinstance(token_data['tokens'], np.ndarray) else token_data['tokens']
+                            continue
+
+                        frame_path = frames[frame_idx]
+                        img = Image.open(frame_path).convert('RGB')
+                        frame_tensor = self.transform(img).unsqueeze(0)
+                        batch_frames.append(frame_tensor)
+                        batch_indices.append(frame_idx)
+
+                    # Process batch if there are uncached frames
+                    if batch_frames:
+                        try:
+                            # Stack frames into a single batch tensor
+                            batch_tensor = torch.cat(batch_frames, dim=0)
+
+                            # Generate tokens using just the latent token encoder
+                            with torch.no_grad():
+                                batch_tokens = self.model.latent_token_encoder(batch_tensor)
+                                
+                                # Convert to numpy and process each token
+                                batch_tokens_np = batch_tokens.cpu().numpy()
+                                
+                                for idx, frame_idx in enumerate(batch_indices):
+                                    # Extract token for this frame
+                                    frame_token = batch_tokens_np[idx]
+                                    # Convert to list and ensure proper shape
+                                    token_list = frame_token.tolist()
+                                    tokens[frame_idx] = token_list
+                                    
+                                    # Cache the generated token
+                                    self.token_cache.set_tokens(video_id, frame_idx, {
+                                        'tokens': frame_token  # Store numpy array in cache
+                                    })
+
+                        except Exception as e:
+                            logger.error(f"Error processing batch: {str(e)}", exc_info=True)
+                            raise
+
+                return {
+                    "videoId": video_id,
+                    "tokens": tokens,
+                    "metadata": {
+                        "totalFrames": frame_count,
+                        "processedFrames": len(video_cached_tokens),
+                        "requestedRange": {
+                            "start": start,
+                            "end": end
+                        }
+                    }
+                }
+
+            except Exception as e:
+                logger.error(f"Error in bulk token fetch: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+            
         @self.app.get("/videos/{video_id}/reference")
         async def get_reference_data(video_id: int):
             """Get reference features and token for a video"""
