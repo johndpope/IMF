@@ -38,6 +38,7 @@ from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack,RT
 from av import AudioFrame
 import numpy as np
 
+from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
 
 
 class AudioStreamTrack(MediaStreamTrack):
@@ -114,7 +115,10 @@ class IMFServer:
         self.startup_complete.set()
         # asyncio.create_task(self.prepare_all_videos())
 
-
+        # Add connection state tracking
+        self.ice_gathering_state = {}
+        self.ice_connection_states = {}
+        self.connected_peers = set()
 
     async def generate_reference_features(self, video_id: int):
         """Generate and cache reference features for a video"""
@@ -383,6 +387,106 @@ class IMFServer:
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         self.model.load_state_dict(checkpoint['model_state_dict'])
 
+    from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
+
+    async def handle_init_connection(self, websocket: WebSocket, message: Dict) -> None:
+        """Handle initial WebRTC connection setup"""
+        try:
+            payload = message.get("payload", {})
+            fps = payload.get("fps", 24)
+            
+            # Create proper RTCConfiguration object
+            config = RTCConfiguration(
+                iceServers=[
+                    RTCIceServer(urls=["stun:stun.l.google.com:19302"])
+                ]
+            )
+            
+            # Create new peer connection with proper configuration
+            pc = RTCPeerConnection(configuration=config)
+            
+            # Set up audio queue and track
+            audio_queue = asyncio.Queue()
+            pc.addTrack(AudioStreamTrack(audio_queue))
+            
+            # Set up data channel handler
+            @pc.on("datachannel")
+            def on_datachannel(channel):
+                logger.info(f"Data channel established: {channel.label}")
+                
+                @channel.on("message")
+                async def on_message(msg):
+                    try:
+                        data = json.loads(msg)
+                        if data["type"] == "start_stream":
+                            await self.start_video_stream(channel, data["videoId"])
+                    except Exception as e:
+                        logger.error(f"🔥 Error handling data channel message: {e}")
+
+            # Set up ICE candidate handler
+            @pc.on("icecandidate")
+            async def on_ice_candidate(event):
+                if event.candidate:
+                    try:
+                        await websocket.send_json({
+                            "type": "ice-candidate",
+                            "payload": {
+                                "candidate": {
+                                    "candidate": event.candidate.candidate,
+                                    "sdpMid": event.candidate.sdpMid,
+                                    "sdpMLineIndex": event.candidate.sdpMLineIndex,
+                                }
+                            }
+                        })
+                    except Exception as e:
+                        logger.error(f"🔥 Error sending ICE candidate: {e}")
+
+            # Set up connection state monitoring
+            @pc.on("connectionstatechange")
+            async def on_connection_state_change():
+                logger.info(f"Connection state changed to: {pc.connectionState}")
+
+            @pc.on("iceconnectionstatechange")
+            async def on_ice_connection_state_change():
+                logger.info(f"ICE connection state changed to: {pc.iceConnectionState}")
+
+            # Send immediate response to client
+            logger.info("Sending init response")
+            await websocket.send_json({
+                "type": "init_response",
+                "status": "success",
+                "payload": {
+                    "rtcConfig": {
+                        "iceServers": [
+                            {"urls": ["stun:stun.l.google.com:19302"]}
+                        ]
+                    },
+                    "fps": fps,
+                    "maxFrames": 300
+                }
+            })
+
+            # Store connection data
+            connection_data = {
+                "peer_connection": pc,
+                "audio_queue": audio_queue,
+                "fps": fps,
+                "id": str(id(websocket))
+            }
+            
+            logger.info("WebRTC initialization completed successfully")
+            return connection_data
+            
+        except Exception as e:
+            logger.error(f"🔥 Error in init connection: {str(e)}", exc_info=True)
+            await websocket.send_json({
+                "type": "error",
+                "payload": {
+                    "message": f"Init failed: {str(e)}"
+                }
+            })
+            raise
+
     def setup_routes(self):
 
         @self.app.websocket("/rtc")
@@ -390,6 +494,8 @@ class IMFServer:
             pc = None
             try:
                 await websocket.accept()
+                peer_id = str(id(websocket))  # Use websocket id as peer_id
+
                 logger.info("WebRTC WebSocket connection accepted")
                 
                 # Create peer connection
@@ -414,6 +520,23 @@ class IMFServer:
                         except Exception as e:
                             logger.error(f"🔥 Error sending ICE candidate: {e}")
 
+
+                @pc.on("icegatheringstatechange")
+                async def on_ice_gathering_state_change():
+                    if peer_id:
+                        self.ice_gathering_state[peer_id] = pc.iceGatheringState
+                        logger.info(f"ICE gathering state changed to {pc.iceGatheringState} for peer {peer_id}")
+                
+                @pc.on("iceconnectionstatechange")
+                async def on_ice_connection_state_change():
+                    if peer_id:
+                        self.ice_connection_states[peer_id] = pc.iceConnectionState
+                        logger.info(f"ICE connection state changed to {pc.iceConnectionState} for peer {peer_id}")
+                        
+                        if pc.iceConnectionState == "failed":
+                            logger.warning(f"ICE connection failed for peer {peer_id}")
+                            
+              
                 # Set up data channel handler
                 @pc.on("datachannel")
                 def on_datachannel(channel):
@@ -439,20 +562,13 @@ class IMFServer:
                         logger.info(f"Received WebRTC message: {message}")
                         
                         if message["type"] == "init":
-                            # Send init response with ICE servers
-                            await websocket.send_json({
-                                "type": "init_response",
-                                "status": "success",
-                                "payload": {
-                                    "rtcConfig": {
-                                        "iceServers": [
-                                            {"urls": "stun:stun.l.google.com:19302"}
-                                        ]
-                                    },
-                                    "fps": message.get("payload", {}).get("fps", 24),
-                                    "maxFrames": 300
-                                }
-                            })
+                         
+                           # Initialize connection
+                            logger.info(f"Initializing connection for peer {peer_id}")
+                            connection_data = await self.handle_init_connection(websocket, message)
+                            pc = connection_data["peer_connection"]
+                            logger.info(f"Connection initialized for peer {peer_id}")
+                            
                             
                         elif message["type"] == "offer":
                             # Handle offer
@@ -474,18 +590,21 @@ class IMFServer:
                                     }
                                 }
                             })
+                            logger.info(f"Sent answer to peer {peer_id}")
+
                             
                         elif message["type"] == "ice-candidate":
-                            try:
-                                candidate_data = message.get("payload", {}).get("candidate", {})
-                                if candidate_data:
-                                    await self.handle_ice_candidate(pc, candidate_data)
-                                else:
-                                    logger.warning("Received ice-candidate message with no candidate data")
-                            except Exception as e:
-                                logger.error(f"🔥 Error in ice candidate handling: {str(e)}")
-                                # Continue processing other messages even if one fails
+                            if not pc:
+                                logger.warning("Received ICE candidate before peer connection setup")
                                 continue
+                                
+                            try:
+                                candidate_data = message["payload"]["candidate"]
+                                if candidate_data and candidate_data.get("candidate"):
+                                    await self.handle_ice_candidate(pc, candidate_data)
+                            except Exception as e:
+                                logger.error(f"🔥 Error handling ICE candidate: {e}")
+                        
                                 
                     except WebSocketDisconnect:
                         logger.info("WebRTC WebSocket disconnected normally")
@@ -493,6 +612,8 @@ class IMFServer:
                         
                     except Exception as e:
                         logger.error(f"🔥 Error handling message: {e}")
+                        if pc and pc.connectionState != "closed":
+                            await pc.close()
                         break
                         
             except Exception as e:
@@ -500,10 +621,13 @@ class IMFServer:
                 
             finally:
                 # Cleanup
+                if peer_id:
+                    self.ice_gathering_state.pop(peer_id, None)
+                    self.ice_connection_states.pop(peer_id, None)
+                    self.connected_peers.discard(peer_id)
                 if pc:
-                    logger.info("Closing peer connection")
                     await pc.close()
-                logger.info("WebRTC connection cleanup complete")
+                logger.info(f"Cleaned up connection for peer {peer_id}")
 
 
         @self.app.get("/videos/{video_id}/reference")
@@ -671,42 +795,46 @@ class IMFServer:
 
 
 
-    async def handle_ice_candidate(self, pc: RTCPeerConnection, candidate_data: dict) -> None:
+    
+    async def handle_ice_candidate(self, pc: RTCPeerConnection, candidate_data: dict, peer_id: str = None) -> None:
         """
-        Handle incoming ICE candidates with proper validation and error handling.
+        Handle incoming ICE candidates with optimized prioritization and state tracking.
         
         Args:
             pc: RTCPeerConnection instance
             candidate_data: Dictionary containing ICE candidate information
+            peer_id: Optional identifier for the peer connection
         """
         try:
-            # Log the incoming candidate data for debugging
-            logger.info(f"Processing ICE candidate data: {candidate_data}")
-
-            # Extract the candidate string
             candidate_str = candidate_data.get('candidate', '')
             if not candidate_str:
                 logger.warning("Empty candidate string received")
                 return
 
             # Parse the candidate string
-            # Format: candidate:foundation component protocol priority ip port typ type [raddr rel-addr rport rel-port]
             parts = candidate_str.split()
             if len(parts) < 8:
                 logger.error(f"Invalid candidate string format: {candidate_str}")
                 return
 
-            # Extract required parameters
-            foundation = parts[0].split(':')[1]  # Remove 'candidate:' prefix
+            # Extract and parse parameters
+            foundation = parts[0].split(':')[1]
             component = int(parts[1])
             protocol = parts[2]
             priority = int(parts[3])
             ip = parts[4]
             port = int(parts[5])
-            # parts[6] is 'typ'
             candidate_type = parts[7]
 
-            # Create RTCIceCandidate with all required parameters
+            # Adjust priority based on candidate type
+            if candidate_type == 'host':
+                priority = max(priority, 2130706431)  # Prefer host candidates
+            elif candidate_type == 'srflx':
+                priority = min(priority, 1677729535)  # Lower priority for STUN
+            elif candidate_type == 'relay':
+                priority = min(priority, 16777215)    # Lowest priority for TURN
+
+            # Create and configure ICE candidate
             ice_candidate = RTCIceCandidate(
                 component=component,
                 foundation=foundation,
@@ -718,19 +846,23 @@ class IMFServer:
                 sdpMid=candidate_data.get('sdpMid'),
                 sdpMLineIndex=candidate_data.get('sdpMLineIndex')
             )
-
-            # Set the raw candidate string
             ice_candidate.candidate = candidate_str
-            
-            logger.info(f"Created ICE candidate: {ice_candidate.candidate}")
-            
-            # Add the candidate to the peer connection
+
+            logger.info(f"Adding ICE candidate type {candidate_type} with priority {priority}")
             await pc.addIceCandidate(ice_candidate)
-            logger.info(f"Successfully added ICE candidate: {candidate_str}")
+            
+            # Update connection state tracking
+            if peer_id:
+                self.ice_gathering_state[peer_id] = pc.iceGatheringState
+                self.ice_connection_states[peer_id] = pc.iceConnectionState
+                
+                if pc.iceConnectionState == "completed":
+                    self.connected_peers.add(peer_id)
+                    logger.info(f"Peer {peer_id} connection completed")
 
         except Exception as e:
             logger.error(f"🔥 Error handling ICE candidate: {str(e)}", exc_info=True)
-            logger.error(f"Problematic candidate string: {candidate_str}")
+
 
 
                 
