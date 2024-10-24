@@ -30,6 +30,53 @@ import threading
 import asyncio
 from typing import Dict, Optional
 from imf_server_cache import TokenCache
+from moviepy.editor import VideoFileClip
+import numpy as np
+import tempfile
+import asyncio
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from av import AudioFrame
+import numpy as np
+
+class AudioStreamTrack(MediaStreamTrack):
+    kind = "audio"
+    
+    def __init__(self, frames_queue):
+        super().__init__()
+        self.frames_queue = frames_queue
+        self.sample_rate = 48000
+        self.pts = 0
+        
+    async def recv(self):
+        frame_data = await self.frames_queue.get()
+        frame = AudioFrame.from_ndarray(
+            frame_data,
+            format='s16',
+            layout='mono'
+        )
+        frame.pts = self.pts
+        frame.time_base = fractions.Fraction(1, self.sample_rate)
+        self.pts += frame.samples
+        return frame
+
+
+class MP4Handler:
+    def __init__(self, video_path: str):
+        self.video = VideoFileClip(video_path)
+        self.audio = self.video.audio
+        
+    def extract_audio_chunk(self, start_time: float, duration: float) -> np.ndarray:
+        """Extract audio chunk as numpy array"""
+        return self.audio.subclip(start_time, start_time + duration).to_soundarray()
+        
+    def get_audio_params(self) -> dict:
+        return {
+            'fps': self.audio.fps,
+            'duration': self.audio.duration,
+            'nchannels': self.audio.nchannels
+        }
+
+
 
 class IMFServer:
     def __init__(self, checkpoint_path: str = "./checkpoints/checkpoint.pth", cache_dir: str = "./token_cache"):
@@ -280,13 +327,44 @@ class IMFServer:
                 "message": str(e)
             }
 
-    
-
         
+    async def get_media_chunk(self, video_id: int, chunk_index: int):
+        try:
+            video_path = self.dataset.video_folders[video_id]
+            mp4_path = f"{video_path}/video.mp4"
+            
+            # Get handler (could be cached)
+            handler = MP4Handler(mp4_path)
+            
+            # Calculate time for chunk
+            chunk_duration = 1/24.0  # For 24fps
+            start_time = chunk_index * chunk_duration
+            
+            # Get audio data
+            audio_data = handler.extract_audio_chunk(start_time, chunk_duration)
+            
+            # Get frame token
+            token_data = await self.get_frame_token(video_id, chunk_index)
+            
+            return {
+                'timestamp': start_time * 1000,  # Convert to ms
+                'audio': audio_data.tobytes(),
+                'token': token_data,
+                'duration': chunk_duration * 1000
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting media chunk: {e}")
+            raise
+    
+    ALLOWED_ORIGINS = [
+                    "https://192.168.1.108:3001",  # Your frontend origin
+                    "wss://192.168.1.108:8000"     # WebSocket server origin
+    ]
     def setup_cors(self):
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["https://192.168.1.108:3001"],  # Specific origin instead of wildcard
+            allow_origins=ALLOWED_ORIGINS,
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             allow_headers=["*"],
@@ -304,6 +382,236 @@ class IMFServer:
 
     def setup_routes(self):
 
+        @self.app.websocket("/rtc")
+        async def websocket_rtc(self, websocket: WebSocket):
+            """Handle WebRTC WebSocket connections"""
+            pc = None
+            try:
+                await websocket.accept()
+                logger.info("WebRTC WebSocket connection accepted")
+                
+                # Store WebSocket connection
+                self.active_connections.append(websocket)
+                
+                # Create peer connection early
+                pc = RTCPeerConnection()
+                audio_queue = asyncio.Queue()
+                
+                # Set up ICE handling
+                @pc.on("icecandidate")
+                async def on_ice_candidate(event):
+                    if event.candidate:
+                        await websocket.send_json({
+                            "type": "ice-candidate",
+                            "payload": {
+                                "candidate": {
+                                    "candidate": event.candidate.candidate,
+                                    "sdpMid": event.candidate.sdpMid,
+                                    "sdpMLineIndex": event.candidate.sdpMLineIndex,
+                                }
+                            }
+                        })
+
+                # Set up data channel handler
+                @pc.on("datachannel")
+                def on_datachannel(channel):
+                    logger.info(f"Data channel established: {channel.label}")
+                    
+                    @channel.on("message")
+                    async def on_message(msg):
+                        try:
+                            data = json.loads(msg)
+                            if data["type"] == "start_stream":
+                                video_id = data["videoId"]
+                                await self.start_video_stream(channel, video_id)
+                        except Exception as e:
+                            logger.error(f"Error handling data channel message: {e}")
+
+                # Add audio track
+                pc.addTrack(AudioStreamTrack(audio_queue))
+                
+                # Main message handling loop
+                try:
+                    while True:
+                        message = await websocket.receive_json()
+                        logger.info(f"Received WebRTC message: {message}")
+                        
+                        if message["type"] == "init":
+                            # Handle initialization
+                            config = message.get("payload", {})
+                            fps = config.get("fps", 30)
+                            
+                            await websocket.send_json({
+                                "type": "init_response",
+                                "status": "success",
+                                "payload": {
+                                    "rtcConfig": {
+                                        "iceServers": [
+                                            {"urls": "stun:stun.l.google.com:19302"}
+                                        ]
+                                    },
+                                    "fps": fps,
+                                    "maxFrames": 300
+                                }
+                            })
+                            logger.info("Sent init response")
+                            
+                        elif message["type"] == "offer":
+                            # Handle offer
+                            logger.info("Received offer, creating answer")
+                            offer = RTCSessionDescription(
+                                sdp=message["payload"]["sdp"]["sdp"],
+                                type=message["payload"]["sdp"]["type"]
+                            )
+                            
+                            await pc.setRemoteDescription(offer)
+                            answer = await pc.createAnswer()
+                            await pc.setLocalDescription(answer)
+                            
+                            await websocket.send_json({
+                                "type": "answer",
+                                "payload": {
+                                    "sdp": {
+                                        "type": answer.type,
+                                        "sdp": answer.sdp
+                                    }
+                                }
+                            })
+                            logger.info("Sent answer")
+                            
+                        elif message["type"] == "ice-candidate":
+                            # Handle ICE candidate
+                            candidate = message["payload"]["candidate"]
+                            if candidate:
+                                logger.info("Adding ICE candidate")
+                                await pc.addIceCandidate(RTCIceCandidate(
+                                    candidate["candidate"],
+                                    candidate["sdpMid"],
+                                    candidate["sdpMLineIndex"]
+                                ))
+                                
+                except WebSocketDisconnect:
+                    logger.info("WebRTC WebSocket disconnected normally")
+                    
+                except Exception as e:
+                    logger.error(f"Error in WebRTC message loop: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Error in WebRTC connection: {e}")
+                
+            finally:
+                # Cleanup
+                if pc:
+                    logger.info("Closing peer connection")
+                    await pc.close()
+                if websocket in self.active_connections:
+                    self.active_connections.remove(websocket)
+                logger.info("WebRTC connection cleanup complete")
+            try:
+                await websocket.accept()
+                logger.info("WebRTC WebSocket connection accepted")
+                
+                # Store WebSocket connection
+                self.active_connections.append(websocket)
+                
+                try:
+                    while True:
+                        message = await websocket.receive_json()
+                        logger.info(f"Received WebRTC message: {message}")
+                        
+                        if message["type"] == "init":
+                            # Handle initialization
+                            config = message.get("payload", {})
+                            fps = config.get("fps", 30)
+                            rtc_config = config.get("rtcConfig", {})
+                            
+                            # Send acknowledgment with ICE servers and other config
+                            await websocket.send_json({
+                                "type": "init_response",
+                                "status": "success",
+                                "payload": {
+                                    "rtcConfig": {
+                                        "iceServers": [
+                                            {"urls": "stun:stun.l.google.com:19302"}
+                                        ]
+                                    },
+                                    "fps": fps,
+                                    "maxFrames": 300
+                                }
+                            })
+                            
+                        elif message["type"] == "offer":
+                            # Create new RTCPeerConnection for this client
+                            pc = RTCPeerConnection()
+                            
+                            # Set up data channel handler
+                            @pc.on("datachannel")
+                            def on_datachannel(channel):
+                                @channel.on("message")
+                                async def on_message(msg):
+                                    try:
+                                        data = json.loads(msg)
+                                        if data["type"] == "start_stream":
+                                            video_id = data["videoId"]
+                                            await self.start_video_stream(channel, video_id)
+                                    except Exception as e:
+                                        logger.error(f"Error handling data channel message: {e}")
+                            
+                            # Handle the offer
+                            offer = RTCSessionDescription(
+                                sdp=message["payload"]["sdp"]["sdp"],
+                                type=message["payload"]["sdp"]["type"],
+                            )
+                            await pc.setRemoteDescription(offer)
+                            
+                            # Create and send answer
+                            answer = await pc.createAnswer()
+                            await pc.setLocalDescription(answer)
+                            
+                            await websocket.send_json({
+                                "type": "answer",
+                                "payload": {
+                                    "sdp": {
+                                        "type": answer.type,
+                                        "sdp": answer.sdp
+                                    }
+                                }
+                            })
+                            
+                        elif message["type"] == "ice-candidate":
+                            # Handle ICE candidate
+                            candidate = message["payload"]["candidate"]
+                            if pc and candidate:
+                                await pc.addIceCandidate(RTCIceCandidate(**candidate))
+                                
+                except WebSocketDisconnect:
+                    logger.info("WebRTC WebSocket disconnected normally")
+                    if pc:
+                        await pc.close()
+                except Exception as e:
+                    logger.error(f"Error in WebRTC connection: {e}")
+                    if pc:
+                        await pc.close()
+                finally:
+                    if websocket in self.active_connections:
+                        self.active_connections.remove(websocket)
+                        
+            except Exception as e:
+                logger.error(f"Failed to establish WebRTC WebSocket connection: {e}")
+
+            
+        @self.app.get("/videos/{video_id}/reference")
+        async def get_reference_data(video_id: int):
+            """Get reference features and token for a video"""
+            try:
+                reference_data = await self.get_video_reference_data(video_id)
+                return JSONResponse(reference_data)
+            except ValueError as ve:
+                raise HTTPException(status_code=404, detail=str(ve))
+            except Exception as e:
+                logger.error(f"Error serving reference data: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e))
+                
         @self.app.get("/videos/{video_id}/generation-status")
         async def get_generation_status(self,video_id: int):
             """Get token generation progress"""
@@ -455,6 +763,129 @@ class IMFServer:
         async def upload_video(file: UploadFile = File(...)):
             return await self.handle_video_upload(file)
 
+    async def start_video_stream(self, channel, video_id: int):
+        """Handle video streaming over data channel"""
+        try:
+            video_folder = self.dataset.video_folders[video_id]
+            frames = sorted([f for f in Path(video_folder).glob("*.png")])
+            
+            # Get reference features first
+            reference_data = await self.process_video_frames(video_id, 0, 0)
+            reference_features = reference_data["features"]["reference_features"]
+            
+            # Stream frames
+            for frame_idx, frame_path in enumerate(frames):
+                if channel.readyState != "open":
+                    logger.info("Data channel closed, stopping stream")
+                    break
+                    
+                try:
+                    # Process frame
+                    frame_data = await self.process_video_frames(video_id, frame_idx, 0)
+                    
+                    # Send frame token
+                    await channel.send(json.dumps({
+                        "type": "frame_token",
+                        "frameIndex": frame_idx,
+                        "token": frame_data["features"]["current_token"],
+                        "timestamp": frame_idx * (1000 / 24)  # ms timestamp at 24fps
+                    }))
+                    
+                    # Control frame rate
+                    await asyncio.sleep(1/24)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing frame {frame_idx}: {e}")
+                    continue
+                
+        except Exception as e:
+            logger.error(f"Error in video stream: {e}")
+        finally:
+            logger.info(f"Video stream {video_id} complete")
+
+    async def get_video_reference_data(self, video_id: int) -> Dict:
+        """Get reference features and token for a video"""
+        try:
+            if video_id < 0 or video_id >= len(self.dataset):
+                raise ValueError(f"Invalid video_id: {video_id}")
+
+            # Get video folder
+            video_folder = self.dataset.video_folders[video_id]
+            frames = sorted([f for f in Path(video_folder).glob("*.png")])
+            
+            if not frames:
+                raise ValueError(f"No frames found for video {video_id}")
+            
+            # Check if we have cached data
+            video_cached_tokens = self.token_cache.video_tokens.get(video_id, {})
+            reference_features = None
+            reference_token = None
+            
+            if 0 in video_cached_tokens:
+                ref_data = video_cached_tokens[0]
+                if isinstance(ref_data, dict):
+                    reference_features = ref_data.get('features')
+                    reference_token = ref_data.get('tokens')
+
+            # Generate if not cached
+            if reference_features is None or reference_token is None:
+                logger.info(f"Generating reference data for video {video_id}")
+                
+                # Load and transform reference frame
+                reference_frame_path = frames[0]
+                img = Image.open(reference_frame_path).convert('RGB')
+                frame_tensor = self.transform(img).unsqueeze(0)
+                
+                # Generate features and tokens
+                with torch.no_grad():
+                    features = self.model.dense_feature_encoder(frame_tensor)
+                    _, reference_token, _ = self.model.tokens(frame_tensor, frame_tensor)
+                    
+                    reference_features = [f.cpu().numpy() for f in features]
+                    reference_token = reference_token.cpu().numpy()
+                    
+                    # Cache the data
+                    self.token_cache.set_tokens(video_id, 0, {
+                        'features': reference_features,
+                        'tokens': reference_token
+                    })
+                    
+                    logger.info(f"Generated and cached reference data for video {video_id}")
+
+            # Ensure proper shape and convert to list for JSON serialization
+            reference_features_list = [
+                f.tolist() if isinstance(f, np.ndarray) else f 
+                for f in reference_features
+            ]
+            reference_token_list = reference_token.tolist() if isinstance(reference_token, np.ndarray) else reference_token
+
+            # Verify shapes before returning
+            expected_shapes = [
+                [1, 128, 64, 64],
+                [1, 256, 32, 32],
+                [1, 512, 16, 16],
+                [1, 512, 8, 8]
+            ]
+
+            for feat, expected in zip(reference_features_list, expected_shapes):
+                actual = np.array(feat).shape
+                if actual != tuple(expected):
+                    raise ValueError(f"Feature shape mismatch. Expected {expected}, got {actual}")
+
+            return {
+                "video_id": video_id,
+                "reference_features": reference_features_list,
+                "reference_token": reference_token_list,
+                "shapes": {
+                    "features": expected_shapes,
+                    "token": np.array(reference_token_list).shape
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting reference data for video {video_id}: {str(e)}")
+            raise
+        
     async def handle_websocket_connection(self, websocket: WebSocket):
         logger.info("New WebSocket connection attempt...")
         try:

@@ -29,3 +29,5 @@ git+https://github.com/johndpope/onnx-tensorflow
 
 --extra-index-url https://pypi.ngc.nvidia.com
 onnx_graphsurgeon
+
+aiortc
