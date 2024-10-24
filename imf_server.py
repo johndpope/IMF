@@ -119,6 +119,9 @@ class IMFServer:
         self.ice_gathering_state = {}
         self.ice_connection_states = {}
         self.connected_peers = set()
+        self.data_channels = {}  # Store data channels by peer_id
+        self.pending_messages = {}  # Store messages that need to be sent once channel is open
+
 
     async def generate_reference_features(self, video_id: int):
         """Generate and cache reference features for a video"""
@@ -387,10 +390,9 @@ class IMFServer:
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         self.model.load_state_dict(checkpoint['model_state_dict'])
 
-    from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
 
-    async def handle_init_connection(self, websocket: WebSocket, message: Dict) -> None:
-        """Handle initial WebRTC connection setup"""
+    async def handle_init_connection(self, websocket: WebSocket, message: Dict, peer_id: str) -> None:
+        """Handle initial WebRTC connection setup with proper state tracking"""
         try:
             payload = message.get("payload", {})
             fps = payload.get("fps", 24)
@@ -412,46 +414,54 @@ class IMFServer:
             # Set up data channel handler
             @pc.on("datachannel")
             def on_datachannel(channel):
-                logger.info(f"Data channel established: {channel.label}")
+                logger.info(f"Data channel established for peer {peer_id}: {channel.label}")
                 
+                @channel.on("open")
+                def on_open():
+                    logger.info(f"Data channel opened for peer {peer_id}")
+                    self.data_channels[peer_id] = channel
+                    
+                    # Send any pending messages
+                    if peer_id in self.pending_messages:
+                        for msg in self.pending_messages[peer_id]:
+                            try:
+                                channel.send(json.dumps(msg))
+                            except Exception as e:
+                                logger.error(f"Error sending pending message: {e}")
+                        del self.pending_messages[peer_id]
+
                 @channel.on("message")
                 async def on_message(msg):
                     try:
                         data = json.loads(msg)
                         if data["type"] == "start_stream":
-                            await self.start_video_stream(channel, data["videoId"])
+                            await self.start_video_stream(channel, data["videoId"], peer_id)
                     except Exception as e:
                         logger.error(f"🔥 Error handling data channel message: {e}")
 
-            # Set up ICE candidate handler
-            @pc.on("icecandidate")
-            async def on_ice_candidate(event):
-                if event.candidate:
-                    try:
-                        await websocket.send_json({
-                            "type": "ice-candidate",
-                            "payload": {
-                                "candidate": {
-                                    "candidate": event.candidate.candidate,
-                                    "sdpMid": event.candidate.sdpMid,
-                                    "sdpMLineIndex": event.candidate.sdpMLineIndex,
-                                }
-                            }
-                        })
-                    except Exception as e:
-                        logger.error(f"🔥 Error sending ICE candidate: {e}")
+                @channel.on("close")
+                def on_close():
+                    logger.info(f"Data channel closed for peer {peer_id}")
+                    if peer_id in self.data_channels:
+                        del self.data_channels[peer_id]
 
             # Set up connection state monitoring
             @pc.on("connectionstatechange")
             async def on_connection_state_change():
-                logger.info(f"Connection state changed to: {pc.connectionState}")
+                logger.info(f"Connection state changed to: {pc.connectionState} for peer {peer_id}")
+                if pc.connectionState == "failed":
+                    await self.handle_connection_failure(peer_id)
+                elif pc.connectionState == "connected":
+                    if peer_id not in self.data_channels:
+                        data_channel = pc.createDataChannel("frames")
+                        self.setup_data_channel(data_channel, peer_id)
 
             @pc.on("iceconnectionstatechange")
             async def on_ice_connection_state_change():
-                logger.info(f"ICE connection state changed to: {pc.iceConnectionState}")
+                logger.info(f"ICE connection state changed to: {pc.iceConnectionState} for peer {peer_id}")
 
             # Send immediate response to client
-            logger.info("Sending init response")
+            logger.info(f"Sending init response to peer {peer_id}")
             await websocket.send_json({
                 "type": "init_response",
                 "status": "success",
@@ -466,19 +476,14 @@ class IMFServer:
                 }
             })
 
-            # Store connection data
-            connection_data = {
+            return {
                 "peer_connection": pc,
                 "audio_queue": audio_queue,
-                "fps": fps,
-                "id": str(id(websocket))
+                "fps": fps
             }
-            
-            logger.info("WebRTC initialization completed successfully")
-            return connection_data
-            
+
         except Exception as e:
-            logger.error(f"🔥 Error in init connection: {str(e)}", exc_info=True)
+            logger.error(f"🔥 Error in init connection for peer {peer_id}: {str(e)}", exc_info=True)
             await websocket.send_json({
                 "type": "error",
                 "payload": {
@@ -487,91 +492,42 @@ class IMFServer:
             })
             raise
 
+
+
     def setup_routes(self):
 
         @self.app.websocket("/rtc")
         async def websocket_rtc(websocket: WebSocket):
             pc = None
+            connection_data = None
+            peer_id = str(id(websocket))
+            
             try:
                 await websocket.accept()
-                peer_id = str(id(websocket))  # Use websocket id as peer_id
-
-                logger.info("WebRTC WebSocket connection accepted")
+                logger.info(f"WebRTC WebSocket connection accepted for peer {peer_id}")
                 
-                # Create peer connection
-                pc = RTCPeerConnection()
-                audio_queue = asyncio.Queue()
-                
-                # Set up ICE handling
-                @pc.on("icecandidate")
-                async def on_ice_candidate(event):
-                    if event.candidate:
-                        try:
-                            await websocket.send_json({
-                                "type": "ice-candidate",
-                                "payload": {
-                                    "candidate": {
-                                        "candidate": event.candidate.candidate,
-                                        "sdpMid": event.candidate.sdpMid,
-                                        "sdpMLineIndex": event.candidate.sdpMLineIndex,
-                                    }
-                                }
-                            })
-                        except Exception as e:
-                            logger.error(f"🔥 Error sending ICE candidate: {e}")
-
-
-                @pc.on("icegatheringstatechange")
-                async def on_ice_gathering_state_change():
-                    if peer_id:
-                        self.ice_gathering_state[peer_id] = pc.iceGatheringState
-                        logger.info(f"ICE gathering state changed to {pc.iceGatheringState} for peer {peer_id}")
-                
-                @pc.on("iceconnectionstatechange")
-                async def on_ice_connection_state_change():
-                    if peer_id:
-                        self.ice_connection_states[peer_id] = pc.iceConnectionState
-                        logger.info(f"ICE connection state changed to {pc.iceConnectionState} for peer {peer_id}")
-                        
-                        if pc.iceConnectionState == "failed":
-                            logger.warning(f"ICE connection failed for peer {peer_id}")
-                            
-              
-                # Set up data channel handler
-                @pc.on("datachannel")
-                def on_datachannel(channel):
-                    logger.info(f"Data channel established: {channel.label}")
-                    
-                    @channel.on("message")
-                    async def on_message(msg):
-                        try:
-                            data = json.loads(msg)
-                            if data["type"] == "start_stream":
-                                video_id = data["videoId"]
-                                await self.start_video_stream(channel, video_id)
-                        except Exception as e:
-                            logger.error(f"🔥 Error handling data channel message: {e}")
-
-                # Add audio track
-                pc.addTrack(AudioStreamTrack(audio_queue))
-                
-                # Main message handling loop
                 while True:
                     try:
                         message = await websocket.receive_json()
-                        logger.info(f"Received WebRTC message: {message}")
+                        logger.info(f"Received WebRTC message from peer {peer_id}: {message}")
                         
                         if message["type"] == "init":
-                         
-                           # Initialize connection
+                            # Initialize connection
                             logger.info(f"Initializing connection for peer {peer_id}")
-                            connection_data = await self.handle_init_connection(websocket, message)
+                            connection_data = await self.handle_init_connection(
+                                websocket=websocket, 
+                                message=message,
+                                peer_id=peer_id
+                            )
                             pc = connection_data["peer_connection"]
                             logger.info(f"Connection initialized for peer {peer_id}")
                             
-                            
                         elif message["type"] == "offer":
-                            # Handle offer
+                            if not pc:
+                                logger.error(f"No peer connection for peer {peer_id}")
+                                raise ValueError("No peer connection established")
+                                
+                            logger.info(f"Processing offer from peer {peer_id}")
                             offer = RTCSessionDescription(
                                 sdp=message["payload"]["sdp"]["sdp"],
                                 type=message["payload"]["sdp"]["type"]
@@ -591,43 +547,72 @@ class IMFServer:
                                 }
                             })
                             logger.info(f"Sent answer to peer {peer_id}")
-
-                            
+                        
                         elif message["type"] == "ice-candidate":
                             if not pc:
-                                logger.warning("Received ICE candidate before peer connection setup")
+                                logger.warning(f"Received ICE candidate before peer connection setup for peer {peer_id}")
                                 continue
                                 
                             try:
                                 candidate_data = message["payload"]["candidate"]
                                 if candidate_data and candidate_data.get("candidate"):
-                                    await self.handle_ice_candidate(pc, candidate_data)
+                                    await self.handle_ice_candidate(pc, candidate_data, peer_id)
                             except Exception as e:
-                                logger.error(f"🔥 Error handling ICE candidate: {e}")
-                        
+                                logger.error(f"🔥 Error handling ICE candidate for peer {peer_id}: {e}")
                                 
                     except WebSocketDisconnect:
-                        logger.info("WebRTC WebSocket disconnected normally")
+                        logger.info(f"WebRTC WebSocket disconnected normally for peer {peer_id}")
                         break
                         
                     except Exception as e:
-                        logger.error(f"🔥 Error handling message: {e}")
+                        logger.error(f"🔥 Error handling message for peer {peer_id}: {e}")
                         if pc and pc.connectionState != "closed":
                             await pc.close()
                         break
                         
             except Exception as e:
-                logger.error(f"🔥 Error in WebRTC connection: {e}")
+                logger.error(f"🔥 Error in WebRTC connection for peer {peer_id}: {e}")
                 
             finally:
                 # Cleanup
                 if peer_id:
-                    self.ice_gathering_state.pop(peer_id, None)
-                    self.ice_connection_states.pop(peer_id, None)
-                    self.connected_peers.discard(peer_id)
+                    # Clean up data channels
+                    if peer_id in self.data_channels:
+                        channel = self.data_channels[peer_id]
+                        channel.close()
+                        del self.data_channels[peer_id]
+                    
+                    # Clean up pending messages
+                    if peer_id in self.pending_messages:
+                        del self.pending_messages[peer_id]
+                    
+                    # Clean up connection states
+                    if hasattr(self, 'ice_gathering_state'):
+                        self.ice_gathering_state.pop(peer_id, None)
+                    if hasattr(self, 'ice_connection_states'):
+                        self.ice_connection_states.pop(peer_id, None)
+                    if hasattr(self, 'connected_peers'):
+                        self.connected_peers.discard(peer_id)
+                    
                 if pc:
+                    logger.info(f"Closing peer connection for peer {peer_id}")
                     await pc.close()
                 logger.info(f"Cleaned up connection for peer {peer_id}")
+
+        async def handle_connection_failure(self, peer_id: str):
+            """Handle failed connections with cleanup"""
+            logger.error(f"Connection failed for peer {peer_id}")
+            try:
+                if peer_id in self.data_channels:
+                    channel = self.data_channels[peer_id]
+                    channel.close()
+                    del self.data_channels[peer_id]
+
+                if peer_id in self.pending_messages:
+                    del self.pending_messages[peer_id]
+                    
+            except Exception as e:
+                logger.error(f"Error during connection failure cleanup: {e}")
 
 
         @self.app.get("/videos/{video_id}/reference")
@@ -866,9 +851,20 @@ class IMFServer:
 
 
                 
-    async def start_video_stream(self, channel, video_id: int):
-        """Handle video streaming over data channel"""
+    async def start_video_stream(self, channel, video_id: int, peer_id: str):
+        """Handle video streaming with proper data channel communication"""
         try:
+            if channel.readyState != "open":
+                logger.warning(f"Data channel not open for peer {peer_id}, queueing start_stream message")
+                if peer_id not in self.pending_messages:
+                    self.pending_messages[peer_id] = []
+                self.pending_messages[peer_id].append({
+                    "type": "start_stream",
+                    "videoId": video_id,
+                    "fps": 24
+                })
+                return
+
             video_folder = self.dataset.video_folders[video_id]
             frames = sorted([f for f in Path(video_folder).glob("*.png")])
             
@@ -879,32 +875,113 @@ class IMFServer:
             # Stream frames
             for frame_idx, frame_path in enumerate(frames):
                 if channel.readyState != "open":
-                    logger.info("Data channel closed, stopping stream")
+                    logger.info(f"Data channel closed for peer {peer_id}, stopping stream")
                     break
                     
                 try:
                     # Process frame
                     frame_data = await self.process_video_frames(video_id, frame_idx, 0)
                     
-                    # Send frame token
-                    await channel.send(json.dumps({
+                    # Prepare message
+                    message = {
                         "type": "frame_token",
                         "frameIndex": frame_idx,
                         "token": frame_data["features"]["current_token"],
                         "timestamp": frame_idx * (1000 / 24)  # ms timestamp at 24fps
-                    }))
+                    }
+                    
+                    # Send frame token using non-async send
+                    try:
+                        channel.send(json.dumps(message))
+                        logger.info(f"Sent frame {frame_idx} to peer {peer_id}")
+                    except Exception as send_error:
+                        logger.error(f"Error sending frame {frame_idx} to peer {peer_id}: {send_error}")
+                        if "closed" in str(send_error).lower():
+                            logger.info("Data channel appears to be closed, stopping stream")
+                            break
                     
                     # Control frame rate
                     await asyncio.sleep(1/24)
                     
                 except Exception as e:
-                    logger.error(f"🔥 🔥 Error processing frame {frame_idx}: {e}")
+                    logger.error(f"🔥 Error processing frame {frame_idx} for peer {peer_id}: {e}")
                     continue
                 
         except Exception as e:
-            logger.error(f"🔥 🔥 Error in video stream: {e}")
+            logger.error(f"🔥 Error in video stream for peer {peer_id}: {e}")
         finally:
-            logger.info(f"Video stream {video_id} complete")
+            logger.info(f"Video stream {video_id} complete for peer {peer_id}")
+
+    def setup_data_channel(self, channel, peer_id: str):
+        """Set up data channel with proper event handling and error recovery"""
+        
+        def send_safely(msg):
+            """Helper function to safely send messages on the data channel"""
+            try:
+                if channel.readyState == "open":
+                    if isinstance(msg, dict):
+                        msg = json.dumps(msg)
+                    channel.send(msg)
+                    return True
+                else:
+                    logger.warning(f"Attempted to send message on closed channel for peer {peer_id}")
+                    return False
+            except Exception as e:
+                logger.error(f"Error sending message on data channel for peer {peer_id}: {e}")
+                return False
+
+        @channel.on("open")
+        def on_open():
+            logger.info(f"Data channel opened for peer {peer_id}")
+            self.data_channels[peer_id] = channel
+            
+            # Send any pending messages
+            if peer_id in self.pending_messages:
+                for msg in self.pending_messages[peer_id]:
+                    if not send_safely(msg):
+                        logger.error(f"Failed to send pending message for peer {peer_id}")
+                        break
+                del self.pending_messages[peer_id]
+
+        @channel.on("close")
+        def on_close():
+            logger.info(f"Data channel closed for peer {peer_id}")
+            if peer_id in self.data_channels:
+                del self.data_channels[peer_id]
+
+        @channel.on("error")
+        def on_error(error):
+            logger.error(f"Data channel error for peer {peer_id}: {error}")
+
+        # Store the send_safely function with the channel for use elsewhere
+        channel.send_safely = send_safely
+
+    async def handle_connection_failure(self, peer_id: str):
+        """Handle connection failures with cleanup and recovery"""
+        logger.error(f"Connection failed for peer {peer_id}")
+        try:
+            # Clean up data channel
+            if peer_id in self.data_channels:
+                try:
+                    channel = self.data_channels[peer_id]
+                    channel.close()
+                except Exception as e:
+                    logger.error(f"Error closing data channel for peer {peer_id}: {e}")
+                finally:
+                    del self.data_channels[peer_id]
+
+            # Clean up pending messages
+            if peer_id in self.pending_messages:
+                del self.pending_messages[peer_id]
+
+            # Update connection states
+            if peer_id in self.ice_connection_states:
+                self.ice_connection_states[peer_id] = "failed"
+            
+            logger.info(f"Cleaned up after connection failure for peer {peer_id}")
+            
+        except Exception as e:
+            logger.error(f"Error during connection failure cleanup: {e}")
 
     async def get_video_reference_data(self, video_id: int) -> Dict:
         """Get reference features and token for a video"""
