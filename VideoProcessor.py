@@ -14,6 +14,7 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from model import IMFModel
+import cv2
 
 class VideoProcessor:
     def __init__(self, input_folder: str, output_base_folder: str, checkpoint_path: str):
@@ -87,6 +88,26 @@ class VideoProcessor:
             'processed': processed,
             'failed': failed
         }, Query().total_videos == total_videos)
+
+    def generate_frame_tokens(self, image: np.ndarray) -> np.ndarray:
+        """Generate tokens for a single frame"""
+        try:
+            # Convert BGR to RGB and to PIL Image
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(image_rgb)
+            
+            # Apply transform and add batch dimension
+            frame_tensor = self.transform(pil_image).unsqueeze(0)
+            
+            # Generate token
+            with torch.no_grad():
+                token = self.model.latent_token_encoder(frame_tensor)
+                
+            return token.cpu().numpy()
+            
+        except Exception as e:
+            print(f"Error generating token: {str(e)}")
+            raise
 
     def extract_audio(self, video_path: str, output_folder: str) -> Dict:
         """Extract audio and save in chunks aligned with video frames"""
@@ -565,3 +586,196 @@ if __name__ == "__main__":
         frame_skip=0,
         max_frames=1000
     )
+
+
+# import concurrent.futures
+# from queue import Queue
+# import threading
+
+# class VideoProcessor:
+#     def __init__(self, input_folder: str, output_base_folder: str, checkpoint_path: str, 
+#                  num_workers: int = 4):
+#         # ... (existing initialization code) ...
+        
+#         self.num_workers = num_workers
+#         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#         self.model = self.model.to(self.device)
+        
+#         # Add thread-safe queues and locks
+#         self.frame_queue = Queue(maxsize=100)
+#         self.token_queue = Queue(maxsize=100)
+#         self.metadata_lock = threading.Lock()
+        
+#     def _process_frame_worker(self, frame_metadata, frame_duration):
+#         """Worker function to process frames and generate tokens"""
+#         while True:
+#             try:
+#                 # Get frame data from queue
+#                 frame_data = self.frame_queue.get()
+#                 if frame_data is None:  # Poison pill
+#                     break
+                    
+#                 frame, info = frame_data
+                
+#                 try:
+#                     # Save frame
+#                     cv2.imwrite(info['frame_path'], frame)
+                    
+#                     # Generate and save token
+#                     token = self.generate_frame_tokens(frame)
+#                     np.save(info['token_path'], token)
+                    
+#                     # Add metadata (thread-safe)
+#                     with self.metadata_lock:
+#                         frame_metadata['frames'].append({
+#                             'index': info['index'],
+#                             'timestamp': info['index'] * frame_duration,
+#                             'frame_path': os.path.relpath(info['frame_path'], 
+#                                                         os.path.dirname(info['frame_path'])),
+#                             'token_path': os.path.relpath(info['token_path'], 
+#                                                         os.path.dirname(info['frame_path'])),
+#                             'token_shape': token.shape
+#                         })
+                        
+#                 except Exception as e:
+#                     print(f"Error processing frame {info['index']}: {str(e)}")
+                    
+#                 finally:
+#                     self.frame_queue.task_done()
+                    
+#             except Exception as e:
+#                 print(f"Worker error: {str(e)}")
+#                 continue
+
+#     def _process_frame_batch(self, batch_frames, batch_indices, frame_metadata, frame_duration):
+#         """Process a batch of frames using thread pool"""
+#         try:
+#             # Start worker threads
+#             workers = []
+#             for _ in range(self.num_workers):
+#                 thread = threading.Thread(
+#                     target=self._process_frame_worker,
+#                     args=(frame_metadata, frame_duration)
+#                 )
+#                 thread.daemon = True
+#                 thread.start()
+#                 workers.append(thread)
+            
+#             # Add frames to queue
+#             for frame, info in zip(batch_frames, batch_indices):
+#                 self.frame_queue.put((frame, info))
+            
+#             # Add poison pills
+#             for _ in range(self.num_workers):
+#                 self.frame_queue.put(None)
+            
+#             # Wait for all frames to be processed
+#             self.frame_queue.join()
+            
+#             # Wait for workers to finish
+#             for worker in workers:
+#                 worker.join()
+                
+#         except Exception as e:
+#             print(f"Error processing batch: {str(e)}")
+#             raise
+
+#     def process_videos(self, max_videos: int = None, frame_skip: int = 0, 
+#                       max_frames: int = None) -> List[Dict]:
+#         """Process multiple videos in parallel"""
+#         video_files = []
+#         for root, _, files in os.walk(self.input_folder):
+#             for file in files:
+#                 if file.endswith('.mp4'):
+#                     video_files.append(os.path.join(root, file))
+
+#         # Filter unprocessed videos
+#         unprocessed_videos = [v for v in video_files if not self.is_video_processed(v)]
+        
+#         if max_videos:
+#             random.shuffle(unprocessed_videos)
+#             unprocessed_videos = unprocessed_videos[:max_videos]
+
+#         total_videos = len(unprocessed_videos)
+#         metadata_list = []
+#         processed_count = 0
+#         failed_count = 0
+
+#         # Process videos with ThreadPoolExecutor
+#         with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+#             # Submit all video processing tasks
+#             future_to_video = {
+#                 executor.submit(
+#                     self.process_video,
+#                     video_path,
+#                     os.path.join(
+#                         self.output_base_folder,
+#                         os.path.splitext(os.path.relpath(video_path, self.input_folder))[0]
+#                     ),
+#                     frame_skip,
+#                     max_frames
+#                 ): video_path for video_path in unprocessed_videos
+#             }
+
+#             # Process completed tasks as they finish
+#             for future in tqdm(
+#                 concurrent.futures.as_completed(future_to_video),
+#                 total=len(unprocessed_videos),
+#                 desc="Processing videos"
+#             ):
+#                 video_path = future_to_video[future]
+#                 try:
+#                     metadata = future.result()
+#                     if metadata is not None:
+#                         metadata_list.append(metadata)
+#                         processed_count += 1
+#                     else:
+#                         failed_count += 1
+
+#                     # Save progress periodically
+#                     if (processed_count + failed_count) % 5 == 0:
+#                         self.save_progress(total_videos, processed_count, failed_count)
+
+#                 except Exception as e:
+#                     print(f"Error processing {video_path}: {str(e)}")
+#                     failed_count += 1
+
+#         # Save final progress and dataset metadata
+#         self.save_progress(total_videos, processed_count, failed_count)
+        
+#         if metadata_list:
+#             dataset_metadata = {
+#                 'videos': metadata_list,
+#                 'frame_rate': self.frame_rate,
+#                 'audio_sample_rate': self.audio_sample_rate,
+#                 'token_info': {
+#                     'model': 'IMFModel',
+#                     'shape': metadata_list[0]['token_shape'] if metadata_list else None
+#                 },
+#                 'processing_summary': {
+#                     'total_videos': total_videos,
+#                     'processed': processed_count,
+#                     'failed': failed_count,
+#                     'completed_at': str(datetime.datetime.now())
+#                 }
+#             }
+            
+#             with open(os.path.join(self.output_base_folder, 'dataset.json'), 'w') as f:
+#                 json.dump(dataset_metadata, f, indent=2)
+
+#         return metadata_list
+
+# # Usage example with specified number of workers
+# if __name__ == "__main__":
+#     processor = VideoProcessor(
+#         input_folder="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/",
+#         output_base_folder="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/processed_dataset",
+#         checkpoint_path="./checkpoints/checkpoint.pth",
+#         num_workers=4  # Adjust based on your CPU cores
+#     )
+    
+#     metadata = processor.process_videos(
+#         max_videos=100,
+#         frame_skip=0,
+#         max_frames=1000
+#     )
