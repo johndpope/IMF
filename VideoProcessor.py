@@ -29,7 +29,7 @@ class VideoProcessor:
         self.model.eval()
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        
+        print("model loaded...")
         self.transform = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.ToTensor()
@@ -386,6 +386,121 @@ class VideoProcessor:
             'last_updated': str(datetime.datetime.now())
         }, (Progress.video_path == video_path) & (Progress.hash == video_hash))
             
+    def get_processed_videos(self) -> set:
+            """Get set of already processed video paths from output folder"""
+            processed_videos = set()
+            try:
+                # Get list of folders in output directory
+                for entry in os.scandir(self.output_base_folder):
+                    if entry.is_dir():
+                        metadata_path = os.path.join(entry.path, 'metadata.json')
+                        if os.path.exists(metadata_path):
+                            try:
+                                with open(metadata_path, 'r') as f:
+                                    metadata = json.load(f)
+                                if metadata.get('video_path'):
+                                    full_path = os.path.join(self.input_folder, metadata['video_path'])
+                                    processed_videos.add(os.path.normpath(full_path))
+                            except Exception as e:
+                                print(f"Error reading metadata for {entry.path}: {e}")
+                                continue
+            except Exception as e:
+                print(f"Error scanning output directory: {e}")
+            
+            print(f"Found {len(processed_videos)} already processed videos")
+            return processed_videos
+
+    def process_videos(self, max_videos: int = None, frame_skip: int = 0, 
+                      max_frames: int = None) -> List[Dict]:
+        """Process videos with persistence and progress tracking"""
+        # First get list of already processed videos
+        processed_videos = self.get_processed_videos()
+        
+        # Get video files that need processing
+        print("Scanning for unprocessed videos...")
+        video_files = []
+        for root, _, files in os.walk(self.input_folder):
+            for file in files:
+                if file.endswith('.mp4'):
+                    full_path = os.path.normpath(os.path.join(root, file))
+                    # Only add if not already processed
+                    if full_path not in processed_videos:
+                        video_files.append(full_path)
+                    if len(video_files) >= (max_videos or float('inf')):
+                        break
+            if len(video_files) >= (max_videos or float('inf')):
+                break
+
+        print(f"Found {len(video_files)} unprocessed videos")
+
+        # Shuffle and limit if needed
+        if max_videos and len(video_files) > max_videos:
+            random.shuffle(video_files)
+            video_files = video_files[:max_videos]
+
+        # Process videos
+        metadata_list = []
+        total_videos = len(video_files)
+        processed_count = 0
+        failed_count = 0
+
+        try:
+            for video_path in tqdm(video_files, desc="Processing videos"):
+                try:
+                    relative_path = os.path.relpath(video_path, self.input_folder)
+                    video_name = os.path.splitext(relative_path)[0]
+                    output_folder = os.path.join(self.output_base_folder, video_name)
+
+                    metadata = self.process_video(video_path, output_folder, frame_skip, max_frames)
+                    
+                    if metadata is not None:
+                        metadata_list.append(metadata)
+                        processed_count += 1
+                    else:
+                        failed_count += 1
+
+                    # Save progress periodically
+                    if (processed_count + failed_count) % 5 == 0:
+                        self.save_progress(total_videos, processed_count, failed_count)
+
+                except Exception as e:
+                    print(f"Error processing {video_path}: {str(e)}")
+                    failed_count += 1
+                    continue
+
+        finally:
+                # Save final progress
+                self.save_progress(total_videos, processed_count, failed_count)
+
+                # Print summary
+                print("\nProcessing Summary:")
+                print(f"Total videos: {total_videos}")
+                print(f"Successfully processed: {processed_count}")
+                print(f"Failed: {failed_count}")
+
+                # Update dataset metadata
+                if metadata_list:
+                    dataset_metadata = {
+                        'videos': metadata_list,
+                        'frame_rate': self.frame_rate,
+                        'audio_sample_rate': self.audio_sample_rate,
+                        'token_info': {
+                            'model': 'IMFModel',
+                            'shape': metadata_list[0]['token_shape'] if metadata_list else None
+                        },
+                        'processing_summary': {
+                            'total_videos': total_videos,
+                            'processed': processed_count,
+                            'failed': failed_count,
+                            'completed_at': str(datetime.datetime.now())
+                        }
+                    }
+
+                    with open(os.path.join(self.output_base_folder, 'dataset.json'), 'w') as f:
+                        json.dump(dataset_metadata, f, indent=2)
+
+                return metadata_list
+                
     def process_video(self, video_path: str, output_folder: str, 
                      frame_skip: int = 0, max_frames: int = None) -> Dict:
         """Process a single video with persistence"""
@@ -492,86 +607,6 @@ class VideoProcessor:
                 shutil.rmtree(output_folder)
             return None
         
-    def process_videos(self, max_videos: int = None, frame_skip: int = 0, 
-                      max_frames: int = None) -> List[Dict]:
-        """Process videos with persistence and progress tracking"""
-        # Get video files
-        video_files = []
-        for root, _, files in os.walk(self.input_folder):
-            for file in files:
-                if file.endswith('.mp4'):
-                    video_files.append(os.path.join(root, file))
-
-        # Filter out already processed videos
-        unprocessed_videos = [v for v in video_files if not self.is_video_processed(v)]
-        
-        # Shuffle and limit remaining videos
-        if max_videos:
-            random.shuffle(unprocessed_videos)
-            unprocessed_videos = unprocessed_videos[:max_videos]
-
-        # Process videos
-        metadata_list = []
-        total_videos = len(unprocessed_videos)
-        processed_count = 0
-        failed_count = 0
-
-        try:
-            for video_path in tqdm(unprocessed_videos, desc="Processing videos"):
-                try:
-                    relative_path = os.path.relpath(video_path, self.input_folder)
-                    video_name = os.path.splitext(relative_path)[0]
-                    output_folder = os.path.join(self.output_base_folder, video_name)
-
-                    metadata = self.process_video(video_path, output_folder, frame_skip, max_frames)
-                    
-                    if metadata is not None:
-                        metadata_list.append(metadata)
-                        processed_count += 1
-                    else:
-                        failed_count += 1
-
-                    # Save progress periodically
-                    if (processed_count + failed_count) % 5 == 0:
-                        self.save_progress(total_videos, processed_count, failed_count)
-
-                except Exception as e:
-                    print(f"Error processing {video_path}: {str(e)}")
-                    failed_count += 1
-                    continue
-
-        finally:
-            # Save final progress
-            self.save_progress(total_videos, processed_count, failed_count)
-
-            # Print summary
-            print("\nProcessing Summary:")
-            print(f"Total videos: {total_videos}")
-            print(f"Successfully processed: {processed_count}")
-            print(f"Failed: {failed_count}")
-
-            # Update dataset metadata
-            if metadata_list:
-                dataset_metadata = {
-                    'videos': metadata_list,
-                    'frame_rate': self.frame_rate,
-                    'audio_sample_rate': self.audio_sample_rate,
-                    'token_info': {
-                        'model': 'IMFModel',
-                        'shape': metadata_list[0]['token_shape'] if metadata_list else None
-                    },
-                    'processing_summary': {
-                        'total_videos': total_videos,
-                        'processed': processed_count,
-                        'failed': failed_count,
-                        'completed_at': str(datetime.datetime.now())
-                    }
-                }
-
-                with open(os.path.join(self.output_base_folder, 'dataset.json'), 'w') as f:
-                    json.dump(dataset_metadata, f, indent=2)
-
-            return metadata_list
 
 # Example usage
 if __name__ == "__main__":
@@ -582,7 +617,7 @@ if __name__ == "__main__":
     )
     
     metadata = processor.process_videos(
-        max_videos=100,
+        max_videos=30,
         frame_skip=0,
         max_frames=1000
     )
