@@ -14,16 +14,11 @@ import ssl
 import uvicorn
 import logging
 import torchvision.transforms as transforms
-from VideoDataset import VideoDataset
+from VideoAudioDataset import VideoAudioDataset
 from pathlib import Path
 from starlette.websockets import WebSocketState
 from fastapi.responses import JSONResponse
 from collections import OrderedDict
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -39,45 +34,14 @@ from av import AudioFrame
 import numpy as np
 
 from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
+from AudioStreamTrack import AudioStreamTrack
+import os 
 
 
-class AudioStreamTrack(MediaStreamTrack):
-    kind = "audio"
-    
-    def __init__(self, frames_queue):
-        super().__init__()
-        self.frames_queue = frames_queue
-        self.sample_rate = 48000
-        self.pts = 0
-        
-    async def recv(self):
-        frame_data = await self.frames_queue.get()
-        frame = AudioFrame.from_ndarray(
-            frame_data,
-            format='s16',
-            layout='mono'
-        )
-        frame.pts = self.pts
-        frame.time_base = fractions.Fraction(1, self.sample_rate)
-        self.pts += frame.samples
-        return frame
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-class MP4Handler:
-    def __init__(self, video_path: str):
-        self.video = VideoFileClip(video_path)
-        self.audio = self.video.audio
-        
-    def extract_audio_chunk(self, start_time: float, duration: float) -> np.ndarray:
-        """Extract audio chunk as numpy array"""
-        return self.audio.subclip(start_time, start_time + duration).to_soundarray()
-        
-    def get_audio_params(self) -> dict:
-        return {
-            'fps': self.audio.fps,
-            'duration': self.audio.duration,
-            'nchannels': self.audio.nchannels
-        }
 
 
 ALLOWED_ORIGINS = [
@@ -97,12 +61,12 @@ class IMFServer:
         self.background_tasks = set()
 
         # Initialize dataset
-        videos_root = "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/"
+        videos_root = "/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/processed_dataset"
         self.transform = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.ToTensor(),
         ])
-        self.dataset = VideoDataset(
+        self.dataset = VideoAudioDataset(
             root_dir=videos_root,
             transform=self.transform
         )
@@ -122,6 +86,86 @@ class IMFServer:
         self.data_channels = {}  # Store data channels by peer_id
         self.pending_messages = {}  # Store messages that need to be sent once channel is open
 
+
+        logger.info(f"Loaded dataset with {len(self.dataset)} videos")
+        logger.info(f"Frame rate: {self.dataset.frame_rate}")
+        logger.info(f"Audio sample rate: {self.dataset.audio_sample_rate}")
+        
+        # Initialize connection tracking
+        self.ice_gathering_state = {}
+        self.ice_connection_states = {}
+        self.connected_peers = set()
+        self.data_channels = {}
+        self.pending_messages = {}
+        self.audio_queues = {}
+        self.frame_timers = {}
+
+    async def list_videos(self):
+        """List all available videos with metadata"""
+        try:
+            videos = []
+            for idx in range(len(self.dataset)):
+                video_metadata = self.dataset.videos[idx]
+                frame_metadata = video_metadata['frames']
+                
+                videos.append({
+                    "id": idx,
+                    "name": os.path.basename(os.path.splitext(video_metadata['video_path'])[0]),
+                    "frame_count": frame_metadata['total_frames'],
+                    "duration": frame_metadata['total_frames'] / self.dataset.frame_rate,
+                    "frame_rate": self.dataset.frame_rate
+                })
+            return {"videos": videos}
+        except Exception as e:
+            logger.error(f"🔥 🔥 Error listing videos: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    async def get_frame(self, video_id: int, frame_id: int):
+        """Get a specific frame from a video"""
+
+        if video_id < 0 or video_id >= len(self.dataset):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Video {video_id} not found"
+            )
+        
+        # Get video metadata
+        video_metadata = self.dataset.videos[video_id]
+        frame_metadata = video_metadata['frames']
+        
+        if frame_id < 0 or frame_id >= frame_metadata['total_frames']:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Frame {frame_id} not found. Video has {frame_metadata['total_frames']} frames"
+            )
+        
+        # Get frame path
+        frame_info = frame_metadata['frames'][frame_id]
+        frame_path = os.path.join(
+            self.dataset.root_dir,
+            os.path.splitext(video_metadata['video_path'])[0],
+            frame_info['path']
+        )
+        
+        # Load and convert frame
+        try:
+            img = Image.open(frame_path).convert('RGB')
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format='PNG')
+            
+            return JSONResponse({
+                "frame": base64.b64encode(img_bytes.getvalue()).decode('utf-8'),
+                "metadata": {
+                    "frame_number": frame_id,
+                    "timestamp": frame_info['timestamp'],
+                    "total_frames": frame_metadata['total_frames'],
+                    "video_id": video_id
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error processing frame: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error processing frame: {str(e)}")
+            
 
     async def generate_reference_features(self, video_id: int):
         """Generate and cache reference features for a video"""
@@ -392,63 +436,36 @@ class IMFServer:
 
 
     async def handle_init_connection(self, websocket: WebSocket, message: Dict, peer_id: str) -> None:
-        """Handle initial WebRTC connection setup with proper state tracking"""
+        """Handle initial connection with audio setup"""
         try:
             payload = message.get("payload", {})
-            fps = payload.get("fps", 24)
+            fps = payload.get("fps", self.dataset.frame_rate)
             
-            # Create proper RTCConfiguration object
+            # Create RTCConfiguration
             config = RTCConfiguration(
-                iceServers=[
-                    RTCIceServer(urls=["stun:stun.l.google.com:19302"])
-                ]
+                iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])]
             )
             
-            # Create new peer connection with proper configuration
+            # Create peer connection
             pc = RTCPeerConnection(configuration=config)
             
             # Set up audio queue and track
             audio_queue = asyncio.Queue()
-            pc.addTrack(AudioStreamTrack(audio_queue))
+            self.audio_queues[peer_id] = audio_queue
             
-            # Set up data channel handler
+            # Create audio track
+            audio_track = AudioStreamTrack(frames_queue=audio_queue)
+            pc.addTrack(audio_track)
+            
+            # Setup data channel and event handlers
             @pc.on("datachannel")
             def on_datachannel(channel):
-                logger.info(f"Data channel established for peer {peer_id}: {channel.label}")
-                
-                @channel.on("open")
-                def on_open():
-                    logger.info(f"Data channel opened for peer {peer_id}")
-                    self.data_channels[peer_id] = channel
-                    
-                    # Send any pending messages
-                    if peer_id in self.pending_messages:
-                        for msg in self.pending_messages[peer_id]:
-                            try:
-                                channel.send(json.dumps(msg))
-                            except Exception as e:
-                                logger.error(f"Error sending pending message: {e}")
-                        del self.pending_messages[peer_id]
+                logger.info(f"Data channel established for peer {peer_id}")
+                self.setup_data_channel(channel, peer_id)
 
-                @channel.on("message")
-                async def on_message(msg):
-                    try:
-                        data = json.loads(msg)
-                        if data["type"] == "start_stream":
-                            await self.start_video_stream(channel, data["videoId"], peer_id)
-                    except Exception as e:
-                        logger.error(f"🔥 Error handling data channel message: {e}")
-
-                @channel.on("close")
-                def on_close():
-                    logger.info(f"Data channel closed for peer {peer_id}")
-                    if peer_id in self.data_channels:
-                        del self.data_channels[peer_id]
-
-            # Set up connection state monitoring
             @pc.on("connectionstatechange")
             async def on_connection_state_change():
-                logger.info(f"Connection state changed to: {pc.connectionState} for peer {peer_id}")
+                logger.info(f"Connection state: {pc.connectionState}")
                 if pc.connectionState == "failed":
                     await self.handle_connection_failure(peer_id)
                 elif pc.connectionState == "connected":
@@ -456,22 +473,16 @@ class IMFServer:
                         data_channel = pc.createDataChannel("frames")
                         self.setup_data_channel(data_channel, peer_id)
 
-            @pc.on("iceconnectionstatechange")
-            async def on_ice_connection_state_change():
-                logger.info(f"ICE connection state changed to: {pc.iceConnectionState} for peer {peer_id}")
-
-            # Send immediate response to client
-            logger.info(f"Sending init response to peer {peer_id}")
+            # Send init response
             await websocket.send_json({
                 "type": "init_response",
                 "status": "success",
                 "payload": {
                     "rtcConfig": {
-                        "iceServers": [
-                            {"urls": ["stun:stun.l.google.com:19302"]}
-                        ]
+                        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
                     },
                     "fps": fps,
+                    "sampleRate": self.dataset.audio_sample_rate,
                     "maxFrames": 300
                 }
             })
@@ -483,15 +494,40 @@ class IMFServer:
             }
 
         except Exception as e:
-            logger.error(f"🔥 Error in init connection for peer {peer_id}: {str(e)}", exc_info=True)
-            await websocket.send_json({
-                "type": "error",
-                "payload": {
-                    "message": f"Init failed: {str(e)}"
-                }
-            })
+            logger.error(f"Error in init connection: {str(e)}")
             raise
 
+    async def handle_connection_failure(self, peer_id: str):
+        """Clean up on connection failure"""
+        try:
+            # Clean up audio resources
+            if peer_id in self.audio_queues:
+                self.audio_queues[peer_id].empty()
+                del self.audio_queues[peer_id]
+                
+            if peer_id in self.frame_timers:
+                del self.frame_timers[peer_id]
+                
+            await super().handle_connection_failure(peer_id)
+            
+        except Exception as e:
+            logger.error(f"Error during connection failure cleanup: {e}")
+
+    def cleanup(self, peer_id: str):
+        """Clean up resources for a peer"""
+        try:
+            # Clean up audio resources
+            if peer_id in self.audio_queues:
+                self.audio_queues[peer_id].empty()
+                del self.audio_queues[peer_id]
+                
+            if peer_id in self.frame_timers:
+                del self.frame_timers[peer_id]
+            
+            super().cleanup(peer_id)
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
 
     def setup_routes(self):
@@ -599,21 +635,6 @@ class IMFServer:
                     await pc.close()
                 logger.info(f"Cleaned up connection for peer {peer_id}")
 
-        async def handle_connection_failure(self, peer_id: str):
-            """Handle failed connections with cleanup"""
-            logger.error(f"Connection failed for peer {peer_id}")
-            try:
-                if peer_id in self.data_channels:
-                    channel = self.data_channels[peer_id]
-                    channel.close()
-                    del self.data_channels[peer_id]
-
-                if peer_id in self.pending_messages:
-                    del self.pending_messages[peer_id]
-                    
-            except Exception as e:
-                logger.error(f"Error during connection failure cleanup: {e}")
-
 
 
         
@@ -623,14 +644,18 @@ class IMFServer:
             start: int = Query(..., description="Start frame index"),
             end: int = Query(..., description="End frame index")
         ):
+            """Get tokens for a range of frames from a video using the JSON dataset structure"""
             try:
+                # Validate video_id
                 if video_id < 0 or video_id >= len(self.dataset):
                     raise HTTPException(status_code=404, detail=f"Video {video_id} not found")
 
-                video_folder = self.dataset.video_folders[video_id]
-                frames = sorted([f for f in Path(video_folder).glob("*.png")])
-                frame_count = len(frames)
+                # Get video metadata from dataset
+                video_metadata = self.dataset.videos[video_id]
+                frame_metadata = video_metadata['frames']
+                frame_count = frame_metadata['total_frames']
 
+                # Validate frame range
                 if start < 0 or end >= frame_count:
                     raise HTTPException(
                         status_code=400, 
@@ -650,13 +675,22 @@ class IMFServer:
 
                     # Collect frames that need processing
                     for frame_idx in range(batch_start, batch_end):
+                        # Check if we have cached tokens
                         if frame_idx in video_cached_tokens:
                             token_data = video_cached_tokens[frame_idx]
                             if isinstance(token_data, dict) and 'tokens' in token_data:
                                 tokens[frame_idx] = token_data['tokens'].tolist() if isinstance(token_data['tokens'], np.ndarray) else token_data['tokens']
                             continue
 
-                        frame_path = frames[frame_idx]
+                        # Get frame path from metadata
+                        frame_info = frame_metadata['frames'][frame_idx]
+                        frame_path = os.path.join(
+                            self.dataset.root_dir,
+                            os.path.splitext(video_metadata['video_path'])[0],
+                            frame_info['path']
+                        )
+
+                        # Load and transform frame
                         img = Image.open(frame_path).convert('RGB')
                         frame_tensor = self.transform(img).unsqueeze(0)
                         batch_frames.append(frame_tensor)
@@ -668,7 +702,7 @@ class IMFServer:
                             # Stack frames into a single batch tensor
                             batch_tensor = torch.cat(batch_frames, dim=0)
 
-                            # Generate tokens using just the latent token encoder
+                            # Generate tokens using the latent token encoder
                             with torch.no_grad():
                                 batch_tokens = self.model.latent_token_encoder(batch_tensor)
                                 
@@ -678,7 +712,7 @@ class IMFServer:
                                 for idx, frame_idx in enumerate(batch_indices):
                                     # Extract token for this frame
                                     frame_token = batch_tokens_np[idx]
-                                    # Convert to list and ensure proper shape
+                                    # Convert to list for JSON serialization
                                     token_list = frame_token.tolist()
                                     tokens[frame_idx] = token_list
                                     
@@ -700,13 +734,16 @@ class IMFServer:
                         "requestedRange": {
                             "start": start,
                             "end": end
-                        }
+                        },
+                        "frameRate": self.dataset.frame_rate,
+                        "videoPath": video_metadata['video_path']
                     }
                 }
 
             except Exception as e:
                 logger.error(f"Error in bulk token fetch: {str(e)}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
+            
             
         @self.app.get("/videos/{video_id}/reference")
         async def get_reference_data(video_id: int):
@@ -945,64 +982,98 @@ class IMFServer:
 
                 
     async def start_video_stream(self, channel, video_id: int, peer_id: str):
-        """Handle video streaming with proper data channel communication"""
+        """Handle video and audio streaming with proper synchronization"""
         try:
             if channel.readyState != "open":
-                logger.warning(f"Data channel not open for peer {peer_id}, queueing start_stream message")
-                if peer_id not in self.pending_messages:
-                    self.pending_messages[peer_id] = []
-                self.pending_messages[peer_id].append({
-                    "type": "start_stream",
-                    "videoId": video_id,
-                    "fps": 24
-                })
+                logger.warning(f"Data channel not open for peer {peer_id}")
                 return
 
-            video_folder = self.dataset.video_folders[video_id]
-            frames = sorted([f for f in Path(video_folder).glob("*.png")])
+            # Get video metadata
+            video_metadata = self.dataset.videos[video_id]
+            frame_metadata = video_metadata['frames']
+            audio_metadata = video_metadata['audio']
             
-            # Get reference features first
+            total_frames = frame_metadata['total_frames']
+            frame_duration = 1.0 / self.dataset.frame_rate
+            
+            # Get reference data first
             reference_data = await self.process_video_frames(video_id, 0, 0)
             reference_features = reference_data["features"]["reference_features"]
-            
-            # Stream frames
-            for frame_idx, frame_path in enumerate(frames):
+
+            # Get audio queue for this peer
+            audio_queue = self.audio_queues.get(peer_id)
+            if not audio_queue:
+                logger.error(f"No audio queue found for peer {peer_id}")
+                return
+
+            # Initialize frame timer
+            self.frame_timers[peer_id] = {
+                'start_time': time.time(),
+                'frame_count': 0,
+                'last_audio_ts': 0
+            }
+
+            # Stream frames with synchronized audio
+            for frame_idx in range(total_frames):
                 if channel.readyState != "open":
-                    logger.info(f"Data channel closed for peer {peer_id}, stopping stream")
+                    logger.info(f"Data channel closed for peer {peer_id}")
                     break
-                    
+
                 try:
+                    # Calculate timing
+                    target_time = frame_idx * frame_duration
+                    current_time = time.time() - self.frame_timers[peer_id]['start_time']
+                    
+                    # Wait if we're ahead of schedule
+                    if current_time < target_time:
+                        await asyncio.sleep(target_time - current_time)
+
                     # Process frame
                     frame_data = await self.process_video_frames(video_id, frame_idx, 0)
-                    
-                    # Prepare message
+
+                    # Get corresponding audio chunk
+                    chunk_info = audio_metadata['chunks'][frame_idx]
+                    chunk_path = os.path.join(
+                        self.dataset.root_dir,
+                        os.path.splitext(video_metadata['video_path'])[0],
+                        chunk_info['path']
+                    )
+                    audio_chunk = self.dataset.load_audio_chunk(chunk_path)
+
+                    # Put audio chunk in queue
+                    await audio_queue.put(audio_chunk)
+
+                    # Send frame token with timing info
                     message = {
                         "type": "frame_token",
                         "frameIndex": frame_idx,
                         "token": frame_data["features"]["current_token"],
-                        "timestamp": frame_idx * (1000 / 24)  # ms timestamp at 24fps
+                        "timestamp": target_time * 1000,  # Convert to ms
+                        "audioTimestamp": chunk_info['start_time'] * 1000
                     }
-                    
-                    # Send frame token using non-async send
+
                     try:
                         channel.send(json.dumps(message))
                         logger.info(f"Sent frame {frame_idx} to peer {peer_id}")
                     except Exception as send_error:
-                        logger.error(f"Error sending frame {frame_idx} to peer {peer_id}: {send_error}")
+                        logger.error(f"Error sending frame {frame_idx}: {send_error}")
                         if "closed" in str(send_error).lower():
-                            logger.info("Data channel appears to be closed, stopping stream")
                             break
-                    
-                    # Control frame rate
-                    await asyncio.sleep(1/24)
-                    
+
+                    # Update timing info
+                    self.frame_timers[peer_id]['frame_count'] += 1
+                    self.frame_timers[peer_id]['last_audio_ts'] = chunk_info['start_time']
+
                 except Exception as e:
-                    logger.error(f"🔥 Error processing frame {frame_idx} for peer {peer_id}: {e}")
+                    logger.error(f"Error processing frame {frame_idx}: {e}")
                     continue
-                
+
         except Exception as e:
-            logger.error(f"🔥 Error in video stream for peer {peer_id}: {e}")
+            logger.error(f"Error in video stream: {e}")
         finally:
+            # Cleanup
+            if peer_id in self.frame_timers:
+                del self.frame_timers[peer_id]
             logger.info(f"Video stream {video_id} complete for peer {peer_id}")
 
     def setup_data_channel(self, channel, peer_id: str):

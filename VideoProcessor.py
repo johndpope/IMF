@@ -1,5 +1,8 @@
 import os
-import cv2
+from tinydb import TinyDB, Query
+import datetime
+from pathlib import Path
+import hashlib
 from tqdm import tqdm
 import random
 import numpy as np
@@ -7,14 +10,83 @@ import subprocess
 from pydub import AudioSegment
 import json
 from typing import Dict, Tuple, List
+import torch
+import torchvision.transforms as transforms
+from PIL import Image
+from model import IMFModel
 
 class VideoProcessor:
-    def __init__(self, input_folder: str, output_base_folder: str):
+    def __init__(self, input_folder: str, output_base_folder: str, checkpoint_path: str):
         self.input_folder = input_folder
         self.output_base_folder = output_base_folder
-        self.frame_rate = 24  # Target frame rate for consistency
-        self.audio_sample_rate = 48000  # WebRTC standard
-        self.chunk_duration = 1/24.0  # Duration of each audio chunk in seconds (matching frame rate)
+        self.frame_rate = 24
+        self.audio_sample_rate = 48000
+        self.chunk_duration = 1/24.0
+
+        # Initialize model
+        self.model = IMFModel()
+        self.model.eval()
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        self.transform = transforms.Compose([
+            transforms.Resize((256, 256)),
+            transforms.ToTensor()
+        ])
+
+        # Initialize database
+        db_path = os.path.join(output_base_folder, 'processing_state.json')
+        self.db = TinyDB(db_path)
+        self.processed_table = self.db.table('processed_videos')
+        self.failed_table = self.db.table('failed_videos')
+        self.progress_table = self.db.table('progress')
+
+    def get_video_hash(self, video_path: str) -> str:
+        """Generate a unique hash for a video based on path and modification time"""
+        stat = os.stat(video_path)
+        hash_string = f"{video_path}_{stat.st_size}_{stat.st_mtime}"
+        return hashlib.sha256(hash_string.encode()).hexdigest()
+
+    def is_video_processed(self, video_path: str) -> bool:
+        """Check if a video has been successfully processed"""
+        video_hash = self.get_video_hash(video_path)
+        Video = Query()
+        return bool(self.processed_table.search(Video.hash == video_hash))
+
+    def is_video_failed(self, video_path: str) -> bool:
+        """Check if a video has failed processing"""
+        video_hash = self.get_video_hash(video_path)
+        Video = Query()
+        return bool(self.failed_table.search(Video.hash == video_hash))
+
+    def mark_video_processed(self, video_path: str, metadata: Dict):
+        """Mark a video as successfully processed"""
+        video_hash = self.get_video_hash(video_path)
+        self.processed_table.upsert({
+            'hash': video_hash,
+            'path': video_path,
+            'processed_at': str(datetime.datetime.now()),
+            'metadata': metadata
+        }, Query().hash == video_hash)
+
+    def mark_video_failed(self, video_path: str, error: str):
+        """Mark a video as failed"""
+        video_hash = self.get_video_hash(video_path)
+        self.failed_table.upsert({
+            'hash': video_hash,
+            'path': video_path,
+            'error': str(error),
+            'failed_at': str(datetime.datetime.now())
+        }, Query().hash == video_hash)
+
+    def save_progress(self, total_videos: int, processed: int, failed: int):
+        """Save current processing progress"""
+        self.progress_table.upsert({
+            'timestamp': str(datetime.datetime.now()),
+            'total_videos': total_videos,
+            'processed': processed,
+            'failed': failed
+        }, Query().total_videos == total_videos)
 
     def extract_audio(self, video_path: str, output_folder: str) -> Dict:
         """Extract audio and save in chunks aligned with video frames"""
@@ -51,7 +123,8 @@ class VideoProcessor:
             chunk_samples = int(self.chunk_duration * self.audio_sample_rate)
             num_chunks = int(np.ceil(len(audio) / (self.chunk_duration * 1000)))
 
-            for i in range(num_chunks):
+            print(f"Extracting {num_chunks} audio chunks...")
+            for i in tqdm(range(num_chunks), desc="Processing audio chunks"):
                 start_ms = i * self.chunk_duration * 1000
                 end_ms = start_ms + (self.chunk_duration * 1000)
                 chunk = audio[start_ms:end_ms]
@@ -78,107 +151,329 @@ class VideoProcessor:
                     'path': os.path.relpath(chunk_path, output_folder)
                 })
 
-            # Save metadata
-            with open(os.path.join(audio_folder, 'metadata.json'), 'w') as f:
+                # Save partial progress to database
+                Progress = Query()
+                self.progress_table.upsert({
+                    'video_path': video_path,
+                    'audio_chunks_processed': i + 1,
+                    'total_chunks': num_chunks,
+                    'last_updated': str(datetime.datetime.now())
+                }, Progress.video_path == video_path)
+
+            # Clean up WAV file if requested
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+
+            # Save audio metadata
+            audio_metadata_path = os.path.join(audio_folder, 'metadata.json')
+            with open(audio_metadata_path, 'w') as f:
                 json.dump(audio_metadata, f, indent=2)
 
             return audio_metadata
 
-        except Exception as e:
-            print(f"Error extracting audio from {video_path}: {str(e)}")
+        except subprocess.CalledProcessError as e:
+            error_msg = f"FFmpeg error processing {video_path}: {str(e)}"
+            print(f"⚠️ {error_msg}")
+            self.mark_video_failed(video_path, error_msg)
             raise
 
+        except Exception as e:
+            error_msg = f"Error extracting audio from {video_path}: {str(e)}"
+            print(f"⚠️ {error_msg}")
+            self.mark_video_failed(video_path, error_msg)
+            
+            # Clean up partial audio folder
+            if os.path.exists(audio_folder):
+                import shutil
+                shutil.rmtree(audio_folder)
+            
+            raise
+
+
     def extract_frames(self, video_path: str, output_folder: str, 
-                      frame_skip: int = 0, max_frames: int = None) -> Dict:
-        """Extract frames and return metadata"""
-    
-        os.makedirs(output_folder, exist_ok=True)
-        
-        # Open video
-        video = cv2.VideoCapture(video_path)
-        original_fps = video.get(cv2.CAP_PROP_FPS)
-        frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        # Calculate frame timing
-        frame_duration = 1.0 / self.frame_rate
-        
-        frame_metadata = {
-            'original_fps': float(original_fps),
-            'target_fps': self.frame_rate,
-            'frame_duration': frame_duration,
-            'total_frames': 0,
-            'frames': []
-        }
-
-        success, image = video.read()
-        count = 0
-        saved_count = 0
-        
-        with tqdm(total=frame_count, desc=f"Processing {os.path.basename(video_path)}") as pbar:
-            while success:
-                if count % (frame_skip + 1) == 0:
-                    frame_name = f"frame_{saved_count:06d}.png"
-                    frame_path = os.path.join(output_folder, frame_name)
-                    
-                    # Save frame
-                    cv2.imwrite(frame_path, image)
-                    
-                    # Add frame info to metadata
-                    frame_metadata['frames'].append({
-                        'index': saved_count,
-                        'timestamp': saved_count * frame_duration,
-                        'path': os.path.relpath(frame_path, output_folder)
-                    })
-                    
-                    saved_count += 1
-                    if max_frames and saved_count >= max_frames:
-                        break
+                        frame_skip: int = 0, max_frames: int = None) -> Dict:
+            """Extract frames, generate tokens, and return metadata with persistence"""
+            try:
+                # Create necessary folders
+                os.makedirs(output_folder, exist_ok=True)
+                tokens_folder = os.path.join(output_folder, 'tokens')
+                os.makedirs(tokens_folder, exist_ok=True)
                 
-                count += 1
-                success, image = video.read()
-                pbar.update(1)
+                # Check for existing progress
+                video_hash = self.get_video_hash(video_path)
+                Progress = Query()
+                progress = self.progress_table.get(
+                    (Progress.video_path == video_path) & 
+                    (Progress.hash == video_hash)
+                )
+                
+                # Initialize or load frame metadata
+                metadata_path = os.path.join(output_folder, 'frames_metadata.json')
+                if os.path.exists(metadata_path):
+                    with open(metadata_path, 'r') as f:
+                        frame_metadata = json.load(f)
+                    last_processed_frame = max([f['index'] for f in frame_metadata['frames']]) if frame_metadata['frames'] else -1
+                else:
+                    # Open video and get properties
+                    video = cv2.VideoCapture(video_path)
+                    original_fps = video.get(cv2.CAP_PROP_FPS)
+                    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+                    frame_duration = 1.0 / self.frame_rate
+                    
+                    frame_metadata = {
+                        'original_fps': float(original_fps),
+                        'target_fps': self.frame_rate,
+                        'frame_duration': frame_duration,
+                        'total_frames': 0,
+                        'frames': []
+                    }
+                    last_processed_frame = -1
+                    video.release()
 
-        video.release()
-        frame_metadata['total_frames'] = saved_count
+                # Process frames in batches
+                batch_size = 32  # Adjust based on available memory
+                video = cv2.VideoCapture(video_path)
+                frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+                
+                # Skip to last processed frame
+                if last_processed_frame >= 0:
+                    video.set(cv2.CAP_PROP_POS_FRAMES, last_processed_frame + 1)
+                
+                success = True
+                count = last_processed_frame + 1
+                saved_count = len(frame_metadata['frames'])
+                batch_frames = []
+                batch_indices = []
+                
+                with tqdm(total=frame_count, initial=count,
+                        desc=f"Processing {os.path.basename(video_path)}") as pbar:
+                    
+                    while success:
+                        success, image = video.read()
+                        if not success:
+                            break
+                            
+                        if count % (frame_skip + 1) == 0:
+                            frame_name = f"frame_{saved_count:06d}.png"
+                            token_name = f"token_{saved_count:06d}.npy"
+                            frame_path = os.path.join(output_folder, frame_name)
+                            token_path = os.path.join(tokens_folder, token_name)
+                            
+                            # Add to batch
+                            batch_frames.append(image)
+                            batch_indices.append({
+                                'index': saved_count,
+                                'frame_path': frame_path,
+                                'token_path': token_path
+                            })
+                            
+                            # Process batch if full
+                            if len(batch_frames) >= batch_size:
+                                self._process_frame_batch(
+                                    batch_frames, 
+                                    batch_indices, 
+                                    frame_metadata,
+                                    frame_duration
+                                )
+                                
+                                # Save progress
+                                self._save_frame_progress(
+                                    video_path, 
+                                    video_hash,
+                                    frame_metadata, 
+                                    saved_count, 
+                                    frame_count
+                                )
+                                
+                                batch_frames = []
+                                batch_indices = []
+                            
+                            saved_count += 1
+                            if max_frames and saved_count >= max_frames:
+                                break
+                        
+                        count += 1
+                        pbar.update(1)
+                    
+                    # Process remaining batch
+                    if batch_frames:
+                        self._process_frame_batch(
+                            batch_frames, 
+                            batch_indices, 
+                            frame_metadata,
+                            frame_duration
+                        )
 
-        # Save metadata
-        with open(os.path.join(output_folder, 'metadata.json'), 'w') as f:
-            json.dump(frame_metadata, f, indent=2)
+                video.release()
+                frame_metadata['total_frames'] = saved_count
 
-        return frame_metadata
+                # Save final metadata
+                with open(metadata_path, 'w') as f:
+                    json.dump(frame_metadata, f, indent=2)
 
+                # Update progress
+                self.progress_table.upsert({
+                    'video_path': video_path,
+                    'hash': video_hash,
+                    'status': 'frames_completed',
+                    'frames_completed_at': str(datetime.datetime.now()),
+                    'total_frames': saved_count
+                }, (Progress.video_path == video_path) & (Progress.hash == video_hash))
+
+                return frame_metadata
+
+            except Exception as e:
+                error_msg = f"Error extracting frames: {str(e)}"
+                print(f"⚠️ {error_msg}")
+                self.mark_video_failed(video_path, error_msg)
+                raise
+
+    def _process_frame_batch(self, batch_frames, batch_indices, frame_metadata, frame_duration):
+        """Process a batch of frames and their tokens"""
+        try:
+            # Process frames in parallel
+            for idx, (frame, info) in enumerate(zip(batch_frames, batch_indices)):
+                # Save frame
+                cv2.imwrite(info['frame_path'], frame)
+                
+                # Generate and save token
+                token = self.generate_frame_tokens(frame)
+                np.save(info['token_path'], token)
+                
+                # Add metadata
+                frame_metadata['frames'].append({
+                    'index': info['index'],
+                    'timestamp': info['index'] * frame_duration,
+                    'frame_path': os.path.relpath(info['frame_path'], os.path.dirname(info['frame_path'])),
+                    'token_path': os.path.relpath(info['token_path'], os.path.dirname(info['frame_path'])),
+                    'token_shape': token.shape
+                })
+                
+        except Exception as e:
+            print(f"Error processing batch: {str(e)}")
+            raise
+
+    def _save_frame_progress(self, video_path, video_hash, frame_metadata, current_frame, total_frames):
+        """Save frame processing progress"""
+        Progress = Query()
+        self.progress_table.upsert({
+            'video_path': video_path,
+            'hash': video_hash,
+            'status': 'frames_in_progress',
+            'current_frame': current_frame,
+            'total_frames': total_frames,
+            'last_updated': str(datetime.datetime.now())
+        }, (Progress.video_path == video_path) & (Progress.hash == video_hash))
+            
     def process_video(self, video_path: str, output_folder: str, 
                      frame_skip: int = 0, max_frames: int = None) -> Dict:
-        """Process a single video, extracting both frames and audio"""
-    
-        # Create output folders
-        frames_folder = os.path.join(output_folder, 'frames')
-        os.makedirs(frames_folder, exist_ok=True)
+        """Process a single video with persistence"""
+        video_hash = self.get_video_hash(video_path)
+        
+        # Check if already processed
+        if self.is_video_processed(video_path):
+            print(f"Skipping already processed video: {video_path}")
+            Video = Query()
+            result = self.processed_table.search(Video.hash == video_hash)
+            return result[0]['metadata'] if result else None
 
-        # Extract frames
-        frame_metadata = self.extract_frames(
-            video_path, frames_folder, 
-            frame_skip, max_frames
-        )
+        # Check if previously failed
+        if self.is_video_failed(video_path):
+            print(f"Skipping previously failed video: {video_path}")
+            return None
 
-        # Extract audio
-        audio_metadata = self.extract_audio(video_path, output_folder)
+        try:
+            # Create output folders
+            os.makedirs(output_folder, exist_ok=True)
+            
+            # Record start of processing
+            self.progress_table.upsert({
+                'video_path': video_path,
+                'hash': video_hash,
+                'status': 'started',
+                'started_at': str(datetime.datetime.now())
+            }, Query().hash == video_hash)
+            
+            # Try audio extraction first
+            try:
+                print(f"\nExtracting audio from {os.path.basename(video_path)}...")
+                audio_metadata = self.extract_audio(video_path, output_folder)
+                print("Audio extraction completed successfully")
+                
+                # Update progress
+                self.progress_table.upsert({
+                    'video_path': video_path,
+                    'hash': video_hash,
+                    'status': 'audio_completed',
+                    'audio_completed_at': str(datetime.datetime.now())
+                }, Query().hash == video_hash)
+                
+            except Exception as e:
+                error_msg = f"Audio extraction failed: {str(e)}"
+                self.mark_video_failed(video_path, error_msg)
+                print(f"⚠️ {error_msg}")
+                print(f"Skipping further processing for this video...")
+                return None
 
-        # Save combined metadata
-        metadata = {
-            'video_path': os.path.relpath(video_path, self.input_folder),
-            'frames': frame_metadata,
-            'audio': audio_metadata
-        }
+            # If audio succeeded, proceed with frames and tokens
+            try:
+                print("\nProcessing frames and generating tokens...")
+                frames_folder = os.path.join(output_folder, 'frames')
+                os.makedirs(frames_folder, exist_ok=True)
 
-        with open(os.path.join(output_folder, 'metadata.json'), 'w') as f:
-            json.dump(metadata, f, indent=2)
+                frame_metadata = self.extract_frames(video_path, frames_folder, frame_skip, max_frames)
+                
+                # Update progress
+                self.progress_table.upsert({
+                    'video_path': video_path,
+                    'hash': video_hash,
+                    'status': 'frames_completed',
+                    'frames_completed_at': str(datetime.datetime.now())
+                }, Query().hash == video_hash)
 
-        return metadata
+                # Save combined metadata
+                metadata = {
+                    'video_path': os.path.relpath(video_path, self.input_folder),
+                    'frames': frame_metadata,
+                    'audio': audio_metadata,
+                    'token_shape': frame_metadata['frames'][0]['token_shape'] if frame_metadata['frames'] else None,
+                    'processed_at': str(datetime.datetime.now())
+                }
 
+                metadata_path = os.path.join(output_folder, 'metadata.json')
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+
+                # Mark as successfully processed
+                self.mark_video_processed(video_path, metadata)
+                print(f"\nSuccessfully processed {os.path.basename(video_path)}")
+                return metadata
+
+            except Exception as e:
+                error_msg = f"Frame processing failed: {str(e)}"
+                self.mark_video_failed(video_path, error_msg)
+                print(f"Error processing frames: {str(e)}")
+                
+                # Clean up output folder
+                if os.path.exists(output_folder):
+                    import shutil
+                    shutil.rmtree(output_folder)
+                return None
+
+        except Exception as e:
+            error_msg = f"Processing failed: {str(e)}"
+            self.mark_video_failed(video_path, error_msg)
+            print(f"Error processing video {video_path}: {str(e)}")
+            
+            # Clean up output folder
+            if os.path.exists(output_folder):
+                import shutil
+                shutil.rmtree(output_folder)
+            return None
+        
     def process_videos(self, max_videos: int = None, frame_skip: int = 0, 
                       max_frames: int = None) -> List[Dict]:
-        """Process all videos in the input folder"""
+        """Process videos with persistence and progress tracking"""
         # Get video files
         video_files = []
         for root, _, files in os.walk(self.input_folder):
@@ -186,50 +481,87 @@ class VideoProcessor:
                 if file.endswith('.mp4'):
                     video_files.append(os.path.join(root, file))
 
-        # Shuffle and limit videos
+        # Filter out already processed videos
+        unprocessed_videos = [v for v in video_files if not self.is_video_processed(v)]
+        
+        # Shuffle and limit remaining videos
         if max_videos:
-            random.shuffle(video_files)
-            video_files = video_files[:max_videos]
+            random.shuffle(unprocessed_videos)
+            unprocessed_videos = unprocessed_videos[:max_videos]
 
-        # Process each video
+        # Process videos
         metadata_list = []
-        for video_path in video_files:
-            try:
-                relative_path = os.path.relpath(video_path, self.input_folder)
-                video_name = os.path.splitext(relative_path)[0]
-                output_folder = os.path.join(self.output_base_folder, video_name)
+        total_videos = len(unprocessed_videos)
+        processed_count = 0
+        failed_count = 0
 
-                metadata = self.process_video(
-                    video_path, output_folder,
-                    frame_skip, max_frames
-                )
-                metadata_list.append(metadata)
+        try:
+            for video_path in tqdm(unprocessed_videos, desc="Processing videos"):
+                try:
+                    relative_path = os.path.relpath(video_path, self.input_folder)
+                    video_name = os.path.splitext(relative_path)[0]
+                    output_folder = os.path.join(self.output_base_folder, video_name)
 
-            except Exception as e:
-                print(f"Error processing {video_path}: {str(e)}")
-                continue
+                    metadata = self.process_video(video_path, output_folder, frame_skip, max_frames)
+                    
+                    if metadata is not None:
+                        metadata_list.append(metadata)
+                        processed_count += 1
+                    else:
+                        failed_count += 1
 
-        # Save dataset metadata
-        dataset_metadata = {
-            'videos': metadata_list,
-            'frame_rate': self.frame_rate,
-            'audio_sample_rate': self.audio_sample_rate
-        }
+                    # Save progress periodically
+                    if (processed_count + failed_count) % 5 == 0:
+                        self.save_progress(total_videos, processed_count, failed_count)
 
-        with open(os.path.join(self.output_base_folder, 'dataset.json'), 'w') as f:
-            json.dump(dataset_metadata, f, indent=2)
+                except Exception as e:
+                    print(f"Error processing {video_path}: {str(e)}")
+                    failed_count += 1
+                    continue
 
-        return metadata_list
+        finally:
+            # Save final progress
+            self.save_progress(total_videos, processed_count, failed_count)
 
-# Usage example
+            # Print summary
+            print("\nProcessing Summary:")
+            print(f"Total videos: {total_videos}")
+            print(f"Successfully processed: {processed_count}")
+            print(f"Failed: {failed_count}")
+
+            # Update dataset metadata
+            if metadata_list:
+                dataset_metadata = {
+                    'videos': metadata_list,
+                    'frame_rate': self.frame_rate,
+                    'audio_sample_rate': self.audio_sample_rate,
+                    'token_info': {
+                        'model': 'IMFModel',
+                        'shape': metadata_list[0]['token_shape'] if metadata_list else None
+                    },
+                    'processing_summary': {
+                        'total_videos': total_videos,
+                        'processed': processed_count,
+                        'failed': failed_count,
+                        'completed_at': str(datetime.datetime.now())
+                    }
+                }
+
+                with open(os.path.join(self.output_base_folder, 'dataset.json'), 'w') as f:
+                    json.dump(dataset_metadata, f, indent=2)
+
+            return metadata_list
+
+# Example usage
 if __name__ == "__main__":
     processor = VideoProcessor(
         input_folder="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/",
-        output_base_folder="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/processed_dataset"
+        output_base_folder="/media/oem/12TB/Downloads/CelebV-HQ/celebvhq/35666/processed_dataset",
+        checkpoint_path="./checkpoints/checkpoint.pth"
     )
     
     metadata = processor.process_videos(
-        max_videos=100,      # Process up to 100 videos
-        frame_skip=0,        # Don't skip any frames
-        max_frames=1000      # Up to 1000 frames per video
+        max_videos=100,
+        frame_skip=0,
+        max_frames=1000
     )

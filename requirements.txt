@@ -31,3 +31,4 @@ git+https://github.com/johndpope/onnx-tensorflow
 onnx_graphsurgeon
 
 aiortc
+tinydb
