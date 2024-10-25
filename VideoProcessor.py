@@ -617,7 +617,7 @@ if __name__ == "__main__":
     )
     
     metadata = processor.process_videos(
-        max_videos=30,
+        max_videos=3,
         frame_skip=0,
         max_frames=1000
     )
