@@ -350,51 +350,32 @@ class ScaledLeakyReLU(nn.Module):
 
 
 class ModulatedConv2d(nn.Module):
-    def __init__(self, in_channel, out_channel, kernel_size, style_dim, demodulate=True, upsample=False,
-                 downsample=False, blur_kernel=[1, 3, 3, 1], ):
+    def __init__(self, in_channel, out_channel, kernel_size, style_dim, upsample=False, blur_kernel=[1, 3, 3, 1], demodulate=True):
         super().__init__()
 
-        self.eps = 1e-8
-        self.kernel_size = kernel_size
         self.in_channel = in_channel
         self.out_channel = out_channel
+        self.kernel_size = kernel_size
         self.upsample = upsample
-        self.downsample = downsample
-
-        if upsample:
-            factor = 2
-            p = (len(blur_kernel) - factor) - (kernel_size - 1)
-            pad0 = (p + 1) // 2 + factor - 1
-            pad1 = p // 2 + 1
-
-            self.blur = Blur(blur_kernel, pad=(pad0, pad1), upsample_factor=factor)
-
-        if downsample:
-            factor = 2
-            p = (len(blur_kernel) - factor) + (kernel_size - 1)
-            pad0 = (p + 1) // 2
-            pad1 = p // 2
-
-            self.blur = Blur(blur_kernel, pad=(pad0, pad1))
-
-        fan_in = in_channel * kernel_size ** 2
-        self.scale = 1 / math.sqrt(fan_in)
+        self.demodulate = demodulate
+        
+        # Replace nn.Parameter with register_buffer for Core ML compatibility
+        self.register_buffer('weight', torch.randn(1, out_channel, in_channel, kernel_size, kernel_size))
+        self.register_buffer('scale', torch.tensor(1 / math.sqrt(in_channel * kernel_size ** 2)))
         self.padding = kernel_size // 2
 
-        self.weight = nn.Parameter(torch.randn(1, out_channel, in_channel, kernel_size, kernel_size))
-
-        self.modulation = EqualLinear(style_dim, in_channel, bias_init=1)
-        self.demodulate = demodulate
-
-    def __repr__(self):
-        return (
-            f'{self.__class__.__name__}({self.in_channel}, {self.out_channel}, {self.kernel_size}, '
-            f'upsample={self.upsample}, downsample={self.downsample})'
-        )
+        # Simplify modulation to be Core ML compatible
+        self.modulation = nn.Linear(style_dim, in_channel)
+        
+        if upsample:
+            self.up_factor = 2
+        else:
+            self.up_factor = 1
 
     def forward(self, input, style):
         batch, in_channel, height, width = input.shape
 
+        # Modulate weights
         style = self.modulation(style).view(batch, 1, in_channel, 1, 1)
         weight = self.scale * self.weight * style
 
@@ -404,29 +385,22 @@ class ModulatedConv2d(nn.Module):
 
         weight = weight.view(batch * self.out_channel, in_channel, self.kernel_size, self.kernel_size)
 
+        # Handle upsampling
         if self.upsample:
-            input = input.view(1, batch * in_channel, height, width)
-            weight = weight.view(batch, self.out_channel, in_channel, self.kernel_size, self.kernel_size)
-            weight = weight.transpose(1, 2).reshape(batch * in_channel, self.out_channel, self.kernel_size,
-                                                    self.kernel_size)
-            out = F.conv_transpose2d(input, weight, padding=0, stride=2, groups=batch)
-            _, _, height, width = out.shape
-            out = out.view(batch, self.out_channel, height, width)
-            out = self.blur(out)
-        elif self.downsample:
-            input = self.blur(input)
-            _, _, height, width = input.shape
-            input = input.view(1, batch * in_channel, height, width)
-            out = F.conv2d(input, weight, padding=0, stride=2, groups=batch)
-            _, _, height, width = out.shape
-            out = out.view(batch, self.out_channel, height, width)
-        else:
-            input = input.view(1, batch * in_channel, height, width)
-            out = F.conv2d(input, weight, padding=self.padding, groups=batch)
-            _, _, height, width = out.shape
-            out = out.view(batch, self.out_channel, height, width)
+            input = F.interpolate(input, scale_factor=2, mode='bilinear', align_corners=False)
+            
+        # Reshape for grouped convolution
+        input = input.view(1, batch * in_channel, input.size(2), input.size(3))
+        
+        # Perform convolution
+        out = F.conv2d(input, weight, padding=self.padding, groups=batch)
+        
+        # Reshape output
+        _, _, height, width = out.shape
+        out = out.view(batch, self.out_channel, height, width)
 
         return out
+
 
 
 class NoiseInjection(nn.Module):
@@ -455,10 +429,8 @@ class ConstantInput(nn.Module):
 
         return out
 
-
 class StyledConv(nn.Module):
-    def __init__(self, in_channel, out_channel, kernel_size, style_dim, upsample=False, blur_kernel=[1, 3, 3, 1],
-                 demodulate=True):
+    def __init__(self, in_channel, out_channel, kernel_size, style_dim, upsample=False):
         super().__init__()
 
         self.conv = ModulatedConv2d(
@@ -467,17 +439,15 @@ class StyledConv(nn.Module):
             kernel_size,
             style_dim,
             upsample=upsample,
-            blur_kernel=blur_kernel,
-            demodulate=demodulate,
+            demodulate=True,
         )
-
-        self.noise = NoiseInjection()
-        self.activate = FusedLeakyReLU(out_channel)
-
-    def forward(self, input, style, noise=None):
+        
+        # Simplify the activation for Core ML compatibility
+        self.register_buffer('bias', torch.zeros(1, out_channel, 1, 1))
+        self.register_buffer('scale', torch.tensor(math.sqrt(2.0)))
+        
+    def forward(self, input, style):
         out = self.conv(input, style)
-        out = self.noise(out, noise=noise)
-        out = self.activate(out)
-
+        # Simplified activation
+        out = F.leaky_relu(out + self.bias, negative_slope=0.2) * self.scale
         return out
-
