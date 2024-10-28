@@ -110,14 +110,17 @@ class VideoProcessor:
             raise
 
     def extract_audio(self, video_path: str, output_folder: str) -> Dict:
-        """Extract audio and save in chunks aligned with video frames"""
+        """Extract audio and save in both raw PCM and Opus formats for WebRTC streaming"""
         try:
             # Create audio folder
             audio_folder = os.path.join(output_folder, 'audio')
             os.makedirs(audio_folder, exist_ok=True)
 
-            # Extract audio using ffmpeg
-            audio_path = os.path.join(audio_folder, 'audio.wav')
+            # Extract audio using ffmpeg to WAV first
+            wav_path = os.path.join(audio_folder, 'temp_audio.wav')
+            opus_path = os.path.join(audio_folder, 'audio.opus')
+            
+            # Extract WAV for processing into chunks
             subprocess.run([
                 'ffmpeg', '-i', video_path,
                 '-vn',  # No video
@@ -125,11 +128,24 @@ class VideoProcessor:
                 '-ar', str(self.audio_sample_rate),  # Sample rate
                 '-ac', '1',  # Mono audio
                 '-y',  # Overwrite output
-                audio_path
+                wav_path
             ], check=True)
 
-            # Load audio file
-            audio = AudioSegment.from_wav(audio_path)
+            # Convert to Opus for streaming
+            subprocess.run([
+                'ffmpeg', '-i', wav_path,
+                '-c:a', 'libopus',  # Opus codec
+                '-b:a', '96k',      # Bitrate
+                '-vbr', 'on',       # Variable bitrate
+                '-compression_level', '10',  # Maximum compression
+                '-frame_duration', '20',     # Frame size in ms
+                '-application', 'audio',     # Optimize for audio
+                '-y',                        # Overwrite output
+                opus_path
+            ], check=True)
+
+            # Load WAV for chunking
+            audio = AudioSegment.from_wav(wav_path)
             
             # Get audio metadata
             audio_metadata = {
@@ -137,6 +153,7 @@ class VideoProcessor:
                 'channels': 1,
                 'duration': len(audio) / 1000.0,  # Convert to seconds
                 'chunk_duration': self.chunk_duration,
+                'opus_path': os.path.relpath(opus_path, output_folder),
                 'chunks': []
             }
 
@@ -172,18 +189,9 @@ class VideoProcessor:
                     'path': os.path.relpath(chunk_path, output_folder)
                 })
 
-                # Save partial progress to database
-                Progress = Query()
-                self.progress_table.upsert({
-                    'video_path': video_path,
-                    'audio_chunks_processed': i + 1,
-                    'total_chunks': num_chunks,
-                    'last_updated': str(datetime.datetime.now())
-                }, Progress.video_path == video_path)
-
-            # Clean up WAV file if requested
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
+            # Clean up temporary WAV file
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
 
             # Save audio metadata
             audio_metadata_path = os.path.join(audio_folder, 'metadata.json')
@@ -209,7 +217,6 @@ class VideoProcessor:
                 shutil.rmtree(audio_folder)
             
             raise
-
 
     def extract_frames(self, video_path: str, output_folder: str, 
                         frame_skip: int = 0, max_frames: int = None) -> Dict:

@@ -1,6 +1,9 @@
 from fastapi import FastAPI, WebSocket, UploadFile, File, WebSocketDisconnect, HTTPException,Query
 from fastapi.middleware.cors import CORSMiddleware
 import torch
+from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCIceCandidate
+from aiortc.rtcconfiguration import RTCConfiguration, RTCIceServer
+
 import numpy as np
 import cv2
 from typing import List, Dict, Any
@@ -29,7 +32,6 @@ from moviepy.editor import VideoFileClip
 import numpy as np
 import tempfile
 import asyncio
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack,RTCIceCandidate
 from av import AudioFrame
 import numpy as np
 
@@ -166,6 +168,178 @@ class IMFServer:
             logger.error(f"Error processing frame: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error processing frame: {str(e)}")
             
+    async def create_connection(self, peer_id: str) -> RTCPeerConnection:
+        """Create and set up a new WebRTC peer connection"""
+        pc = RTCPeerConnection(RTCConfiguration([
+            RTCIceServer(urls=["stun:stun.l.google.com:19302"])
+        ]))
+        
+        # Set up data channel for token streaming
+        dc = pc.createDataChannel("tokens")
+        dc.on("open", lambda: logger.info(f"Data channel opened for peer {peer_id}"))
+        dc.on("close", lambda: logger.info(f"Data channel closed for peer {peer_id}"))
+        
+        # Connection state monitoring
+        @pc.on("connectionstatechange")
+        async def on_connection_state():
+            logger.info(f"Connection state for {peer_id}: {pc.connectionState}")
+            if pc.connectionState in ["failed", "closed"]:
+                await self.cleanup_peer(peer_id)
+
+        self.peer_connections[peer_id] = {
+            "pc": pc,
+            "dc": dc
+        }
+        return pc
+
+    async def cleanup_peer(self, peer_id: str):
+        """Clean up all resources for a peer"""
+        try:
+            # Cancel streaming tasks
+            if peer_id in self.stream_tasks:
+                for task in self.stream_tasks[peer_id]:
+                    task.cancel()
+                del self.stream_tasks[peer_id]
+
+            # Close WebRTC connection
+            if peer_id in self.peer_connections:
+                conn = self.peer_connections[peer_id]
+                if "dc" in conn:
+                    conn["dc"].close()
+                if "pc" in conn:
+                    await conn["pc"].close()
+                del self.peer_connections[peer_id]
+
+            # Clear audio queue
+            if peer_id in self.audio_queues:
+                self.audio_queues[peer_id].empty()
+                del self.audio_queues[peer_id]
+
+            logger.info(f"Cleaned up resources for peer {peer_id}")
+        except Exception as e:
+            logger.error(f"Error during cleanup for peer {peer_id}: {e}")
+
+    async def stream_video(self, peer_id: str, video_id: int):
+        """Stream video tokens and audio for a specific video"""
+        try:
+            conn = self.peer_connections.get(peer_id)
+            if not conn:
+                raise ValueError(f"No connection found for peer {peer_id}")
+
+            dc = conn["dc"]
+            pc = conn["pc"]
+
+            # Get video metadata
+            video_metadata = self.dataset.videos[video_id]
+            frame_metadata = video_metadata['frames']
+            audio_metadata = video_metadata['audio']
+            total_frames = frame_metadata['total_frames']
+
+            # Set up audio streaming
+            audio_queue = asyncio.Queue()
+            self.audio_queues[peer_id] = audio_queue
+            audio_track = AudioStreamTrack(audio_queue)
+            pc.addTrack(audio_track)
+
+            # Create streaming tasks
+            token_task = asyncio.create_task(
+                self.stream_tokens(dc, video_id, total_frames)
+            )
+            audio_task = asyncio.create_task(
+                self.stream_audio(peer_id, video_id, audio_metadata)
+            )
+
+            self.stream_tasks[peer_id] = [token_task, audio_task]
+            await asyncio.gather(token_task, audio_task)
+
+        except Exception as e:
+            logger.error(f"Error in stream_video: {e}")
+            await self.cleanup_peer(peer_id)
+
+    async def stream_tokens(self, dc, video_id: int, total_frames: int):
+        """Stream tokens for video frames"""
+        try:
+            frame_rate = self.dataset.frame_rate
+            frame_interval = 1.0 / frame_rate
+            
+            for frame_idx in range(total_frames):
+                try:
+                    # Get cached or generate tokens
+                    token_data = await self.get_frame_tokens(video_id, frame_idx)
+                    
+                    # Create frame message
+                    message = {
+                        "type": "frame",
+                        "frameIndex": frame_idx,
+                        "timestamp": frame_idx * frame_interval * 1000,  # ms
+                        "token": token_data,
+                    }
+                    
+                    # Send through data channel
+                    if dc.readyState == "open":
+                        dc.send(json.dumps(message))
+                    else:
+                        raise ConnectionError("Data channel closed")
+                    
+                    # Maintain timing
+                    await asyncio.sleep(frame_interval)
+                    
+                except Exception as e:
+                    logger.error(f"Error streaming frame {frame_idx}: {e}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"Error in token streaming: {e}")
+            raise
+
+    async def stream_audio(self, peer_id: str, video_id: int, audio_metadata: dict):
+        """Stream audio chunks for a video"""
+        try:
+            audio_queue = self.audio_queues.get(peer_id)
+            if not audio_queue:
+                raise ValueError("No audio queue found")
+
+            for chunk_info in audio_metadata['chunks']:
+                try:
+                    # Load audio chunk
+                    chunk_path = os.path.join(
+                        self.dataset.root_dir,
+                        os.path.splitext(self.dataset.videos[video_id]['video_path'])[0],
+                        chunk_info['path']
+                    )
+                    audio_chunk = np.load(chunk_path)
+                    
+                    # Queue chunk for streaming
+                    await audio_queue.put(audio_chunk)
+                    
+                    # Wait for duration of chunk
+                    await asyncio.sleep(chunk_info['duration'])
+                    
+                except Exception as e:
+                    logger.error(f"Error processing audio chunk: {e}")
+                    # Send silence on error
+                    await audio_queue.put(np.zeros(int(48000 * chunk_info['duration']), dtype=np.int16))
+
+        except Exception as e:
+            logger.error(f"Error in audio streaming: {e}")
+            raise
+
+    async def get_frame_tokens(self, video_id: int, frame_idx: int):
+        """Get or generate tokens for a frame"""
+        try:
+            # Check cache first
+            cached_tokens = self.token_cache.get_tokens(video_id, frame_idx)
+            if cached_tokens is not None:
+                return cached_tokens
+
+            # Generate tokens if not cached
+            frame_data = await self.process_video_frames(video_id, frame_idx, 0)
+            return frame_data["features"]["current_token"]
+
+        except Exception as e:
+            logger.error(f"Error getting frame tokens: {e}")
+            raise
+
 
     async def generate_reference_features(self, video_id: int):
         """Generate and cache reference features for a video"""
@@ -319,9 +493,17 @@ class IMFServer:
 
             @pc.on("connectionstatechange")
             async def on_connection_state_change():
-                logger.info(f"Connection state: {pc.connectionState}")
+                logger.info(f"Connection state changed for peer {peer_id}: {pc.connectionState}")
+                logger.info(f"ICE gathering state: {pc.iceGatheringState}")
+                logger.info(f"ICE connection state: {pc.iceConnectionState}")
+                logger.info(f"Signaling state: {pc.signalingState}")
+                
                 if pc.connectionState == "failed":
+                    logger.error(f"👺 Connection failed for peer {peer_id}")
+                    logger.error(f"Last successful candidate pair: {pc.currentLocalDescription}")
                     await self.handle_connection_failure(peer_id)
+                elif pc.connectionState == "disconnected":
+                    logger.warning(f"👺 Connection disconnected for peer {peer_id}")
                 elif pc.connectionState == "connected":
                     if peer_id not in self.data_channels:
                         data_channel = pc.createDataChannel("frames")
@@ -384,7 +566,183 @@ class IMFServer:
             logger.error(f"Error during cleanup: {e}")
 
 
+    async def create_peer_connection(self, peer_id: str) -> RTCPeerConnection:
+        """Create and configure a new peer connection"""
+        pc = RTCPeerConnection(configuration=self.rtc_configuration)
+        
+        @pc.on("connectionstatechange")
+        async def on_connectionstatechange():
+            logger.info(f"Connection state [{peer_id}]: {pc.connectionState}")
+            if pc.connectionState == "failed":
+                await self.cleanup_peer_connection(peer_id)
+            elif pc.connectionState == "closed":
+                await self.cleanup_peer_connection(peer_id)
+
+        @pc.on("iceconnectionstatechange")
+        async def on_iceconnectionstatechange():
+            logger.info(f"ICE connection state [{peer_id}]: {pc.iceConnectionState}")
+
+        self.peer_connections[peer_id] = pc
+        return pc
+
+    async def cleanup_peer_connection(self, peer_id: str):
+        """Clean up resources for a peer connection"""
+        try:
+            if peer_id in self.peer_connections:
+                pc = self.peer_connections[peer_id]
+                await pc.close()
+                del self.peer_connections[peer_id]
+
+            if peer_id in self.audio_queues:
+                self.audio_queues[peer_id].empty()
+                del self.audio_queues[peer_id]
+
+            if peer_id in self.active_streams:
+                del self.active_streams[peer_id]
+
+            logger.info(f"Cleaned up resources for peer {peer_id}")
+
+        except Exception as e:
+            logger.error(f"Error cleaning up peer {peer_id}: {e}")
+
+    async def start_audio_stream(self, peer_id: str, video_id: int):
+        """Start streaming audio for a video"""
+        try:
+            # Get video metadata
+            video_metadata = self.dataset.videos[video_id]
+            audio_metadata = video_metadata['audio']
+            
+            # Create audio queue if it doesn't exist
+            if peer_id not in self.audio_queues:
+                self.audio_queues[peer_id] = asyncio.Queue()
+            
+            # Get the peer connection
+            pc = self.peer_connections.get(peer_id)
+            if not pc:
+                raise ValueError(f"No peer connection found for {peer_id}")
+
+            # Create and add audio track
+            audio_track = AudioStreamTrack(self.audio_queues[peer_id])
+            pc.addTrack(audio_track)
+
+            # Start audio streaming task
+            self.active_streams[peer_id] = {
+                'video_id': video_id,
+                'current_chunk': 0,
+                'total_chunks': len(audio_metadata['chunks'])
+            }
+
+            asyncio.create_task(self.stream_audio_chunks(peer_id, video_id))
+
+        except Exception as e:
+            logger.error(f"Error starting audio stream: {e}")
+            await self.cleanup_peer_connection(peer_id)
+            raise
+
+    async def stream_audio_chunks(self, peer_id: str, video_id: int):
+        """Stream audio chunks for a video"""
+        try:
+            stream_info = self.active_streams.get(peer_id)
+            if not stream_info:
+                return
+
+            video_metadata = self.dataset.videos[video_id]
+            audio_metadata = video_metadata['audio']
+            audio_queue = self.audio_queues[peer_id]
+
+            for chunk_info in audio_metadata['chunks']:
+                if peer_id not in self.active_streams:
+                    break
+
+                # Load audio chunk
+                chunk_path = os.path.join(
+                    self.dataset.root_dir,
+                    os.path.splitext(video_metadata['video_path'])[0],
+                    chunk_info['path']
+                )
+                
+                try:
+                    audio_chunk = np.load(chunk_path)
+                    await audio_queue.put(audio_chunk)
+                    
+                    # Wait for proper timing based on chunk duration
+                    await asyncio.sleep(chunk_info['duration'])
+                    
+                except Exception as e:
+                    logger.error(f"Error processing chunk {chunk_path}: {e}")
+                    continue
+
+        except Exception as e:
+            logger.error(f"Error in audio streaming: {e}")
+        finally:
+            if peer_id in self.active_streams:
+                await self.cleanup_peer_connection(peer_id)
+
     def setup_routes(self):
+
+        @self.app.websocket("/rtc/{peer_id}")
+        async def websocket_rtc(websocket: WebSocket, peer_id: str):
+            try:
+                await websocket.accept()
+                logger.info(f"WebRTC WebSocket connection accepted for peer {peer_id}")
+
+                while True:
+                    try:
+                        message = await websocket.receive_json()
+                        message_type = message.get("type")
+
+                        if message_type == "offer":
+                            # Create peer connection if it doesn't exist
+                            if peer_id not in self.peer_connections:
+                                pc = await self.create_peer_connection(peer_id)
+                            else:
+                                pc = self.peer_connections[peer_id]
+
+                            # Set remote description
+                            offer = RTCSessionDescription(
+                                sdp=message["sdp"]["sdp"],
+                                type=message["sdp"]["type"]
+                            )
+                            await pc.setRemoteDescription(offer)
+
+                            # Create and send answer
+                            answer = await pc.createAnswer()
+                            await pc.setLocalDescription(answer)
+                            
+                            await websocket.send_json({
+                                "type": "answer",
+                                "sdp": {
+                                    "type": answer.type,
+                                    "sdp": answer.sdp
+                                }
+                            })
+
+                        elif message_type == "ice-candidate":
+                            if peer_id in self.peer_connections:
+                                pc = self.peer_connections[peer_id]
+                                candidate = RTCIceCandidate(
+                                    sdpMid=message["candidate"]["sdpMid"],
+                                    sdpMLineIndex=message["candidate"]["sdpMLineIndex"],
+                                    candidate=message["candidate"]["candidate"]
+                                )
+                                await pc.addIceCandidate(candidate)
+
+                        elif message_type == "start-stream":
+                            video_id = message.get("videoId")
+                            if video_id is not None:
+                                await self.start_audio_stream(peer_id, video_id)
+
+                    except WebSocketDisconnect:
+                        logger.info(f"WebSocket disconnected for peer {peer_id}")
+                        break
+                    except Exception as e:
+                        logger.error(f"Error handling WebSocket message: {e}")
+                        break
+
+            except Exception as e:
+                logger.error(f"Error in WebSocket connection: {e}")
+            finally:
+                await self.cleanup_peer_connection(peer_id)
 
         @self.app.websocket("/rtc")
         async def websocket_rtc(websocket: WebSocket):

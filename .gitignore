@@ -50,3 +50,4 @@ graphmodel/model.json
 *.npz
 token_cache/cache_index.json
 *.npy
+.env
