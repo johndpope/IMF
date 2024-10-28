@@ -177,12 +177,12 @@ import torch.nn as nn
 class LatentTokenDecoder(nn.Module):
     def __init__(self, latent_dim=32, const_dim=32):
         super().__init__()
-        debug_print(f"Initializing LatentTokenDecoder with latent_dim={latent_dim}, const_dim={const_dim}")
         
-        self.const = nn.Parameter(torch.randn(1, const_dim, 4, 4))
-        debug_print(f"Constant input shape: {self.const.shape}")
+        # Make const a registered buffer
+        self.register_buffer('const', torch.randn(1, const_dim, 4, 4))
         
-        self.style_conv_layers = nn.ModuleList([
+        # Define layers
+        self.layers = nn.ModuleList([
             StyledConv(const_dim, 512, 3, latent_dim),
             StyledConv(512, 512, 3, latent_dim, upsample=True),
             StyledConv(512, 512, 3, latent_dim),
@@ -195,35 +195,28 @@ class LatentTokenDecoder(nn.Module):
             StyledConv(512, 512, 3, latent_dim),
             StyledConv(512, 256, 3, latent_dim, upsample=True),
             StyledConv(256, 256, 3, latent_dim),
-            StyledConv(256, 256, 3, latent_dim) 
+            StyledConv(256, 256, 3, latent_dim)
         ])
-        debug_print(f"Number of StyledConv layers: {len(self.style_conv_layers)}")
 
     def forward(self, t):
-        debug_print(f"🍩 LatentTokenDecoder forward method input shape: {t.shape}")
-        
+        # Replicate constant input
         x = self.const.repeat(t.shape[0], 1, 1, 1)
-        debug_print(f"Repeated constant input shape: {x.shape}")
         
-        m1, m2, m3, m4 = None, None, None, None
-        for i, layer in enumerate(self.style_conv_layers):
+        # Process through layers and collect outputs
+        features = []
+        for i, layer in enumerate(self.layers):
             x = layer(x, t)
-            debug_print(f"Layer {i} output shape: {x.shape}")
             
+            # Store intermediate features
             if i == 3:
                 m1 = x
-                debug_print(f"m1 shape: {m1.shape}")
             elif i == 6:
                 m2 = x
-                debug_print(f"m2 shape: {m2.shape}")
             elif i == 9:
                 m3 = x
-                debug_print(f"m3 shape: {m3.shape}")
             elif i == 12:
                 m4 = x
-                debug_print(f"m4 shape: {m4.shape}")
         
-        debug_print("LatentTokenDecoder forward method completed")
         return m4, m3, m2, m1
     
 '''
