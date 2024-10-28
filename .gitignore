@@ -51,3 +51,5 @@ graphmodel/model.json
 token_cache/cache_index.json
 *.npy
 .env
+IMFClient.mlpackage/Data/com.apple.CoreML/model.mlmodel
+IMFClient.mlpackage/Manifest.json

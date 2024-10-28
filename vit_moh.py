@@ -30,64 +30,66 @@ class MoHAttention(nn.Module):
         self.routed_heads = routed_heads
         self.head_dim = dim // num_heads
 
+        # Linear projections
         self.q = nn.Linear(dim, dim)
         self.k = nn.Linear(dim, dim)
         self.v = nn.Linear(dim, dim)
         self.proj = nn.Linear(dim, dim)
 
+        # Routing networks
         self.router = nn.Linear(dim, num_heads - shared_heads)
         self.shared_router = nn.Linear(dim, 2)
+        
+        # Learnable parameters
         self.temperature = nn.Parameter(torch.log((torch.ones(num_heads, 1, 1) / 0.24).exp() - 1))
-        self.query_embedding = nn.Parameter(nn.init.trunc_normal_(torch.empty(self.num_heads, 1, self.head_dim), mean=0, std=0.02))
+        self.query_embedding = nn.Parameter(nn.init.trunc_normal_(
+            torch.empty(self.num_heads, 1, self.head_dim), mean=0, std=0.02))
 
     def forward(self, x):
         B, N, C = x.shape
-        #print(f"Input shape: {x.shape}")
 
+        # Linear projections
         q = self.q(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         k = self.k(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         v = self.v(x).reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
-        #print(f"q, k, v shape: {q.shape}")
 
+        # Normalize and scale queries
         q_norm = F.normalize(q, dim=-1)
         q_norm_scaled = (q_norm + self.query_embedding) * F.softplus(self.temperature)
 
+        # Compute attention scores
         attn = (q_norm_scaled @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         attn = attn.softmax(dim=-1)
-        #print(f"Attention shape: {attn.shape}")
 
+        # Apply attention
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        #print(f"After attention shape: {x.shape}")
 
-        logits = self.router(x)
-        gates = F.softmax(logits, dim=-1)
-        #print(f"Gates shape: {gates.shape}")
+        # Compute routing logits
+        router_logits = self.router(x)
+        router_gates = F.softmax(router_logits, dim=-1)
 
-        _, indices = torch.topk(gates, k=self.routed_heads, dim=-1)
-        mask = F.one_hot(indices, num_classes=self.num_heads-self.shared_heads).sum(dim=-2)
-        #print(f"Mask shape: {mask.shape}")
+        # Get top-k heads using softmax instead of one_hot
+        top_k_gates, _ = torch.topk(router_gates, k=self.routed_heads, dim=-1)
+        min_top_k = top_k_gates.min(dim=-1, keepdim=True)[0]
+        mask = (router_gates >= min_top_k).float()
+        
+        # Compute routed head gates
+        routed_head_gates = router_gates * mask
+        routed_head_gates = routed_head_gates / (routed_head_gates.sum(dim=-1, keepdim=True) + 1e-6) * self.routed_heads
 
-        routed_head_gates = gates * mask
-        routed_head_gates = routed_head_gates * self.routed_heads
-        #print(f"Routed head gates shape: {routed_head_gates.shape}")
-
+        # Compute shared head gates
         shared_head_weight = self.shared_router(x)
         shared_head_gates = F.softmax(shared_head_weight, dim=-1) * self.shared_heads
-        #print(f"Shared head gates shape: {shared_head_gates.shape}")
 
-        weight_0 = self.shared_router(x)
-        weight_0 = F.softmax(weight_0, dim=-1) * 2
-        #print(f"Weight_0 shape: {weight_0.shape}")
+        # Mix shared and routed heads
+        weight_0 = F.softmax(shared_head_weight, dim=-1) * 2
 
         shared_head_gates = torch.einsum("bn,bnc->bnc", weight_0[..., 0], shared_head_gates)
         routed_head_gates = torch.einsum("bn,bnc->bnc", weight_0[..., 1], routed_head_gates)
 
+        # Combine gates and apply to features
         masked_gates = torch.cat([shared_head_gates, routed_head_gates], dim=-1)
-        #print(f"Masked gates shape: {masked_gates.shape}")
-        #print(f"x shape before einsum: {x.shape}")
-
         x = torch.einsum("bnc,bnd->bnd", masked_gates, x)
-        #print(f"x shape after einsum: {x.shape}")
 
         return self.proj(x)
 
@@ -118,16 +120,24 @@ class TransformerBlock(nn.Module):
         output = x_flat.permute(0, 2, 1).view(B, C, H, W)
         return output
 
+
 class ImplicitMotionAlignment(nn.Module):
     def __init__(self, feature_dim, motion_dim, spatial_dim, depth=4, heads=8, mlp_dim=1024, shared_heads=1, routed_heads=3):
         super().__init__()
-        self.cross_attention = CrossAttentionModule(dim_spatial=spatial_dim[0] * spatial_dim[1], dim_qk=motion_dim, dim_v=feature_dim)
-        self.transformer_blocks = nn.ModuleList([
-            TransformerBlock(feature_dim, heads, mlp_dim, shared_heads, routed_heads) for _ in range(depth)
-        ])
-        self.spatial_dim = spatial_dim
         self.feature_dim = feature_dim
         self.motion_dim = motion_dim
+        self.spatial_dim = spatial_dim
+        
+        self.cross_attention = CrossAttentionModule(
+            dim_spatial=spatial_dim[0] * spatial_dim[1],
+            dim_qk=motion_dim,
+            dim_v=feature_dim
+        )
+        
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(feature_dim, heads, mlp_dim, shared_heads, routed_heads) 
+            for _ in range(depth)
+        ])
 
     def forward(self, ml_c, ml_r, fl_r):
         V_prime = self.cross_attention(ml_c, ml_r, fl_r)
@@ -136,7 +146,6 @@ class ImplicitMotionAlignment(nn.Module):
             V_prime = block(V_prime)
 
         return V_prime
-
 
     @staticmethod
     def visualize_embeddings(embeddings, save_path):
@@ -171,48 +180,29 @@ class ImplicitMotionAlignment(nn.Module):
 
 
 class CrossAttentionModule(nn.Module):
-    def __init__(self, 
-        dim_spatial=4096,
-        dim_qk=256,
-        dim_v=256
-        ):
+    def __init__(self, dim_spatial=4096, dim_qk=256, dim_v=256):
         super().__init__()
-
         self.dim_head = dim_qk
         self.scale = dim_qk ** -0.5
-
-        #print("CrossAttentionModule:",dim_spatial)
-        #print("dim_qk:",dim_qk)
-        #print("dim_v:",dim_v)
         
-
-        # Separate positional encodings for queries and keys
-        self.q_pos_embedding = nn.Parameter(torch.randn(1, dim_spatial, dim_qk))
-        self.k_pos_embedding = nn.Parameter(torch.randn(1, dim_spatial, dim_qk))
+        # Registered buffers instead of Parameters for Core ML compatibility
+        self.register_buffer('q_pos_embedding', torch.randn(1, dim_spatial, dim_qk))
+        self.register_buffer('k_pos_embedding', torch.randn(1, dim_spatial, dim_qk))
         self.attend = nn.Softmax(dim=-1)
-    def forward(self, queries, keys, values):
-        # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
-        q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
-        q = q + self.q_pos_embedding  # (b, dim_spatial, dim_qk)
 
-        # in paper, key dim_spatial may be different from query dim_spatial
-        # (b, dim_qk, h, w) -> (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_qk)
+    def forward(self, queries, keys, values):
+        q = torch.flatten(queries, start_dim=2).transpose(-1, -2)
+        q = q + self.q_pos_embedding
+
         k = torch.flatten(keys, start_dim=2).transpose(-1, -2)
-        k = k + self.k_pos_embedding  # (b, dim_spatial, dim_qk)
-        # (b, dim_v, h, w) -> (b, dim_v, dim_spatial) -> (b, dim_spatial, dim_v)
+        k = k + self.k_pos_embedding
+        
         v = torch.flatten(values, start_dim=2).transpose(-1, -2)
 
-        # # (b, dim_spatial, dim_qk) * (b, dim_qk, dim_spatial) -> (b, dim_spatial, dim_spatial)
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-
-        attn = self.attend(dots)  # (b, dim_spatial, dim_spatial)
-
-        # (b, dim_spatial, dim_spatial) * (b, dim_spatial, dim_v) -> (b, dim_spatial, dim_v)
+        attn = self.attend(dots)
         out = torch.matmul(attn, v)
-
-        # Or the torch version fast attention
-        # out = F.scaled_dot_product_attention(q, k, v)
-        out = torch.reshape(out.transpose(-1, -2), values.shape)  # (b, dim_spatial, dim_v) -> (b, dim_v, h, w)
+        out = torch.reshape(out.transpose(-1, -2), values.shape)
 
         return out
 

@@ -186,33 +186,32 @@ def test_model_conversion(coreml_model, pytorch_model):
     """Test and compare the converted model with original PyTorch model"""
     console.print("Testing model conversion...")
     
-    # Create test inputs
-    t_c = np.random.randn(1, 32).astype(np.float32)
-    t_r = np.random.randn(1, 32).astype(np.float32)
+    # Create test inputs as PyTorch tensors first
+    t_c = torch.randn(1, 32)
+    t_r = torch.randn(1, 32)
     f_r = [
-        np.random.randn(1, 128, 64, 64).astype(np.float32),
-        np.random.randn(1, 256, 32, 32).astype(np.float32),
-        np.random.randn(1, 512, 16, 16).astype(np.float32),
-        np.random.randn(1, 512, 8, 8).astype(np.float32)
+        torch.randn(1, 128, 64, 64),
+        torch.randn(1, 256, 32, 32),
+        torch.randn(1, 512, 16, 16),
+        torch.randn(1, 512, 8, 8)
     ]
     
     # PyTorch prediction
+    pytorch_model.eval()
     with torch.no_grad():
-        pytorch_output = pytorch_model(
-            torch.from_numpy(t_c),
-            torch.from_numpy(t_r),
-            f_r[0], f_r[1], f_r[2], f_r[3]  # Pass features separately
-        ).numpy()
+        pytorch_output = pytorch_model(t_c, t_r, f_r[0], f_r[1], f_r[2], f_r[3]).numpy()
+    
+    # Convert inputs to numpy for Core ML
+    coreml_inputs = {
+        "t_c": t_c.numpy(),
+        "t_r": t_r.numpy(),
+        "f_r_0": f_r[0].numpy(),
+        "f_r_1": f_r[1].numpy(),
+        "f_r_2": f_r[2].numpy(),
+        "f_r_3": f_r[3].numpy()
+    }
     
     # Core ML prediction
-    coreml_inputs = {
-        "t_c": t_c,
-        "t_r": t_r,
-        "f_r_0": f_r[0],
-        "f_r_1": f_r[1],
-        "f_r_2": f_r[2],
-        "f_r_3": f_r[3]
-    }
     coreml_output = coreml_model.predict(coreml_inputs)["output"]
     
     # Compare outputs
@@ -221,8 +220,9 @@ def test_model_conversion(coreml_model, pytorch_model):
     console.print(f"Max absolute difference: {np.abs(pytorch_output - coreml_output).max()}")
     console.print(f"Max relative difference: {np.abs((pytorch_output - coreml_output) / (pytorch_output + 1e-7)).max()}")
 
+
 if __name__ == "__main__":
-    checkpoint_path = "./checkpoints/checkpoint.pth"
+    checkpoint_path = "./checkpoints/checkpoint-selena-moh.pth"
     output_path = "IMFClient.mlpackage"
     
     # Initialize and convert model
