@@ -3,6 +3,36 @@ import torch
 import numpy as np
 from model import IMFClientModel
 
+
+def load_client_model(checkpoint_path: str) -> IMFClientModel:
+    """Load and initialize IMFClientModel from full checkpoint"""
+    # Initialize client model
+    client_model = IMFClientModel(
+        latent_dim=32,
+        feature_dims=[128, 256, 512, 512],
+        motion_dims=[256, 512, 512, 512],
+        spatial_dims=[(64, 64), (32, 32), (16, 16), (8, 8)]
+    )
+    
+    # Load full checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    
+    # Get the state dict (handle both cases where it might be wrapped)
+    if 'model_state_dict' in checkpoint:
+        full_state_dict = checkpoint['model_state_dict']
+    else:
+        full_state_dict = checkpoint
+    
+    # Filter state dict for client model
+    client_state_dict = filter_state_dict_for_client(full_state_dict)
+    
+    # Load filtered state dict
+    client_model.load_state_dict(client_state_dict, strict=False)
+    client_model.eval()
+    
+    return client_model
+
+
 def convert_to_coreml(pytorch_model, checkpoint_path, output_path="IMFClient.mlpackage"):
     """
     Convert PyTorch IMFClient model to Core ML format
