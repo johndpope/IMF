@@ -8,7 +8,7 @@ from rich.traceback import install
 import os
 from typing import Dict
 from typing import List, Tuple
-from model import LatentTokenDecoder,FrameDecoder
+from model import LatentTokenDecoder,FrameDecoder,ImplicitMotionAlignment
 
 
 class IMFClientModel(nn.Module):
