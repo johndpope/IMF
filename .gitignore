@@ -51,3 +51,9 @@ graphmodel/model.json
 token_cache/cache_index.json
 *.npy
 .env
+IMFClient.mlpackage/Data/com.apple.CoreML/model.mlmodel
+IMFClient.mlpackage/Manifest.json
+__pycache__/AudioStreamTrack.cpython-311.pyc
+__pycache__/lia_resblocks.cpython-311.pyc
+__pycache__/VideoAudioDataset.cpython-311.pyc
+__pycache__/vit_moh.cpython-311.pyc

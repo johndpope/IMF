@@ -854,8 +854,8 @@ class IMFServer:
         @self.app.get("/videos/{video_id}/tokens")
         async def get_bulk_tokens(
             video_id: int,
-            start: int = Query(..., description="Start frame index"),
-            end: int = Query(..., description="End frame index")
+            start: int = Query(default=0, description="Start frame index"),
+            end: int = Query(default=99, description="End frame index")
         ):
             """Get tokens for a range of frames from a video using the JSON dataset structure"""
             try:
@@ -1801,24 +1801,21 @@ class IMFServer:
             }
         
 
-    def run(self, 
-            host: str = "0.0.0.0", 
-            port: int = 8000,
-            ssl_certfile: str = "192.168.1.108.pem",
-            ssl_keyfile: str = "192.168.1.108-key.pem"):
+    def run(self, host: str = "0.0.0.0", port: int = 8000):
+        """
+        Start the server without SSL
         
-        logger.info(f"Starting server on {host}:{port} with SSL")
+        Args:
+            host (str): Host address to bind to
+            port (int): Port number to listen on
+        """
+        logger.info(f"Starting server on {host}:{port}")
         
         try:
-            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            ssl_context.load_cert_chain(ssl_certfile, ssl_keyfile)
-            
             config = uvicorn.Config(
                 app=self.app,
                 host=host,
                 port=port,
-                ssl_certfile=ssl_certfile,
-                ssl_keyfile=ssl_keyfile,
                 log_level="debug",
                 ws_ping_interval=30.0,
                 ws_ping_timeout=10.0,
@@ -1833,15 +1830,12 @@ class IMFServer:
             raise
 
 if __name__ == "__main__":
-    # Create an async function to run the server
     async def main():
         server = IMFServer()
         config = uvicorn.Config(
             app=server.app,
             host="0.0.0.0",
             port=8000,
-            ssl_certfile="192.168.1.108.pem",
-            ssl_keyfile="192.168.1.108-key.pem",
             log_level="debug",
             ws_ping_interval=30.0,
             ws_ping_timeout=10.0,
