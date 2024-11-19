@@ -299,7 +299,7 @@ class ModulatedConv2d(nn.Module):
         weight = self.scale * self.weight * style
 
         if self.demodulate:
-            demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
+            demod = torch.mul(torch.sum(torch.mul(weight, weight), dim=[2, 3, 4]) + 1e-8, -0.5) # demod = torch.rsqrt(weight.pow(2).sum([2, 3, 4]) + 1e-8)
             weight = weight * demod.view(batch, self.out_channel, 1, 1, 1)
 
         weight = weight.view(batch * self.out_channel, in_channel, self.kernel_size, self.kernel_size)
